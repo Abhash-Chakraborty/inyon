@@ -5,7 +5,7 @@ description: Reading a session as a chat, answering prompts, and writing message
 
 Tap a session to open it. If an agent is running in the pane, it opens as a chat; otherwise it opens the [terminal](terminal.md). The **Chat · Terminal** switch in the header moves between the two at any time.
 
-When the agent has made [pages](pages.md) in this tmux session, the header has a **Pages** button. From 0.25 it opens them beside the chat on a desktop, and in a sheet on a phone. See [Pages](pages.md#in-a-session) for which pages count.
+When the agent has made [pages](pages.md) in this tmux session, the header has a **Blueprints** button. From 0.25 it opens them beside the chat on a desktop, and in a sheet on a phone. See [Blueprints](pages.md#in-a-session) for which pages count.
 
 ![A desktop browser showing a Claude Code session's terminal, with the sidebar of machines and sessions on the left and the edited file's diff on the right](../../docs/terminal-light.webp)
 

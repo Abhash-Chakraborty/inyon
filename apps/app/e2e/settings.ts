@@ -756,11 +756,11 @@ try {
     await page.getByRole('button', { name: 'More' }).click()
     await page.getByRole('menuitem', { name: 'End session…' }).click()
     await ask.getByRole('button', { name: 'End session' }).click()
-    await page.locator('.sidebar').getByRole('link', { name: 'Pages' }).click()
-    await page.waitForURL(/\/next\/pages/)
+    await page.locator('.sidebar').getByRole('link', { name: 'Blueprints' }).click()
+    await page.waitForURL(/\/next\/blueprints/)
     await toast(page, 'Session ended').waitFor()
     await Bun.sleep(300)
-    check(/\/next\/pages/.test(page.url()), `end: stays where you went meanwhile (${page.url()})`)
+    check(/\/next\/blueprints/.test(page.url()), `end: stays where you went meanwhile (${page.url()})`)
     state.endLag = 0
 
     // the pane closed by itself while the question was open: it has ended all the same

@@ -19,10 +19,10 @@ use crate::route::{self, Route};
 use crate::state::{Hub, PageList};
 use crate::{dom, platform};
 
-/// The docs page about Pages, for "How pages work".
+/// The docs page about Blueprints, for "How blueprints work".
 pub const PAGES_DOCS: &str = "https://inyon.tech/docs/pages/";
 /// The one command an agent runs to add a page, as the empty states show it.
-pub const ADD_COMMAND: &str = "inyon pages add ./private/plans/my-plan --name \"My plan\"";
+pub const ADD_COMMAND: &str = "inyon blueprints add ./private/plans/my-plan --name \"My plan\"";
 /// What every viewer says about the page in it: a sandbox, and never a place to sign in.
 pub const SANDBOX_NOTE: &str = "Sandboxed page: never sign in here";
 /// What Open in browser says under it: the link's life, and that the tab is no place to sign in.
@@ -179,7 +179,7 @@ fn open_in_browser(p: PageEntry, at: Option<(Part, Option<String>)>) {
 async fn revoke(p: PageEntry) {
     let ask = Ask {
         title: format!("Revoke links to “{}”?", p.name),
-        body: Some("Every link to this page stops working: tabs on other devices, links you copied, and the one in an open viewer, which gets a new one right away.".into()),
+        body: Some("Every link to this blueprint stops working: tabs on other devices, links you copied, and the one in an open viewer, which gets a new one right away.".into()),
         yes: "Revoke links".into(),
         danger: true,
         ..Ask::default()
@@ -239,12 +239,12 @@ pub fn page_menu(p: &PageEntry, m: &PageMachine, open: bool) -> Vec<Item> {
 
 // ---------- the page ----------
 
-/// `/pages` and `/pages/<machine>/<slug>`.
+/// `/blueprints` and `/blueprints/<machine>/<slug>` (or `/pages/…`).
 #[component]
 pub fn PagesPage(page: Option<(String, String)>) -> Element {
     use_hook(listen);
     let wide = WIDE();
-    dom::set_title("Pages · Inyon");
+    dom::set_title("Blueprints · Inyon");
     if wide {
         return rsx! { DesktopPages { selected: page } };
     }
@@ -567,7 +567,7 @@ fn FrameState(
     error: Option<ApiError>,
     on_retry: EventHandler<()>,
     on_back: EventHandler<()>,
-    #[props(default = "Back to Pages".to_string())] back_label: String,
+    #[props(default = "Back to Blueprints".to_string())] back_label: String,
 ) -> Element {
     if !m.online {
         let folder = page.folder.clone();
@@ -593,7 +593,7 @@ fn FrameState(
     };
     let gone = e.status == 404;
     rsx! {
-        StateCard { icon: if gone { Icon::FolderOpen } else { Icon::CloudOff }, title: if gone { "This page is gone".to_string() } else { format!("Couldn't open “{}”", page.name) },
+        StateCard { icon: if gone { Icon::FolderOpen } else { Icon::CloudOff }, title: if gone { "This blueprint is gone".to_string() } else { format!("Couldn't open “{}”", page.name) },
             if gone {
                 "It was taken off the list on {m.name}."
             } else {
@@ -651,9 +651,9 @@ fn NoPages(#[props(default)] wide: bool) -> Element {
             if wide {
                 span { class: "state-icon", Glyph { icon: Icon::PanelsTopLeft, size: 18 } }
             }
-            h2 { class: "no-pages-title", "No pages yet" }
+            h2 { class: "no-pages-title", "No blueprints yet" }
             p { class: "no-pages-text",
-                "When an agent builds a plan or mockups, it runs one command and the page shows up here"
+                "When an agent builds a plan or mockups, it runs one command and the blueprint shows up here"
                 if wide { ", under its machine and project" }
                 "."
             }
@@ -669,7 +669,7 @@ fn NoPages(#[props(default)] wide: bool) -> Element {
                 if wide {
                     a { class: "button button-md button-ghost press", href: PAGES_DOCS, target: "_blank", rel: "noreferrer",
                         Glyph { icon: Icon::BookOpen, size: 16 }
-                        "How pages work ↗"
+                        "How blueprints work ↗"
                     }
                 }
             }
@@ -780,13 +780,13 @@ fn PhoneList() -> Element {
             header { class: "topbar",
                 div { class: "topbar-row page-head",
                     span { class: "phone-only", Logo {} }
-                    h1 { class: "page-title truncate", "Pages" }
+                    h1 { class: "page-title truncate", "Blueprints" }
                     if any {
                         span { class: "page-actions",
                             button {
                                 class: if filtering() { "icon-button icon-button-lg press icon-button-on" } else { "icon-button icon-button-lg press" },
                                 r#type: "button",
-                                "aria-label": "Filter pages",
+                                "aria-label": "Filter blueprints",
                                 "aria-pressed": "{filtering()}",
                                 onclick: move |_| {
                                     let on = !filtering();
@@ -810,14 +810,14 @@ fn PhoneList() -> Element {
             }
             div { class: "pages-phone",
                 if filtering() {
-                    FilterInput { q, placeholder: "Filter pages" }
+                    FilterInput { q, placeholder: "Filter blueprints" }
                 }
                 match list.pages.as_deref() {
-                    None => rsx! { WaitRows { label: "Loading pages", count: 2 } },
+                    None => rsx! { WaitRows { label: "Loading blueprints", count: 2 } },
                     Some([]) => rsx! { NoPages {} },
                     Some(_) if groups.is_empty() => rsx! {
                         div { class: "no-match",
-                            "No page matches “{query}”."
+                            "No blueprint matches “{query}”."
                             div {
                                 button { class: "button button-sm button-quiet press no-match-clear", r#type: "button", onclick: move |_| q.set(String::new()), "Clear filter" }
                             }
@@ -862,7 +862,7 @@ fn PageCard(p: PageEntry, m: PageMachine, changed: bool) -> Element {
         if online {
             route::go(&mut here, route_to.clone());
         } else {
-            toast::toast(format!("{name} is offline"), Some("This page opens when it’s back.".into()), ToastTone::Info);
+            toast::toast(format!("{name} is offline"), Some("This blueprint opens when it’s back.".into()), ToastTone::Info);
         }
     };
     let mut open_k = open.clone();
@@ -952,7 +952,7 @@ fn PhoneViewer(host: String, slug: String) -> Element {
         route::replace(&mut here, to);
     };
     let back = move |_: MouseEvent| go_back();
-    let back_label = if BACK_TO.peek().is_some() { "Back to the session" } else { "Back to Pages" };
+    let back_label = if BACK_TO.peek().is_some() { "Back to the session" } else { "Back to Blueprints" };
     let m = pg::machine_of(&hub.read().hosts, &host);
     let id = pg::page_id(&host, &slug);
     let link = v.link(&id);
@@ -973,7 +973,7 @@ fn PhoneViewer(host: String, slug: String) -> Element {
                 }
                 div { class: "viewer-stage",
                     if loaded {
-                        StateCard { icon: Icon::FolderOpen, title: "This page is gone",
+                        StateCard { icon: Icon::FolderOpen, title: "This blueprint is gone",
                             "It isn't on the list any more."
                             div { class: "state-actions",
                                 button { class: "button button-sm button-quiet press", r#type: "button", onclick: back,
@@ -1110,9 +1110,9 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
     let mut q2 = q;
     rsx! {
         div { class: "pages-desktop",
-            section { class: "pages-tree", "aria-label": "Pages",
+            section { class: "pages-tree", "aria-label": "Blueprints",
                 div { class: "pages-tree-head",
-                    h1 { class: "pages-tree-title", "Pages" }
+                    h1 { class: "pages-tree-title", "Blueprints" }
                     button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Add a folder", title: "Add a folder", onclick: move |_| open_sheet(PageSheet::Add),
                         Glyph { icon: Icon::FolderPlus, size: 16 }
                     }
@@ -1124,12 +1124,12 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
                 }
                 div { class: "pages-tree-list",
                     if !loaded {
-                        WaitRows { label: "Loading pages", count: 3 }
+                        WaitRows { label: "Loading blueprints", count: 3 }
                     } else if count == 0 {
                         p { class: "pages-tree-empty", "Nothing here yet." }
                     } else if groups.is_empty() {
                         div { class: "pages-tree-empty",
-                            "No page matches “{query}”."
+                            "No blueprint matches “{query}”."
                             div {
                                 button { class: "button button-sm button-quiet press no-match-clear", r#type: "button", onclick: move |_| q2.set(String::new()), "Clear filter" }
                             }
@@ -1175,8 +1175,8 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
                 // the empty viewer shows the whole command already
                 if count > 0 {
                     div { class: "pages-tree-foot",
-                        "Agents add pages with "
-                        code { class: "mono", "inyon pages add" }
+                        "Agents add blueprints with "
+                        code { class: "mono", "inyon blueprints add" }
                     }
                 }
             }
@@ -1189,7 +1189,7 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
                     div { class: "pages-viewer-empty",
                         div { class: "empty",
                             span { class: "empty-icon", Glyph { icon: Icon::FolderOpen, size: 20 } }
-                            p { class: "empty-title", "This page is gone" }
+                            p { class: "empty-title", "This blueprint is gone" }
                             p { class: "empty-text", "It isn't on the list any more. Pick another on the left." }
                         }
                     }
@@ -1323,7 +1323,7 @@ fn DesktopViewer(
             Segmented {
                 value: if note.is_some() { String::new() } else { part.key().to_string() },
                 options: parts.iter().map(|pt| (pt.key().to_string(), pt.label().to_string())).collect::<Vec<_>>(),
-                label: "Part of the page",
+                label: "Part of the blueprint",
                 on_change: move |k: String| vp.pick_part(Part::of(&k)),
             }
         }
@@ -1344,7 +1344,7 @@ fn DesktopViewer(
     rsx! {
         div { class: if docked { "viewer-bar viewer-bar-docked" } else { "viewer-bar" },
             if let Some(back) = on_list {
-                button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "This session's pages", title: "This session's pages",
+                button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "This session's blueprints", title: "This session's blueprints",
                     onclick: move |_| back.call(()),
                     Glyph { icon: Icon::ChevronLeft, size: 18 }
                 }
@@ -1389,7 +1389,7 @@ fn DesktopViewer(
                 Glyph { icon: Icon::Ellipsis, size: 16 }
             }
             if let Some(close) = on_close {
-                button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Close pages", title: "Close",
+                button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Close blueprints", title: "Close",
                     onclick: move |_| close.call(()),
                     Glyph { icon: Icon::X, size: 16 }
                 }
@@ -1431,7 +1431,7 @@ fn DesktopViewer(
                                 Some(b) => b.call(()),
                                 None => route::replace(&mut here, Route::Pages { page: None }),
                             },
-                            back_label: if on_list.is_some() { "This session's pages".to_string() } else { "Back to Pages".to_string() },
+                            back_label: if on_list.is_some() { "This session's blueprints".to_string() } else { "Back to Blueprints".to_string() },
                         }
                     }
                 },
@@ -1467,7 +1467,7 @@ fn FolderSheet(page: PageEntry, open: bool, on_close: EventHandler<()>) -> Eleme
     let m = pg::machine_of(&hub.read().hosts, &page.host);
     let added = inyon_chat_core::js::local_time(page.added as f64, platform::clock().tz_minutes).month_day();
     let rows = [
-        ("Page", page.name.clone(), false),
+        ("Blueprint", page.name.clone(), false),
         ("Folder", page.folder.clone(), true),
         ("Machine", if m.online { m.name.clone() } else { format!("{} · offline", m.name) }, false),
         ("Project", pg::project_name(&page.project), false),
@@ -1595,7 +1595,7 @@ fn AddFolderSheet(open: bool, on_close: EventHandler<()>) -> Element {
                 }
                 p { class: "pages-note",
                     "Agents do this for you with "
-                    code { class: "mono", "inyon pages add" }
+                    code { class: "mono", "inyon blueprints add" }
                     "."
                 }
             }
@@ -1664,7 +1664,7 @@ fn PageRow(p: PageEntry, m: PageMachine, changed: bool) -> Element {
     }
 }
 
-/// "Pages on this machine", on a machine's page; nothing when it has none.
+/// "Blueprints on this machine", on a machine's page; nothing when it has none.
 #[component]
 pub fn MachinePages(host: String) -> Element {
     let mut pages: Vec<PageEntry> = PAGES.read().pages.iter().flatten().filter(|p| p.host == host).cloned().collect();
@@ -1674,7 +1674,7 @@ pub fn MachinePages(host: String) -> Element {
     pages.sort_by(|a, b| pg::changed_at(b).partial_cmp(&pg::changed_at(a)).unwrap_or(std::cmp::Ordering::Equal));
     rsx! {
         section { class: "machine-pages",
-            div { class: "section-label", h2 { "Pages on this machine" } }
+            div { class: "section-label", h2 { "Blueprints on this machine" } }
             PageRows { pages }
         }
     }
@@ -1762,9 +1762,9 @@ pub fn SessionPages(here: Here, side: Side) -> Element {
         button {
             class: if on { "button button-sm button-ghost press session-pages session-pages-on" } else { "button button-sm button-ghost press session-pages" },
             r#type: "button",
-            "aria-label": if changed { format!("Pages: {n}, changed") } else { format!("Pages: {n}") },
+            "aria-label": if changed { format!("Blueprints: {n}, changed") } else { format!("Blueprints: {n}") },
             "aria-pressed": wide.then_some(if on { "true" } else { "false" }),
-            title: "This session's pages",
+            title: "This session's blueprints",
             onclick: move |_| {
                 if !wide {
                     sheet.set(true);
@@ -1779,18 +1779,18 @@ pub fn SessionPages(here: Here, side: Side) -> Element {
                 }
             },
             Glyph { icon: Icon::PanelsTopLeft, size: 14 }
-            span { class: "wide-label", "Pages" }
+            span { class: "wide-label", "Blueprints" }
             span { class: "mono tabular", "{n}" }
             if changed {
                 ChangedDot {}
             }
         }
         if !wide {
-            Sheet { open: sheet(), on_close: move |_| sheet.set(false), title: "Pages", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
+            Sheet { open: sheet(), on_close: move |_| sheet.set(false), title: "Blueprints", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
                 if parts.is_empty() {
                     p { class: "sheet-text",
                         "Sites an agent adds with "
-                        code { class: "mono", "inyon pages add" }
+                        code { class: "mono", "inyon blueprints add" }
                         " in this session show up here."
                     }
                 } else {
@@ -1832,7 +1832,7 @@ pub fn SessionSide(here: Here, side: Side) -> Element {
     if let Some(p) = shown {
         let m = pg::machine_of(&h.hosts, &p.host);
         return rsx! {
-            aside { class: "session-side", "aria-label": "Pages",
+            aside { class: "session-side", "aria-label": "Blueprints",
                 DesktopViewer { key: "{p.host}/{p.slug}", p, m, docked: true, on_list: move |_| page.set(None), on_close: move |_| close() }
             }
         };
@@ -1840,14 +1840,14 @@ pub fn SessionSide(here: Here, side: Side) -> Element {
     let tmux = here.tmux.clone();
     let parts = sections(list, tmux.as_deref());
     rsx! {
-        aside { class: "session-side", "aria-label": "Pages",
+        aside { class: "session-side", "aria-label": "Blueprints",
             div { class: "side-head",
                 Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" }
-                h2 { class: "side-title", "Pages" }
+                h2 { class: "side-title", "Blueprints" }
                 if let Some(t) = &tmux {
                     span { class: "side-tmux mono truncate", "{t}" }
                 }
-                button { class: "icon-button icon-button-lg press side-close", r#type: "button", "aria-label": "Close pages", title: "Close", onclick: move |_| close(),
+                button { class: "icon-button icon-button-lg press side-close", r#type: "button", "aria-label": "Close blueprints", title: "Close", onclick: move |_| close(),
                     Glyph { icon: Icon::X, size: 16 }
                 }
             }
@@ -1855,7 +1855,7 @@ pub fn SessionSide(here: Here, side: Side) -> Element {
                 if parts.is_empty() {
                     p { class: "side-empty",
                         "Sites an agent adds with "
-                        code { class: "mono", "inyon pages add" }
+                        code { class: "mono", "inyon blueprints add" }
                         " in this session show up here."
                     }
                 }

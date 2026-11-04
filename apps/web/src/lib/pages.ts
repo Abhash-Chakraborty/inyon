@@ -117,14 +117,14 @@ export function sessionPages(pages: Page[], host: string, cwd: string | undefine
 }
 
 /**
- * The pages a reply links to, as `/pages/<host>/<slug>` (what `inyon pages add` prints), each once
- * and in order, with the host as this app names it: a session that came through a paired hub
+ * The pages a reply links to, as `/blueprints/<host>/<slug>` (what `inyon blueprints add` prints)
+ * or `/pages/<host>/<slug>` (before 0.25), each once and in order, with the host as this app names it: a session that came through a paired hub
  * names that hub's machines.
  */
 export function linkedPages(text: string, sessionHost: string): string[] {
   const hub = isHubHost(sessionHost) ? sessionHost.slice(0, sessionHost.indexOf('/') + 1) : ''
   const out: string[] = []
-  for (const m of text.matchAll(/(?:^|[^\w/.-])(?:https?:\/\/[^\s/]+)?\/pages\/([\w.%-]+)\/([a-z0-9][a-z0-9-]{0,62})(?![\w-])/g)) {
+  for (const m of text.matchAll(/(?:^|[^\w/.-])(?:https?:\/\/[^\s/]+)?\/(?:pages|blueprints)\/([\w.%-]+)\/([a-z0-9][a-z0-9-]{0,62})(?![\w-])/g)) {
     let host: string
     try {
       host = decodeURIComponent(m[1]!)
@@ -232,7 +232,7 @@ export function previewRefusal(url: string, appOrigins: string[]): string | null
   } catch {
     return null
   }
-  return appOrigins.includes(origin) ? 'That address is Inyon itself, and a preview of it could act as you. Pages an agent made open under Pages.' : null
+  return appOrigins.includes(origin) ? 'That address is Inyon itself, and a preview of it could act as you. Sites an agent made open under Blueprints.' : null
 }
 
 /** This app's own address and every paired hub's, which the Preview tab refuses. */

@@ -1,30 +1,32 @@
 ---
-title: Pages
-description: Open the plans and mockups your agents build as pages in the app, on your phone or desktop, each one sandboxed away from your sign-in.
+title: Blueprints
+description: Open the plans and mockups your agents build in the app, grouped by the tmux session that made them, each one sandboxed away from your sign-in.
 ---
 
-From 0.20 a site an agent makes, such as a [Blueprint](skills.md#blueprint) plan with its mockups and progress board, opens inside Inyon under **Pages**. You don't run a server or copy a link around: the agent adds the folder once, and the page is in the app on every device you use.
+From 0.20 a site an agent makes, such as a [Blueprint](skills.md#blueprint) plan with its mockups and progress board, opens inside Inyon under **Blueprints**. You don't run a server or copy a link around: the agent adds the folder once, and the page is in the app on every device you use.
+
+From 0.25 this part of the app is called **Blueprints** (it was **Pages**), and the command is `inyon blueprints`. `inyon pages` still works as another name for it, and so do the app's old `/pages/…` addresses.
 
 ## How a page gets there
 
 An agent with the Blueprint skill does this on its own when it finishes a site. It runs one command, and you can run the same command for any folder with an `index.html` in it:
 
 ```sh
-inyon pages add ./private/plans/my-plan --name "My plan"
+inyon blueprints add ./private/plans/my-plan --name "My plan"
 ```
 
-It answers with where the page sits in the app:
+It answers with where the page sits in the app, under the tmux session you ran it in (or the project's folder outside tmux):
 
 ```
-"My plan" is in Inyon: Pages > abhash-arm > custom-tmux
-Open it in the app at /pages/local/my-plan
+"My plan" is in Inyon: Blueprints > custom-tmux on abhash-arm
+Open it in the app at /blueprints/local/my-plan
 ```
 
-`inyon pages` lists the pages on a computer and `inyon pages rm <slug>` takes one off the list. Adding the same folder again is safe and keeps its place. The folder stays where it is, and the app shows its files as they are now, so a page an agent keeps editing is always current. [The inyon command](cli.md#pages) has every option.
+`inyon blueprints` lists the pages on a computer and `inyon blueprints rm <slug>` takes one off the list. Adding the same folder again is safe and keeps its place. The folder stays where it is, and the app shows its files as they are now, so a page an agent keeps editing is always current. [The inyon command](cli.md#blueprints) has every option.
 
 In the app, **Add a folder** does the same: pick the machine, type the folder's full path (starting with `/`, or a drive letter on Windows) and a name.
 
-### Pages the hub finds
+### Blueprints the hub finds
 
 From 0.22.4 a site an agent made but never added shows up by itself. Every 5 minutes, while the app is open somewhere or a browser takes page notifications, the hub has each machine's `inyon` look in the folders its agent sessions run in, up to 4 folders down, and in their project's `private/plans`. A folder with Blueprint's `.inyon-page.json` next to its `index.html` that isn't listed yet is added, as made by that session's agent. It skips folders starting with a dot, `node_modules`, `target`, `dist`, `build`, `vendor` and `__pycache__`, and doesn't look through `/` or your home folder itself. From 0.22.5 it also skips test folders (`test`, `tests`, `fixtures`, `__fixtures__` and `testdata`), so a sample site that a project's tests use isn't listed as a page. From 0.25 the hub also keeps the tmux session that agent runs in, and follows it by the conversation: rename the tmux session and the page goes with it. A page whose agent has stopped, or one added by hand from a tmux pane, follows a rename the hub sees happen while the machine is connected.
 
@@ -32,19 +34,19 @@ A page you remove stays removed: `pages.json` remembers its folder, and the hub 
 
 ### In a session
 
-From 0.22.3 a page also shows where you work with the agent that made it. When a reply has the page's `/pages/…` link in it, the page shows as a card under the reply; tap it to open the page. A session's side panel (the **Activity** sheet on a phone) gets a **Pages** tab when the session has pages: those in its project, and those in folders under the one it runs in, on the same machine. From 0.22.5 it also lists the pages that session added, wherever their folders are.
+From 0.22.3 a page also shows where you work with the agent that made it. When a reply has the page's `/blueprints/…` link in it (`/pages/…` before 0.25), the page shows as a card under the reply; tap it to open the page. A session's side panel (the **Activity** sheet on a phone) gets a **Pages** tab (**Blueprints** from 0.25) when the session has pages: those in its project, and those in folders under the one it runs in, on the same machine. From 0.22.5 it also lists the pages that session added, wherever their folders are.
 
-From 0.25 a session's pages are the ones made in its tmux session, the way Claude's artifacts belong to a chat. The session's header has a **Pages** button with how many there are, and a dot when one changed since you opened it. On a desktop it opens them beside the chat: the list first, or the page itself when there's only one, and a page you pick opens right there, with the way back to the list. On a phone they open in a sheet, and a page opens full screen with **Back** returning to the session. Both follow the list live, so a page the agent adds or moves on shows up as it happens. The pages this conversation made come first, then those that earlier conversations in the same tmux session made. A page made in another tmux session stays out, even in the same folder. A page whose tmux session isn't known (one added outside tmux, or before 0.25 by a conversation that has ended) shows by its folder, as before.
+From 0.25 a session's pages are the ones made in its tmux session, the way Claude's artifacts belong to a chat. The session's header has a **Blueprints** button with how many there are, and a dot when one changed since you opened it. On a desktop it opens them beside the chat: the list first, or the page itself when there's only one, and a page you pick opens right there, with the way back to the list. On a phone they open in a sheet, and a page opens full screen with **Back** returning to the session. Both follow the list live, so a page the agent adds or moves on shows up as it happens. The pages this conversation made come first, then those that earlier conversations in the same tmux session made. A page made in another tmux session stays out, even in the same folder. A page whose tmux session isn't known (one added outside tmux, or before 0.25 by a conversation that has ended) shows by its folder, as before.
 
-## Pages on your other computers
+## Blueprints on your other computers
 
-From 0.22 the hub also shows the pages on the computers joined to it, such as a Windows laptop, and on servers it reaches over SSH that have `inyon` installed. Run `inyon pages add` on that computer, or use **Add a folder** and pick it, and the page shows under that computer's name. Both the hub and the computer need 0.22 or later; an older computer's pages don't show until you update it.
+From 0.22 the hub also shows the pages on the computers joined to it, such as a Windows laptop, and on servers it reaches over SSH that have `inyon` installed. Run `inyon blueprints add` on that computer, or use **Add a folder** and pick it, and the page shows under that computer's name. Both the hub and the computer need 0.22 or later; an older computer's pages don't show until you update it.
 
-The computer's own `inyon` reads the files and sends them to the hub, which checks every request by the same rules as for its own pages: no names starting with a dot, nothing a symlink leads to outside the folder. A page whose computer is offline doesn't open until it's back. From 0.22.3, while you have Pages open, the computer tells the hub when a page changes (it looks every 2 seconds, and from 0.23.1 slows to every 10 seconds while nothing changes), the hub keeps the files it already fetched until something in that folder changes, and a single file can be up to 64 MB. A computer with an older `inyon` is asked for its list at most every 15 seconds, and sends files of up to 8 MB.
+The computer's own `inyon` reads the files and sends them to the hub, which checks every request by the same rules as for its own pages: no names starting with a dot, nothing a symlink leads to outside the folder. A page whose computer is offline doesn't open until it's back. From 0.22.3, while you have Blueprints open, the computer tells the hub when a page changes (it looks every 2 seconds, and from 0.23.1 slows to every 10 seconds while nothing changes), the hub keeps the files it already fetched until something in that folder changes, and a single file can be up to 64 MB. A computer with an older `inyon` is asked for its list at most every 15 seconds, and sends files of up to 8 MB.
 
 ## On a phone
 
-**Pages** is the second tab, between **Overview** and **+**. Its badge counts pages that changed since you last opened them. The list is grouped by machine, then by project: the folder's git repository, or the repository's main folder when the site sits in a worktree. From 0.22.5 a page that a session added, or that the hub found in a session's folder, is grouped under that session's name instead, and the heading changes when you rename the session. A page whose session Inyon doesn't know keeps the project's name. The filter matches either. From 0.25 the list is grouped by tmux session first: the heading is the tmux session's name and changes when you rename it, and every site made in that session sits under it, whichever conversation made it. The machine is a small label next to the heading when the list spans more than one machine, or when the machine is offline. Pages with no known session group by project after the sessions. Each card shows the page's name, a bar with how many tasks are done out of how many, what the agent is on now and when that board was last updated. The bar, the line and the time come from the site's `progress.json`, so a page without one shows only its name and when it was added. The hub reads it only when it's a plain file of up to 1 MB, not a symlink. A page you haven't opened since it changed has a dot. From 0.22.4 a task done on a board also comes as a [notification](notifications.md#what-youre-told-about) that opens the page, so you hear "3 of 12 done" without opening the plan.
+**Blueprints** is the second tab, between **Overview** and **+**. Its badge counts pages that changed since you last opened them. The list is grouped by machine, then by project: the folder's git repository, or the repository's main folder when the site sits in a worktree. From 0.22.5 a page that a session added, or that the hub found in a session's folder, is grouped under that session's name instead, and the heading changes when you rename the session. A page whose session Inyon doesn't know keeps the project's name. The filter matches either. From 0.25 the list is grouped by tmux session first: the heading is the tmux session's name and changes when you rename it, and every site made in that session sits under it, whichever conversation made it. The machine is a small label next to the heading when the list spans more than one machine, or when the machine is offline. Pages with no known session group by project after the sessions. Each card shows the page's name, a bar with how many tasks are done out of how many, what the agent is on now and when that board was last updated. The bar, the line and the time come from the site's `progress.json`, so a page without one shows only its name and when it was added. The hub reads it only when it's a plain file of up to 1 MB, not a symlink. A page you haven't opened since it changed has a dot. From 0.22.4 a task done on a board also comes as a [notification](notifications.md#what-youre-told-about) that opens the page, so you hear "3 of 12 done" without opening the plan.
 
 Tap a card to open the page full screen. The bar on top has:
 
@@ -62,7 +64,7 @@ Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Revo
 
 The Android app lists the pages of every hub you paired, all together, and from 0.24 also those on the computers paired with the phone directly.
 
-### Pages on the phone's own computers
+### Blueprints on the phone's own computers
 
 A computer paired with the phone over the phone link needs no hub for its pages. The phone asks the computer's own `inyon` for the list and for each file of a page, over the same encrypted link it uses for everything else, and shows the page in the same sandboxed viewer. The rules are the hub's: nothing outside the page's folder, no names starting with a dot, nothing a symlink leads to outside the folder. A page there can't load anything from the internet either.
 
@@ -76,7 +78,7 @@ A few things differ from a page behind a hub:
 
 ## On a desktop
 
-**Pages** sits in the sidebar between **Machines** and **Settings**, with the number of pages, or of changed pages when there are any. The screen has the list on the left as a tree of sessions and projects (of machines and projects before 0.25), with a filter (press `/` to jump to it), and the open page on the right. Right-click a row for the same menu as on a phone. Clicking the open page's row again opens it with a new link, as **Reload** does.
+**Blueprints** sits in the sidebar between **Machines** and **Settings**, with the number of pages, or of changed pages when there are any. The screen has the list on the left as a tree of sessions and projects (of machines and projects before 0.25), with a filter (press `/` to jump to it), and the open page on the right. Right-click a row for the same menu as on a phone. Clicking the open page's row again opens it with a new link, as **Reload** does.
 
 Above the page:
 
@@ -90,7 +92,7 @@ Above the page:
 | Open in new tab | The page on its own in a browser tab, with a new 12-hour link. From 0.25 it opens the part or note on screen |
 | **⋯** | **Revoke links**, **Copy folder path**, **Show folder** and **Remove** |
 
-A machine's own page lists its pages too, under **Pages on this machine**.
+A machine's own page lists its pages too, under **Blueprints on this machine**.
 
 ## Notes
 
@@ -116,7 +118,7 @@ An agent wrote the page, and an agent can be talked into writing anything, so In
 - **It can't see its folder's private files.** Names starting with a dot, such as `.git` or `.env`, are never served, and neither is anything a symlink leads to outside the folder.
 - **It can't keep things.** The browser gives it no cookies and no storage, so a page that tries to save settings gets an error instead.
 
-A page can still run its own scripts, handle its forms in those scripts, open links in a new window and offer files to download, which is what a plan page needs. [Security](security.md#pages) has the details.
+A page can still run its own scripts, handle its forms in those scripts, open links in a new window and offer files to download, which is what a plan page needs. [Security](security.md#blueprints) has the details.
 
 ## What a page can still do
 
@@ -129,7 +131,7 @@ So treat a page you didn't check like a link from a stranger:
 
 > **Warning:** Never type a password, token or key into a page. Inyon never asks you to sign in inside a page. A page opened in its own tab shows your hub's address in the address bar, because pages are served on the hub's own port. That doesn't make it the hub's sign-in screen. A separate address for pages is planned.
 
-For the same reason, a session's **Preview** tab won't show Inyon's own address. It says **Not shown here**, because a preview of the app could act as you. Open agent-made pages under Pages instead.
+For the same reason, a session's **Preview** tab won't show Inyon's own address. It says **Not shown here**, because a preview of the app could act as you. Open agent-made pages under Blueprints instead.
 
 ## When a page won't open
 
@@ -139,9 +141,9 @@ For the same reason, a session's **Preview** tab won't show Inyon's own address.
 | **Can't reach *hub* now** under the bar, or **The hub is out of reach** | The phone's last check with that hub failed. The page stays as it was and catches up when the hub answers. Check the phone's connection or VPN |
 | ***hub* forgot this phone** | The hub refused the phone (it was forgotten on the hub), so its pages left the list. Pair the phone again from the hub |
 | **Update inyon on *machine* to open its pages here.** | That computer is paired with the phone directly and runs an `inyon` from before 0.22, which can't serve pages. Run `inyon update` on it |
-| **This page is gone** | It was taken off the list on that machine. Add the folder again if you still want it |
+| **This blueprint is gone** | It was taken off the list on that machine. Add the folder again if you still want it |
 | **Couldn't open "*name*"** | The app couldn't get a link from the hub; the reason is under it. **Try again** |
-| **Not found** inside the page | The page's folder was moved or deleted, or a link inside the page points at a file that isn't there. `inyon pages` on that computer says when a folder is gone; add it again from its new place |
+| **Not found** inside the page | The page's folder was moved or deleted, or a link inside the page points at a file that isn't there. `inyon blueprints` on that computer says when a folder is gone; add it again from its new place |
 | **~/.inyon/pages.json isn't a page list Inyon can read** | The file isn't valid JSON, isn't a plain file (a named pipe, say) or is bigger than 4 MB. Fix it or delete it, then try again. A symlink to a real list is fine |
 | **The hub can't write in ~/.inyon** when adding or removing a page | The hub's user can't write to `~/.inyon` or remove a `pages.json.lock` left behind there. Make sure both belong to the hub's user, then try again |
 | **Couldn't revoke the links**, because the hub couldn't write to its data folder | The hub's disk is full or read-only. The old links stay closed only until the hub restarts. Free some space, then revoke again |

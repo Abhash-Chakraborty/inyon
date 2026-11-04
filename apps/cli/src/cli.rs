@@ -108,9 +108,11 @@ enum Command {
         #[arg(long, hide = true)]
         pause: bool,
     },
-    /// The sites your agents make, shown in the app under Pages: add, list or remove them
+    /// The sites your agents make, shown in the app under Blueprints: add, list or remove them
+    /// (`inyon pages` is the same command, and what an inyon before 0.25 knows)
+    #[command(name = "blueprints", visible_alias = "pages")]
     Pages {
-        /// List the pages on all the hub's machines instead of this one's
+        /// List the blueprints on all the hub's machines instead of this one's
         #[arg(long)]
         hub: bool,
         #[command(subcommand)]
@@ -159,7 +161,7 @@ enum Command {
     },
     /// Read the docs here, without a browser: list them, or print one page
     Docs {
-        /// A page's name or a few words from its title (hub, pages, add machines)
+        /// A page's name or a few words from its title (hub, blueprints, add machines)
         topic: Vec<String>,
     },
     /// Print the version
@@ -285,21 +287,21 @@ enum SkillAction {
 
 #[derive(Subcommand)]
 enum PagesAction {
-    /// Show a site's folder in the app under Pages (it needs an index.html)
+    /// Show a site's folder in the app under Blueprints (it needs an index.html)
     Add {
         /// The site's folder
         dir: std::path::PathBuf,
         /// The name the app shows (default: the site's own, its <title>, or the folder's name)
         #[arg(long)]
         name: Option<String>,
-        /// The page's name in links: lowercase letters, digits and dashes (default: the site's own, or the folder's name)
+        /// The blueprint's name in links: lowercase letters, digits and dashes (default: the site's own, or the folder's name)
         #[arg(long)]
         slug: Option<String>,
     },
-    /// The pages on this machine (the same as plain `inyon pages`)
+    /// The blueprints on this machine (the same as plain `inyon blueprints`)
     #[command(visible_alias = "list")]
     Ls,
-    /// Take a page out of the app; its folder stays as it is
+    /// Take a blueprint out of the app; its folder stays as it is
     #[command(visible_alias = "remove")]
     Rm { slug: String },
     /// One file of a page, for the hub this machine is joined to (with --json)
@@ -567,7 +569,7 @@ pub fn main() {
             code
         }
         Some(Command::Pages { hub: true, action: None | Some(PagesAction::Ls) }) => commands::finish(crate::hub_api::pages_command(), json),
-        Some(Command::Pages { hub: true, .. }) => commands::finish(Err("--hub only lists pages: inyon pages --hub".into()), json),
+        Some(Command::Pages { hub: true, .. }) => commands::finish(Err("--hub only lists blueprints: inyon blueprints --hub".into()), json),
         Some(Command::Sessions) => commands::finish(crate::hub_api::sessions_command(), json),
         Some(Command::Read { target, lines }) => commands::finish(crate::hub_api::read_command(&target, lines), json),
         Some(Command::Answer { target, choice }) => commands::finish(crate::hub_api::answer_command(&target, &choice.join(" ")), json),

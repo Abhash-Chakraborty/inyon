@@ -140,6 +140,12 @@ fn the_instructions_start_with_the_line_that_lets_inyon_rewrite_them() {
     // reading runs without asking; sending and answering ask first
     let allow = claude_settings()["permissions"]["allow"].clone();
     assert!(allow.as_array().unwrap().iter().all(|a| !a.as_str().unwrap().contains("send") && !a.as_str().unwrap().contains("answer")));
+    // both names of the blueprints command read without asking; the instructions keep the old one,
+    // which a settings.json written before 0.25 allows too
+    for name in ["Bash(inyon pages:*)", "Bash(inyon blueprints:*)"] {
+        assert!(allow.as_array().unwrap().iter().any(|a| a == name), "{name}");
+    }
+    assert!(text.contains("inyon pages --hub"));
     assert!(launch_flags(AgentKind::Codex, true).iter().any(|f| f.contains("network_access=true")));
     assert!(launch_flags(AgentKind::Claude, false).is_empty());
     // without its rule, Codex asks before anything that isn't known to be safe

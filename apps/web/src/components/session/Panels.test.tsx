@@ -69,7 +69,7 @@ describe("the session's pages", () => {
     usePages.setState({ pages: [page('robot', { progress: { done: 2, total: 3, now: 'Wiring' } }), page('elsewhere', { project: '/home/me/other', folder: '/home/me/other/p' })] })
     const user = userEvent.setup()
     panel()
-    await user.click(screen.getByRole('tab', { name: /Pages/ }))
+    await user.click(screen.getByRole('tab', { name: /Blueprints/ }))
     const link = screen.getByRole('link', { name: /Plan robot/ })
     expect(link.getAttribute('href')).toBe('/pages/box/robot')
     expect(link.textContent).toContain('Wiring')

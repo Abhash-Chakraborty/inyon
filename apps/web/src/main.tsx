@@ -95,6 +95,8 @@ function App() {
           <Route path="machines/:host" element={<MachinePage />} />
           <Route path="pages" element={<PagesPage />} />
           <Route path="pages/:host/:slug" element={<PagesPage />} />
+          <Route path="blueprints" element={<PagesPage />} />
+          <Route path="blueprints/:host/:slug" element={<PagesPage />} />
           <Route path="temp" element={<TempPage />} />
           <Route path="temp/:host" element={<TempPage />} />
           <Route path="settings" element={<Settings />} />

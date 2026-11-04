@@ -301,20 +301,19 @@ fn word(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
 }
 
-/// The pages a reply links to, as `/pages/<host>/<slug>` (what `inyon pages add` prints), each once
-/// and in order, with the host as this app names it: a session that came through a paired hub names
-/// that hub's machines. The rule of lib/pages.ts's pattern, read by hand:
+/// The pages a reply links to, as `/blueprints/<host>/<slug>` (what `inyon blueprints add` prints)
+/// or `/pages/<host>/<slug>` (what it printed before 0.25), each once and in order, with the host
+/// as this app names it: a session that came through a paired hub names that hub's machines. The rule of lib/pages.ts's pattern, read by hand:
 /// `(?:^|[^\w/.-])(?:https?://[^\s/]+)?/pages/([\w.%-]+)/([a-z0-9][a-z0-9-]{0,62})(?![\w-])`.
 pub fn linked_pages(text: &str, session_host: &str) -> Vec<String> {
-    const MARK: &str = "/pages/";
+    const MARKS: [&str; 2] = ["/pages/", "/blueprints/"];
     let hub = if is_hub_host(session_host) { &session_host[..session_host.find('/').map_or(0, |i| i + 1)] } else { "" };
     let b = text.as_bytes();
     let mut out: Vec<String> = Vec::new();
     // where the last match ended: a match never starts inside the one before it
     let mut pos = 0usize;
     let mut from = 0usize;
-    while let Some(off) = text[from..].find(MARK) {
-        let i = from + off;
+    while let Some((i, mark)) = MARKS.iter().filter_map(|m| text[from..].find(m).map(|off| (from + off, m.len()))).min() {
         from = i + 1;
         // what may stand in front: the start, a character outside [\w/.-], or a full address
         let boundary = |at: usize| at == 0 || (at > pos && !(word(b[at - 1]) || b"/.-".contains(&b[at - 1])));
@@ -333,7 +332,7 @@ pub fn linked_pages(text: &str, session_host: &str) -> Vec<String> {
         if !(direct || address()) {
             continue;
         }
-        let mut k = i + MARK.len();
+        let mut k = i + mark;
         let host_start = k;
         while k < b.len() && (word(b[k]) || b".%-".contains(&b[k])) {
             k += 1;
@@ -573,7 +572,7 @@ pub fn page_label(p: &PageEntry, changed: bool, online: bool, clock: Clock) -> S
 /// Who added a page, as the Folder sheet says it.
 pub fn added_by(by: &str) -> &str {
     match by {
-        "cli" => "inyon pages add",
+        "cli" => "inyon blueprints add",
         "app" => "the app",
         other => other,
     }
@@ -1011,6 +1010,9 @@ mod tests {
         assert!(linked_pages("/pages/local/planB", "local").is_empty());
         assert!(linked_pages(&format!("/pages/local/{}", "a".repeat(64)), "local").is_empty());
         assert_eq!(linked_pages("/pages/local/a-b-, then", "local"), ["local/a-b-"]);
+        // the address from 0.25, mixed with the old one
+        assert_eq!(linked_pages("at /blueprints/local/new and /pages/local/old, /blueprints/local/new", "local"), ["local/new", "local/old"]);
+        assert!(linked_pages("see src/blueprints/local/x", "local").is_empty());
     }
 
     #[test]
@@ -1095,7 +1097,7 @@ mod tests {
         assert_eq!(updated_line(&busy, c), "updated just now");
         assert_eq!(page_label(&busy, true, true, c), "plan, changed, 3 of 8 done, Wiring the viewer, updated just now");
         assert_eq!(page_label(&p, false, false, c), "plan, machine offline");
-        assert_eq!(added_by("cli"), "inyon pages add");
+        assert_eq!(added_by("cli"), "inyon blueprints add");
     }
 
     #[test]

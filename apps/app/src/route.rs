@@ -1,5 +1,6 @@
 //! Where the app is: the Overview, a session at `/m/<machine>/p/<pane>`, the machines at
-//! `/machines`, one machine at `/machines/<id>`, the pages at `/pages[/<machine>/<slug>]`, Settings at
+//! `/machines`, one machine at `/machines/<id>`, the blueprints at `/blueprints[/<machine>/<slug>]`
+//! (and `/pages/…`, their address before 0.25), Settings at
 //! `/settings` and the temp files at `/temp[/<machine>]`, as the web app routes them (App.tsx), under the
 //! `/next` base path while both apps run side by side. Links are plain hrefs;
 //! a click on one inside the app changes the route without loading the page again.
@@ -26,7 +27,7 @@ pub enum Route {
     Machine {
         id: String,
     },
-    /// the pages, with one open (`/pages/<machine>/<slug>`)
+    /// the blueprints, with one open (`/blueprints/<machine>/<slug>`, or `/pages/…`)
     Pages {
         page: Option<(String, String)>,
     },
@@ -75,8 +76,8 @@ impl Route {
         match parts.as_slice() {
             ["machines"] => Route::Machines { add: query.trim_start_matches('?').split('&').any(|kv| kv == "add=1" || kv.starts_with("add=")) },
             ["machines", id] => Route::Machine { id: decode(id) },
-            ["pages"] => Route::Pages { page: None },
-            ["pages", host, slug] => Route::Pages { page: Some((decode(host), decode(slug))) },
+            ["blueprints" | "pages"] => Route::Pages { page: None },
+            ["blueprints" | "pages", host, slug] => Route::Pages { page: Some((decode(host), decode(slug))) },
             ["settings"] => Route::Settings,
             ["temp"] => Route::Temp { host: None },
             ["temp", host] => Route::Temp { host: Some(decode(host)) },
@@ -91,9 +92,9 @@ impl Route {
             Route::Session { host, pane, view } => format!("{BASE}{}", inyon_chat_core::overview::pane_href(host, pane, *view)),
             Route::Machines { add } => format!("{BASE}/machines{}", if *add { "?add=1" } else { "" }),
             Route::Machine { id } => format!("{BASE}/machines/{}", inyon_chat_core::js::encode_uri_component(id)),
-            Route::Pages { page: None } => format!("{BASE}/pages"),
+            Route::Pages { page: None } => format!("{BASE}/blueprints"),
             Route::Pages { page: Some((host, slug)) } => {
-                format!("{BASE}/pages/{}/{}", inyon_chat_core::js::encode_uri_component(host), inyon_chat_core::js::encode_uri_component(slug))
+                format!("{BASE}/blueprints/{}/{}", inyon_chat_core::js::encode_uri_component(host), inyon_chat_core::js::encode_uri_component(slug))
             }
             Route::Settings => format!("{BASE}/settings"),
             Route::Temp { host: None } => format!("{BASE}/temp"),
@@ -298,9 +299,14 @@ mod tests {
 
     #[test]
     fn pages_route_as_the_web_app_does() {
+        assert_eq!(Route::parse("/next/blueprints", ""), Route::Pages { page: None });
+        assert_eq!(Route::parse("/next/blueprints/hub%3Ah1%2Flocal/my-plan", ""), Route::Pages { page: Some(("hub:h1/local".into(), "my-plan".into())) });
+        assert_eq!(Route::Pages { page: Some(("box one".into(), "plan".into())) }.href(), "/next/blueprints/box%20one/plan");
+        assert_eq!(Route::Pages { page: None }.href(), "/next/blueprints");
+        assert_eq!(Route::parse("/next/blueprints/a/b/c", ""), Route::Overview);
+        // the address before 0.25 still opens them
         assert_eq!(Route::parse("/next/pages", ""), Route::Pages { page: None });
-        assert_eq!(Route::parse("/next/pages/hub%3Ah1%2Flocal/my-plan", ""), Route::Pages { page: Some(("hub:h1/local".into(), "my-plan".into())) });
-        assert_eq!(Route::Pages { page: Some(("box one".into(), "plan".into())) }.href(), "/next/pages/box%20one/plan");
+        assert_eq!(Route::parse("/next/pages/local/my-plan", ""), Route::Pages { page: Some(("local".into(), "my-plan".into())) });
         assert_eq!(Route::parse("/next/pages/a/b/c", ""), Route::Overview);
     }
 

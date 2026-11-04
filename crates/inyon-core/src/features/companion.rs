@@ -144,7 +144,7 @@ Add `--json` to any of them for every detail.
 pub fn claude_settings() -> Value {
     json!({
         "permissions": {
-            "allow": ["Bash(inyon sessions:*)", "Bash(inyon read:*)", "Bash(inyon hub machines:*)", "Bash(inyon pages:*)", "Bash(inyon docs:*)"]
+            "allow": ["Bash(inyon sessions:*)", "Bash(inyon read:*)", "Bash(inyon hub machines:*)", "Bash(inyon pages:*)", "Bash(inyon blueprints:*)", "Bash(inyon docs:*)"]
         }
     })
 }

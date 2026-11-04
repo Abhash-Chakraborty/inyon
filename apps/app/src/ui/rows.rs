@@ -293,7 +293,7 @@ fn Turn(turn: AssistantTurn, live: bool, ctx: Ctx) -> Element {
                 for p in turn.parts.iter() {
                     PartView { key: "{p.key()}", part: p.clone(), live, ctx: ctx.clone() }
                 }
-                if !turn.open && text.contains("/pages/") {
+                if !turn.open && (text.contains("/pages/") || text.contains("/blueprints/")) {
                     super::pages::PageCards { text: text.clone(), host: ctx.host.clone() }
                 }
                 if !turn.open {

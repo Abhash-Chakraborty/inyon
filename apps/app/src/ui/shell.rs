@@ -158,9 +158,9 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                         span { class: "nav-count mono tabular", title: "{online} of {total} online", "{count}" }
                     }
                 }
-                a { class: nav_class(on_pages), href: "/next/pages", "aria-current": on_pages.then_some("page"),
+                a { class: nav_class(on_pages), href: "/next/blueprints", "aria-current": on_pages.then_some("page"),
                     Glyph { icon: Icon::PanelsTopLeft, size: 16 }
-                    "Pages"
+                    "Blueprints"
                     if changed > 0 {
                         span {
                             class: "nav-badge mono tabular",
@@ -200,14 +200,14 @@ fn TabBar(section: Section) -> Element {
                 }
                 "Overview"
             }
-            a { class: tab_class(on_pages), href: "/next/pages", "aria-current": on_pages.then_some("page"),
+            a { class: tab_class(on_pages), href: "/next/blueprints", "aria-current": on_pages.then_some("page"),
                 span { class: "tab-icon",
                     Glyph { icon: Icon::PanelsTopLeft, size: 21 }
                     if changed > 0 {
                         span { class: "tab-badge tab-badge-pages mono tabular", "aria-label": "{changed} changed", "{changed}" }
                     }
                 }
-                "Pages"
+                "Blueprints"
             }
             a { class: tab_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
                 Glyph { icon: Icon::Monitor, size: 21 }

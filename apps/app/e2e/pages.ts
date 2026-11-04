@@ -1,4 +1,4 @@
-// bun apps/app/e2e/pages.ts — Pages in the built app (apps/app/dist, from build.sh) in Chromium behind
+// bun apps/app/e2e/pages.ts — Blueprints in the built app (apps/app/dist, from build.sh) in Chromium behind
 // a stand-in hub: the page under the hub's own CSP for /next, the /ws2 overview and pages streams, the
 // page endpoints and made-up sites under /v/<token>/. Checks the list and the viewer at phone and
 // desktop sizes in light and dark, the sandboxed frame and its theme, live progress, the changed
@@ -83,12 +83,12 @@ function publishOverview() {
 }
 const called = (method: string, p: string) => state.calls.filter((c) => c.method === method && c.path === p)
 
-/** A reply that links to a page, as `inyon pages add` prints it. */
+/** A reply that links to a page, as `inyon blueprints add` prints it. */
 function chat(now: number) {
   const ts = (ago: number) => new Date(now - ago * 1000).toISOString()
   return [
     { kind: 'user', seq: 1, uuid: 'u1', ts: ts(300), text: 'Make a plan page for the checkout redesign.', images: 0 },
-    { kind: 'assistant', seq: 2, uuid: 'u2', ts: ts(200), msgId: 'm2', block: { type: 'text', text: 'The plan is up. Open it in the app at /pages/local/checkout-redesign' } },
+    { kind: 'assistant', seq: 2, uuid: 'u2', ts: ts(200), msgId: 'm2', block: { type: 'text', text: 'The plan is up. Open it in the app at /blueprints/local/checkout-redesign' } },
     { kind: 'turn_end', seq: 3, uuid: 'u3', ts: ts(199), durationMs: 41000 },
   ]
 }
@@ -250,8 +250,8 @@ try {
     const ctx = await browser.newContext({ ...phone, colorScheme: scheme })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/pages`)
-    await page.getByRole('heading', { name: 'Pages' }).waitFor()
+    await page.goto(`${base}/next/blueprints`)
+    await page.getByRole('heading', { name: 'Blueprints' }).waitFor()
     await page.locator('.page-card').nth(3).waitFor()
     await styled(page)
     const label = `phone ${scheme}`
@@ -286,7 +286,7 @@ try {
       await card.getByRole('button', { name: 'More for Checkout redesign' }).focus()
       await page.keyboard.press('Enter')
       await page.getByRole('menu').waitFor()
-      check(page.url().endsWith('/next/pages'), `${label}: Enter on ⋯ didn't open the page`)
+      check(page.url().endsWith('/blueprints'), `${label}: Enter on ⋯ didn't open the page`)
       await page.keyboard.press('Escape')
       await page.getByRole('menu').waitFor({ state: 'detached' })
       const other = page.locator('.page-card', { hasText: 'Passkeys rollout' })
@@ -298,14 +298,14 @@ try {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
       await page.getByRole('menu').waitFor()
       check((await menuItems(page))[0] === 'Open', `${label}: long press opens the menu`)
-      check(page.url().endsWith('/next/pages'), `${label}: the long press didn't open the page`)
+      check(page.url().endsWith('/blueprints'), `${label}: the long press didn't open the page`)
       await page.mouse.click(200, 120)
       await page.getByRole('menu').waitFor({ state: 'detached' })
     }
 
     // the viewer
     await card.click()
-    await page.waitForURL(/\/next\/pages\/local\/checkout-redesign$/)
+    await page.waitForURL(/\/next\/blueprints\/local\/checkout-redesign$/)
     const iframe = page.locator('iframe.page-frame')
     await iframe.waitFor()
     check(await page.getByText('Sandboxed page: never sign in here').isVisible(), `${label}: the sandbox line`)
@@ -332,8 +332,8 @@ try {
     await page.getByRole('menuitemradio', { name: 'Mockups' }).click()
     await inside.getByRole('heading', { name: 'Checkout redesign: mockups' }).waitFor()
     // back to the list: the page is no longer marked, here or in the badge, and that's kept
-    await page.getByRole('button', { name: 'Back to Pages' }).click()
-    await page.waitForURL(/\/next\/pages$/)
+    await page.getByRole('button', { name: 'Back to Blueprints' }).click()
+    await page.waitForURL(/\/next\/blueprints$/)
     await page.locator('.page-card').first().waitFor()
     check((await page.locator('.page-card', { hasText: 'Checkout redesign' }).locator('.changed-dot').count()) === 0, `${label}: an opened page loses its mark`)
     check((await page.locator('.tab-badge-pages').textContent()) === '3', `${label}: the badge counts one fewer`)
@@ -348,20 +348,20 @@ try {
     const ctx = await browser.newContext({ ...desktop, colorScheme: scheme })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/pages`)
+    await page.goto(`${base}/next/blueprints`)
     await styled(page)
     const label = `desktop ${scheme}`
     // nothing picked: the first changed page in the tree opens (the hub's machine, its projects by name)
-    await page.waitForURL(/\/next\/pages\/local\/passkeys$/)
+    await page.waitForURL(/\/next\/blueprints\/local\/passkeys$/)
     await page.locator('.tree-row', { hasText: 'Checkout redesign' }).click()
-    await page.waitForURL(/\/next\/pages\/local\/checkout-redesign$/)
+    await page.waitForURL(/\/next\/blueprints\/local\/checkout-redesign$/)
     const inside = page.frameLocator('iframe.page-frame')
     await inside.getByRole('heading', { name: 'Checkout redesign' }).waitFor()
     check((await page.locator('.tree-row').count()) === 4, `${label}: four rows in the tree`)
     check((await page.locator('.tree-row-on').textContent())?.includes('Checkout redesign'), `${label}: the open page is lit`)
     check((await page.locator('.crumbs').textContent())?.replace(/\s+/g, '') === 'studio/storefront/Checkoutredesign', `${label}: where it is (${await page.locator('.crumbs').textContent()})`)
     // the site's parts: a plan and mockups, no matrix
-    const parts = page.getByRole('radiogroup', { name: 'Part of the page' })
+    const parts = page.getByRole('radiogroup', { name: 'Part of the blueprint' })
     await parts.waitFor()
     check((await parts.getByRole('radio').allTextContents()).join(',') === 'Plan,Mockups', `${label}: the parts it has`)
     check((await page.locator('.viewer-foot').textContent())?.includes('link lasts 11 h 59 m') || (await page.locator('.viewer-foot').textContent())?.includes('link lasts 12 h 0 m'), `${label}: how long the link lasts (${await page.locator('.viewer-foot').textContent()})`)
@@ -462,7 +462,7 @@ try {
     await styled(page)
     const section = page.locator('.machine-pages')
     await section.waitFor()
-    check(await section.getByRole('heading', { name: 'Pages on this machine' }).isVisible(), 'machine: its pages section')
+    check(await section.getByRole('heading', { name: 'Blueprints on this machine' }).isVisible(), 'machine: its pages section')
     check((await section.locator('.page-row').count()) === 3, 'machine: its three pages')
     await page.screenshot({ path: path.join(shots, 'machine-pages-1440-light.png'), fullPage: true })
     await ctx.close()
@@ -481,9 +481,9 @@ try {
     await reply.waitFor()
     check((await reply.locator('.page-row').textContent())?.includes('Checkout redesign'), `${label}: the page a reply links to`)
     // this conversation's page and the tmux session's earlier one; not the accounts session's, nor another machine's
-    const button = page.getByRole('button', { name: 'Pages: 2, changed' })
+    const button = page.getByRole('button', { name: 'Blueprints: 2, changed' })
     await button.click()
-    const side = page.getByRole('complementary', { name: 'Pages' })
+    const side = page.getByRole('complementary', { name: 'Blueprints' })
     await side.waitFor()
     check((await button.getAttribute('aria-pressed')) === 'true', `${label}: the button shows the panel is open`)
     check((await side.locator('.side-label').allTextContents()).join('|') === 'This conversation|Earlier in storefront', `${label}: this conversation's first (${await side.locator('.side-label').allTextContents()})`)
@@ -496,7 +496,7 @@ try {
     state.pages.push({ host: 'local', slug: 'promo-codes', name: 'Promo codes', project: '/home/sam/code/storefront', by: 'claude', added: Date.now(), folder: '/home/sam/code/storefront/private/plans/promo-codes', session: 'chat-store-2', tmux: 'storefront', tmuxId: '$11' })
     publishPages()
     check(await until(async () => (await side.locator('.side-row-name').allTextContents()).join('|') === 'Promo codes|Checkout redesign|Cart mockups'), `${label}: a new page comes live, newest first`)
-    await page.getByRole('button', { name: 'Pages: 3, changed' }).waitFor()
+    await page.getByRole('button', { name: 'Blueprints: 3, changed' }).waitFor()
     // it opens in the panel, saying which page, session and machine
     await side.locator('.side-row', { hasText: 'Checkout redesign' }).click()
     const inside = page.frameLocator('.session-side iframe.page-frame')
@@ -509,21 +509,23 @@ try {
     await layout(page, `${label} viewer`)
     if (scheme === 'light') {
       // Open in browser opens what the frame shows: here the mockups
-      await side.getByRole('radiogroup', { name: 'Part of the page' }).getByRole('radio', { name: 'Mockups' }).click()
+      await side.getByRole('radiogroup', { name: 'Part of the blueprint' }).getByRole('radio', { name: 'Mockups' }).click()
       await inside.getByRole('heading', { name: 'Checkout redesign: mockups' }).waitFor()
       const [tab] = await Promise.all([ctx.waitForEvent('page'), side.getByRole('button', { name: 'Open in new tab' }).click()])
       check(await until(() => /\/v\/tok-checkout-redesign-\d+\/mockups\/$/.test(tab.url())), `${label}: the new tab opens the part on screen (${tab.url()})`)
       await tab.close()
       // back to the list, and closed
-      await side.getByRole('button', { name: "This session's pages" }).click()
+      await side.getByRole('button', { name: "This session's blueprints" }).click()
       await side.locator('.side-row').first().waitFor()
-      await side.getByRole('button', { name: 'Close pages' }).click()
+      await side.getByRole('button', { name: 'Close blueprints' }).click()
       await side.waitFor({ state: 'detached' })
-      check((await page.getByRole('button', { name: /^Pages: 3/ }).getAttribute('aria-pressed')) === 'false', `${label}: closed`)
+      check((await page.getByRole('button', { name: /^Blueprints: 3/ }).getAttribute('aria-pressed')) === 'false', `${label}: closed`)
       // the tmux session renamed: the list's heading follows it
       state.hosts[0]!.sessions[0].name = 'shop'
       publishOverview()
+      // by its address from before 0.25, which keeps working
       await page.goto(`${base}/next/pages/local/checkout-redesign`)
+      await page.getByRole('heading', { name: 'Blueprints' }).waitFor()
       const heads = () => page.locator('.tree-group .group-heading-name').allTextContents()
       // the running conversation's page follows at once; the hub moves the earlier one when it sees the rename
       check(await until(async () => (await heads()).join(',') === 'accounts,shop,storefront,docs-site'), `${label}: the heading follows a rename (${await heads()})`)
@@ -545,15 +547,15 @@ try {
     await page.goto(`${base}/next/m/local/p/11`)
     await styled(page)
     await page.locator('.reply-pages').waitFor()
-    await page.getByRole('button', { name: 'Pages: 2, changed' }).click()
-    const sheet = page.getByRole('dialog', { name: 'Pages' })
+    await page.getByRole('button', { name: 'Blueprints: 2, changed' }).click()
+    const sheet = page.getByRole('dialog', { name: 'Blueprints' })
     await sheet.waitFor()
     check((await sheet.locator('.side-label').allTextContents()).join('|') === 'This conversation|Earlier in storefront', `${label}: this conversation's first`)
     check((await sheet.locator('.page-row').count()) === 2, `${label}: two rows`)
     await page.screenshot({ path: path.join(shots, `session-sheet-390-${scheme}.png`) })
     await layout(page, `${label} sheet`)
     await sheet.locator('.page-row', { hasText: 'Cart mockups' }).click()
-    await page.waitForURL(/\/next\/pages\/local\/cart-mockups$/)
+    await page.waitForURL(/\/next\/blueprints\/local\/cart-mockups$/)
     await page.frameLocator('iframe.page-frame').getByRole('heading', { name: 'Cart mockups' }).waitFor()
     check((await page.locator('.viewer-titles .viewer-where').textContent()) === 'storefront', `${label}: the viewer names the session`)
     check(await page.getByRole('button', { name: 'Machine: studio' }).isVisible(), `${label}: and the machine`)
@@ -561,10 +563,10 @@ try {
     await layout(page, `${label} viewer`)
     await page.getByRole('button', { name: 'Back to the session' }).click()
     await page.waitForURL(/\/next\/m\/local\/p\/11$/)
-    // the Pages list's own viewer goes back to the list
-    await page.goto(`${base}/next/pages`)
+    // the Blueprints list's own viewer goes back to the list
+    await page.goto(`${base}/next/blueprints`)
     await page.locator('.page-card').first().click()
-    await page.getByRole('button', { name: 'Back to Pages' }).waitFor()
+    await page.getByRole('button', { name: 'Back to Blueprints' }).waitFor()
     await ctx.close()
   }
 } finally {
@@ -579,4 +581,4 @@ if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: Pages at 390x844 and 1440x900 in light and dark, the sandboxed frame and its theme, live progress, changed marks, menus by ⋯, right click and long press, parts, notes, devices, revoke, remove with Undo, add, the Folder sheet, and the pages on a machine, a session (side panel and sheet) and a reply; screenshots in ${shots}`)
+console.log(`ok: Blueprints at 390x844 and 1440x900 in light and dark, the sandboxed frame and its theme, live progress, changed marks, menus by ⋯, right click and long press, parts, notes, devices, revoke, remove with Undo, add, the Folder sheet, and the pages on a machine, a session (side panel and sheet) and a reply; screenshots in ${shots}`)

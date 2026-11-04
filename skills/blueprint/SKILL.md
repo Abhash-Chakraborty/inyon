@@ -59,8 +59,10 @@ root names the site for Inyon. It's a dot file, so no server shows it.
 8. **Publish it** where the reader can open it. Take the first of these that works:
    - **Inyon's command.** If `command -v inyon` finds it, run `inyon pages add <dir> --name "Product plan"`.
      It prints where the page sits in the app (`Pages > <machine> > <project>`; from Inyon 0.22.5 the app
-     files it under your session's name instead) and its app link
-     (`/pages/<host>/<slug>`). Hand over both.
+     files it under your session's name instead; from 0.25 the section is called Blueprints and the line
+     reads `Blueprints > <tmux session> on <machine>`) and its app link (`/pages/<host>/<slug>`, or
+     `/blueprints/<host>/<slug>` from 0.25). Hand over both. `inyon pages` works on every version; from
+     0.25 `inyon blueprints` is the same command.
    - **The script.** Without the command, run `node <skill>/scripts/publish.mjs <dir> --name "Product plan"
      --by <claude|codex|gemini|opencode>`. It adds the site to `~/.inyon/pages.json` itself, and the hub
      picks it up with no restart. It prints the same two lines.
@@ -70,7 +72,7 @@ root names the site for Inyon. It's a dot file, so no server shows it.
 
    **No hub on this machine.** When either command says "This machine doesn't run a hub":
    - *"The hub it's joined to shows its pages"* (publish.mjs exits 5): a hub on 0.22 or later shows the
-     page under this machine's name. Hand over the `Pages > <machine> > <project>` line; there's no app
+     page under this machine's name. Hand over the `Pages >` (or `Blueprints >`) line; there's no app
      link. With an older hub the app can't open it, so also serve the folder with serve.mjs as above (the
      script prints that line) and hand over the URL.
    - *"...and isn't joined to one"* (publish.mjs exits 6): nothing can show the page in the app. Serve the

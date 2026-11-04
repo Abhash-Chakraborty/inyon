@@ -127,17 +127,17 @@ fn adding_a_folder_lists_it_and_marks_it() {
     // and no app path that would open nothing
     assert!(stdout.contains("\"Handy & redesign\" is listed on "), "{stdout}");
     assert!(stdout.contains(", under handy-redesign.\n"), "{stdout}");
-    assert!(stdout.contains("isn't joined to one, so the app can't open this page"), "{stdout}");
+    assert!(stdout.contains("isn't joined to one, so the app can't open this blueprint"), "{stdout}");
     assert!(!stdout.contains("joined to shows"), "{stdout}");
-    assert!(!stdout.contains("/pages/local/"), "{stdout}");
+    assert!(!stdout.contains("/blueprints/local/"), "{stdout}");
     assert!(!stdout.contains("/v/"), "{stdout}");
     // joined to a hub: that hub shows it, under this machine
     fs::create_dir_all(h.dir.join(".inyon/node")).unwrap();
     fs::write(h.dir.join(".inyon/node/env"), "INYON_HUB=https://hub.example.ts.net\nINYON_TOKEN=t\n").unwrap();
     let (_, joined) = h.json(&["pages", "add", "work/handy-redesign/"]);
     let said = joined["message"].as_str().unwrap();
-    assert!(said.starts_with("\"Handy & redesign\" is in Inyon: Pages > ") && said.contains(" > handy-redesign (already listed)\n"), "{said}");
-    assert!(said.ends_with("This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later)."), "{said}");
+    assert!(said.starts_with("\"Handy & redesign\" is in Inyon: Blueprints > handy-redesign on ") && said.contains(" (already listed)\n"), "{said}");
+    assert!(said.ends_with("This machine doesn't run a hub. The hub it's joined to shows its blueprints (hub 0.22 or later)."), "{said}");
     assert_eq!((joined["hub"].as_bool(), joined["joined"].as_bool()), (Some(false), Some(true)));
     fs::remove_file(h.dir.join(".inyon/node/env")).unwrap();
 
@@ -389,13 +389,16 @@ fn on_the_hub_machine_there_is_no_note() {
     let m = v["message"].as_str().unwrap();
     assert!(!m.contains("doesn't run a hub"), "{m}");
     // the app's path, never a link with a token in it
-    assert!(m.contains("\"S\" is in Inyon: Pages > ") && m.contains(" > s\n"), "{m}");
-    assert!(m.contains("Open it in the app at /pages/local/s"), "{m}");
+    assert!(m.contains("\"S\" is in Inyon: Blueprints > s on "), "{m}");
+    assert!(m.contains("Open it in the app at /blueprints/local/s"), "{m}");
     assert!(!m.contains("/v/"), "{m}");
-    assert_eq!(v["app"], "/pages/local/s");
-    let (_, list) = h.json(&["pages", "list"]);
-    assert_eq!(list["pages"][0]["app"], "/pages/local/s");
-    assert!(list["message"].as_str().unwrap().contains("Open one in the app under Pages, or at /pages/local/<slug>"), "{list}");
+    assert_eq!(v["app"], "/blueprints/local/s");
+    // `inyon pages` is the same command
+    let (_, list) = h.json(&["blueprints", "list"]);
+    assert_eq!(list["pages"][0]["app"], "/blueprints/local/s");
+    assert!(list["message"].as_str().unwrap().contains("Open one in the app under Blueprints, or at /blueprints/local/<slug>"), "{list}");
+    let (_, old) = h.json(&["pages", "list"]);
+    assert_eq!(old["pages"], list["pages"]);
 }
 
 #[test]
@@ -425,7 +428,7 @@ fn removing_a_page_leaves_its_folder() {
     assert_eq!(list["pages"][0]["slug"], "b");
     let (code, _, stderr) = h.run(&["pages", "rm", "a"]);
     assert_eq!(code, 1);
-    assert!(stderr.contains("There's no page called \"a\" on this machine"), "{stderr}");
+    assert!(stderr.contains("There's no blueprint called \"a\" on this machine"), "{stderr}");
     assert_eq!(h.run(&["pages", "remove", "b"]).0, 0);
     assert!(h.list()["pages"].as_array().unwrap().is_empty());
 }
@@ -435,7 +438,7 @@ fn the_list_shows_each_page_and_what_is_wrong() {
     let h = Home::new("ls");
     let (code, stdout, _) = h.run(&["pages"]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("No pages on this machine yet"), "{stdout}");
+    assert!(stdout.contains("No blueprints on this machine yet"), "{stdout}");
 
     let a = h.site("sites/alpha", "Alpha");
     let b = h.site("sites/beta", "Beta");
@@ -462,8 +465,8 @@ fn the_list_shows_each_page_and_what_is_wrong() {
     let rows = v["pages"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows[0].get("app").is_none(), "{v}");
-    assert!(v["message"].as_str().unwrap().contains("Open one in the app under Pages > "), "{v}");
-    assert!(!v["message"].as_str().unwrap().contains("/pages/local/"), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Open one in the app under Blueprints, on "), "{v}");
+    assert!(!v["message"].as_str().unwrap().contains("/blueprints/local/"), "{v}");
     assert!(rows[0].get("problem").is_none());
     assert_eq!(rows[1]["problem"], "the folder is gone");
 

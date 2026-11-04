@@ -332,7 +332,7 @@ const PAGES = [
   { id: 'home', label: 'This computer', icon: 'monitor', render: home },
   { id: 'phones', label: 'Phones', icon: 'phone', render: phones },
   { id: 'hub', label: 'Hub', icon: 'hub', render: hub },
-  { id: 'pages', label: 'Pages', icon: 'pages', render: pagesScreen },
+  { id: 'pages', label: 'Blueprints', icon: 'pages', render: pagesScreen },
   { id: 'temp', label: 'Temp files', icon: 'trash', render: temp },
   { id: 'activity', label: 'Activity', icon: 'activity', render: activity },
   { id: 'settings', label: 'Settings', icon: 'settings', render: settings },
@@ -735,7 +735,7 @@ function pagesScreen() {
       const vp = h('div.viewport', { 'data-view': '' }, h('div.loading', 'Opening…'));
       const page = h('div.page.flush',
         h('div.bar',
-          btn('All pages', () => go('pages'), { icon: 'left', cls: 'ghost' }),
+          btn('All blueprints', () => go('pages'), { icon: 'left', cls: 'ghost' }),
           h('span.title', { 'data-view-title': '' }, pg.name),
           h('span.url.mono', pg.path),
           h('div.spacer'),
@@ -752,13 +752,13 @@ function pagesScreen() {
     { label: 'Open', icon: 'external', run: () => go('pages', { open: pg.slug }) },
     { label: 'Open the folder', icon: 'folder', run: () => call('openPath', { path: pg.path }) },
     'sep',
-    { label: 'Remove from Pages', icon: 'x', danger: true, run: () => call('pageRemove', { slug: pg.slug }).then(() => { toast(`${pg.name} is off the list; its folder stays.`); refresh(); }).catch((e) => toast(e.message)) },
+    { label: 'Remove from Blueprints', icon: 'x', danger: true, run: () => call('pageRemove', { slug: pg.slug }).then(() => { toast(`${pg.name} is off the list; its folder stays.`); refresh(); }).catch((e) => toast(e.message)) },
   ];
   return h('div.page', h('div.wrap',
-    head('Pages', 'Sites your agents made on this computer, like plans and mockups. Pages on your hub’s machines are under Hub › Pages.', btn('Add a folder', () => addPage(), { icon: 'plus', cls: 'primary' })),
+    head('Blueprints', 'Sites your agents made on this computer, like plans and mockups. Those on your hub’s machines are under Hub › Blueprints.', btn('Add a folder', () => addPage(), { icon: 'plus', cls: 'primary' })),
     h('section.card', S.pages.length
       ? h('div.rows', S.pages.map((pg) => withMenu(h('div.row.click', { onclick: () => go('pages', { open: pg.slug }) }, icon('pages'), h('div.grow', h('div.t', pg.name), h('div.d.mono', pg.path)), pg.project ? chip(pg.project) : null, btn('More', (e, b) => menuAt(b, items(pg)), { icon: 'more', iconOnly: true, cls: 'ghost sm icon' })), () => items(pg))))
-      : h('div.empty', h('div.big', icon('pages')), h('h2', 'No pages yet'), h('p', 'When an agent builds a plan or mockup site, it adds it here. You can add any folder with an index.html.'), btn('Add a folder', () => addPage(), { icon: 'plus' }))),
+      : h('div.empty', h('div.big', icon('pages')), h('h2', 'No blueprints yet'), h('p', 'When an agent builds a plan or mockup site, it adds it here. You can add any folder with an index.html.'), btn('Add a folder', () => addPage(), { icon: 'plus' }))),
   ));
 }
 
