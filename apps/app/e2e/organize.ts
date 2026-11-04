@@ -392,6 +392,9 @@ try {
     await page.locator('.menu .menu-item', { hasText: 'Snooze' }).tap()
     await page.locator('.menu-back').waitFor()
     check((await page.locator('.menu').count()) === 1, `${label}: one menu at a time on a phone`)
+    // the Back row counts when it's placed: the last row stays on the screen
+    const lastRow = (await page.locator('.menu-sub .menu-item').last().boundingBox())!
+    check(lastRow.y + lastRow.height <= 844 - 8, `${label}: the submenu's last row is on the screen (${JSON.stringify(lastRow)})`)
     if (scheme === 'light') {
       await page.screenshot({ path: path.join(shots, 'organize-submenu-390-light.png') })
       // ← goes back, and the keys still work: the focus is on the item the submenu came from

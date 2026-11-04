@@ -531,7 +531,8 @@ pub fn MenuLayer() -> Element {
             {
                 let n = rows(&items);
                 let (sx, sy) = if narrow {
-                    (left, sub_top(top, n, h))
+                    // its Back row is one more
+                    (left, sub_top(top, n + 1, h))
                 } else {
                     let r = dom::rect(&format!("menu-item-{parent}"))
                         .map_or((left, row_top(&all_items, parent, top), left + 220.0), |(l, t, r, _)| (l, t, r));

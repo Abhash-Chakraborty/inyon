@@ -311,11 +311,12 @@ pub fn run(op: OrgOp, hub: Signal<Hub>) {
         }
         op => {
             let many = keys_of(&op).len() > 1;
+            // the time of the click: a snooze is for an hour from now, or tomorrow from today
+            let clock = platform::clock();
             dioxus::core::spawn_forever(async move {
                 // planned once the change before it is in, from the marks it left
                 let _turn = SENDING.lock().await;
                 let org = ORG.peek().org.clone();
-                let clock = platform::clock();
                 let Plan { changes, undo, over_limit } = plan(&op, &org, clock.now as u64, &|p| wake(p, clock));
                 if over_limit {
                     toast::toast(format!("A session can have at most {MAX_TAGS} tags"), None, ToastTone::Error);
@@ -686,6 +687,8 @@ fn NoteSheet(open: bool, on_close: EventHandler<()>, k: Key) -> Element {
             let k = k.clone();
             busy.set(true);
             spawn(async move {
+                // its turn with the other changes, so its answer can't put back older tags
+                let _turn = SENDING.lock().await;
                 match api::organize_pane(&k.0, &k.1, &json!({ "note": note })).await {
                     Ok(mark) => {
                         crate::organize::take_mark(&mut ORG.write().org, &k, mark);
