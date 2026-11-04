@@ -866,3 +866,53 @@ fn a_window_that_moved_its_conversation_to_the_background_follows_that_session()
         assert_eq!(a.mapped_by, Some(MappedBy::Process));
     });
 }
+
+/// On Abhash's laptop two psmux sessions' hooks both wrote as %70.2 (4 Nov 2026), so the pane's
+/// chat followed whichever conversation spoke last, the other session's included. A hook line
+/// naming a transcript kept under another folder than the one this pane's Claude started in can't
+/// be its conversation: it's passed over.
+#[test]
+fn a_hook_line_naming_another_folders_conversation_is_not_this_panes_chat() {
+    run(|| async {
+        let b = ModeBox::new();
+        b.draw(&idle(""));
+        let now = now_ms() as f64 / 1000.0;
+        let annotate = |transcript: &'static str, cwd: &'static str| {
+            let rt = b.rt.clone();
+            async move {
+                let mut probe = mode_probe(now);
+                probe.agent_procs.get_mut("%9").unwrap().cwd = Some(cwd.into());
+                let hook = crate::tmux::tmux::HookPaneState {
+                    pane: "%9".into(),
+                    ts: now - 10.0,
+                    data: json!({ "session_id": "s-1", "transcript_path": transcript, "hook_event_name": "UserPromptSubmit" }),
+                    agent: None,
+                    event: None,
+                };
+                probe.hook_panes.insert("%9".into(), hook);
+                let pr = Rc::new(RefCell::new(probe));
+                rt.borrow_mut().probe = Some(pr.clone());
+                registry().annotate_agents(&rt, &pr).await.unwrap();
+                let a = pr.borrow().sessions[0].windows[0].panes[0].agent.clone().unwrap();
+                (a.transcript_path, a.mapped_by)
+            }
+        };
+        let theirs = r"C:\Users\a\.claude\projects\D--Development-Experiment\s-1.jsonl";
+        assert_eq!(annotate(theirs, r"D:\Development\Saits").await, (None, None));
+        let mine = r"C:\Users\a\.claude\projects\D--Development-Saits\s-1.jsonl";
+        assert_eq!(annotate(mine, r"D:\Development\Saits").await, (Some(mine.into()), Some(MappedBy::Hook)));
+        // Linux, and a process seen in a folder below the one it started in
+        assert_eq!(annotate("/home/u/.claude/projects/-w/s-1.jsonl", "/w/src").await.1, Some(MappedBy::Hook));
+        assert_eq!(annotate("/home/u/.claude/projects/-elsewhere/s-1.jsonl", "/w").await.1, None);
+    });
+}
+
+#[test]
+fn a_transcript_fits_the_folder_its_claude_started_in() {
+    use super::transcript_fits;
+    assert!(transcript_fits(Some("/home/u/p"), "/home/u/.claude/projects/-home-u-p/x.jsonl"));
+    assert!(transcript_fits(Some("/home/u/p/sub"), "/home/u/.claude/projects/-home-u-p/x.jsonl"));
+    assert!(!transcript_fits(Some("/home/u/q"), "/home/u/.claude/projects/-home-u-p/x.jsonl"));
+    assert!(transcript_fits(None, "/home/u/.claude/projects/-home-u-p/x.jsonl"));
+    assert!(transcript_fits(Some("/home/u/q"), "x.jsonl"));
+}

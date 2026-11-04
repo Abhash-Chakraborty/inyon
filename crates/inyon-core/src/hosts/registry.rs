@@ -1185,7 +1185,10 @@ impl Registry {
             info.transcript_path = Some(b.transcript);
             info.session_id = Some(b.session_id);
             info.mapped_by = Some(MappedBy::Process);
-        } else if proc.kind == AgentKind::Claude && hook_path.is_some() && hook.as_ref().is_some_and(|h| h.ts >= proc.started_at - 5.0) {
+        } else if proc.kind == AgentKind::Claude
+            && hook_path.as_deref().is_some_and(|t| transcript_fits(proc.cwd.as_deref(), t))
+            && hook.as_ref().is_some_and(|h| h.ts >= proc.started_at - 5.0)
+        {
             info.transcript_path = hook_path;
             info.session_id = hook.as_ref().and_then(|h| Some(&h.data).at("session_id").filter(|v| !v.is_null()).map(json::value_string));
             info.mapped_by = Some(MappedBy::Hook);
@@ -1943,10 +1946,27 @@ fn was_active(pr: &mut ProbeResult, pane: &str, at: f64) {
 }
 
 /// The pane's last hook event, if it came from the agent running there now.
+/// Whether a transcript the hook named can be the conversation of a Claude started in `cwd`. Claude
+/// Code keeps a conversation under the folder it started in (`projects/<folder, other characters
+/// as dashes>`), wherever it moves to later. A hook line naming one under another folder came from
+/// another pane's agent: on Windows two sessions' scripts once both wrote as one pane, and the chat
+/// showed the two conversations by turns. Such a line is passed over and the pane is matched by its
+/// folder instead. Unknown either way counts as a fit.
+pub(crate) fn transcript_fits(cwd: Option<&str>, transcript: &str) -> bool {
+    let Some(cwd) = cwd.filter(|c| !c.is_empty()) else { return true };
+    let mut parts = transcript.rsplit(['/', '\\']);
+    parts.next();
+    let Some(dir) = parts.next().filter(|d| !d.is_empty()) else { return true };
+    let here = crate::tmux::tmux::claude_slug(cwd);
+    // a process the system reports in a folder below the one it started in still fits
+    here == dir || here.starts_with(&format!("{dir}-"))
+}
+
 fn live_hook(pr: &ProbeResult, pane: &str) -> Option<HookPaneState> {
     let hook = pr.hook_panes.get(pane)?;
     let proc = pr.agent_procs.get(pane)?;
-    (hook.ts >= proc.started_at - 5.0 && hook.from_agent(proc.kind)).then(|| hook.clone())
+    let fits = proc.kind != AgentKind::Claude || Some(&hook.data).at("transcript_path").str().is_none_or(|t| transcript_fits(proc.cwd.as_deref(), t));
+    (hook.ts >= proc.started_at - 5.0 && hook.from_agent(proc.kind) && fits).then(|| hook.clone())
 }
 
 /// What runs in the background after a screen read. The footer that lists it is hidden while a

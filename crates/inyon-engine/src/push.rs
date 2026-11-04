@@ -279,7 +279,7 @@ pub fn notice_for(line: &str) -> Option<HookNotice> {
     let ev: Value = serde_json::from_str(line).ok()?;
     let pane = js_string(ev.get("pane"));
     let d = ev.get("data");
-    let pane_ok = pane.len() > 1 && pane.starts_with('%') && pane[1..].bytes().all(|b| b.is_ascii_digit());
+    let pane_ok = pane_id(&pane);
     if !pane_ok || !truthy(d) {
         return None;
     }
@@ -309,6 +309,25 @@ pub fn notice_for(line: &str) -> Option<HookNotice> {
     None
 }
 
+/// A pane as the hub names it: `%3`, or `%14.1` on Windows, where psmux numbers panes per session.
+fn pane_id(pane: &str) -> bool {
+    let Some(rest) = pane.strip_prefix('%') else { return false };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    match rest.split_once('.') {
+        Some((session, p)) => digits(session) && digits(p),
+        None => digits(rest),
+    }
+}
+
+/// The target psmux takes for a pane the hub calls `%14.1`: `$14:.%1` (as win-prelude.sh writes it).
+/// psmux answers a bare `%1` from the newest session, which may not be the pane's.
+fn target(pane: &str, win: bool) -> String {
+    match pane.strip_prefix('%').and_then(|r| r.split_once('.')) {
+        Some((session, p)) if win => format!("${session}:.%{p}"),
+        _ => pane.to_string(),
+    }
+}
+
 async fn tmux(args: &[&str]) -> Option<(bool, String)> {
     let mut c = tokio::process::Command::new("tmux");
     c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
@@ -320,7 +339,7 @@ async fn tmux(args: &[&str]) -> Option<(bool, String)> {
 /// The pane's title as the app shows it (Claude's conversation title), else session:window.
 pub async fn title_of(pane: String) -> String {
     static MARK: OnceLock<Regex> = OnceLock::new();
-    let Some((_, out)) = tmux(&["display-message", "-p", "-t", &pane, "#{pane_title}\t#{session_name}:#{window_index}"]).await else { return pane };
+    let Some((_, out)) = tmux(&["display-message", "-p", "-t", &target(&pane, crate::WIN), "#{pane_title}\t#{session_name}:#{window_index}"]).await else { return pane };
     let out = out.trim();
     let mut parts = out.splitn(2, '\t');
     let (title, place) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
@@ -338,7 +357,7 @@ pub async fn title_of(pane: String) -> String {
 /// What the pane's footer lists as still running ("1 shell, 1 agent"), read the way the hub reads
 /// it: `Some(None)` for nothing, `None` when it can't tell.
 pub async fn background_of(pane: String) -> Option<Option<String>> {
-    let (ok, text) = tmux(&["capture-pane", "-p", "-t", &pane]).await?;
+    let (ok, text) = tmux(&["capture-pane", "-p", "-t", &target(&pane, crate::WIN)]).await?;
     if !ok {
         return None;
     }
@@ -626,6 +645,20 @@ mod tests {
         assert_eq!(n(json!({ "hook_event_name": "Stop", "last_assistant_message": "Fixed the  test.\nAll green." })).unwrap().body, "Fixed the test. All green.");
         let long = "é".repeat(200);
         assert_eq!(n(json!({ "hook_event_name": "Stop", "last_assistant_message": long })).unwrap().body, format!("{}…", "é".repeat(139)));
+    }
+
+    /// psmux panes are `%<session>.<pane>` to the hub; their hook lines were dropped as junk, so a
+    /// Windows machine never sent its own notices for them
+    #[test]
+    fn a_windows_pane_named_with_its_session_gets_its_notice_and_psmux_is_asked_for_that_pane() {
+        let n = notice_for(&line("%70.2", json!({ "hook_event_name": "Stop" }))).unwrap();
+        assert_eq!((n.kind, n.pane.as_str()), (Kind::Done, "%70.2"));
+        for junk in ["%70.", "%.2", "%7a.2", "%70.2.1", "70.2"] {
+            assert_eq!(notice_for(&line(junk, json!({ "hook_event_name": "Stop" }))), None, "{junk}");
+        }
+        assert_eq!(target("%70.2", true), "$70:.%2");
+        assert_eq!(target("%3", true), "%3");
+        assert_eq!(target("%70.2", false), "%70.2");
     }
 
     #[test]

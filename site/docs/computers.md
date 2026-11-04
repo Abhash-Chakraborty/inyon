@@ -66,6 +66,8 @@ On Windows, Inyon drives [psmux](https://github.com/marlocarlo/psmux), the nativ
 
 psmux numbers panes per session, so every session has a pane `%1`. Before 0.17.1, two Claude Code sessions on one Windows machine shared the integration's files and the app lost their live model, context and limits. From 0.17.1 each session keeps its own, once the integration's scripts are updated (see [the Claude Code integration](machines.md#the-claude-code-integration)).
 
+A session you open by typing `psmux` in a terminal starts from a server psmux prepared ahead of time, and its shell still calls the session `__warm__`. Before 0.24.1 the integration asked psmux about that name and got another session's answer, so two sessions' agents reported as one: the chat of one session showed the other's conversation by turns, and replies or items went missing. From 0.24.1 the scripts ask the pane's own psmux server, and the hub ignores a report whose conversation is kept under a different folder than the one the session's agent started in. The scripts update by themselves.
+
 ## Moving to a hub later
 
 A paired computer can join a [hub](hub.md) instead: run the hub's *Add a machine* command on it. To stop pairing directly afterwards, `inyon service uninstall link` removes the link.

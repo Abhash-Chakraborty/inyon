@@ -128,6 +128,10 @@ From 0.24 an attachment that says *Reconnecting…* is waiting for the connectio
 - **"Too many uploads at once"**: the hub takes 32 at a time. Wait for some to finish.
 - **"Could not save …"** or a message from the machine's shell: the machine's disk may be full, or `~/.inyon/uploads` isn't writable.
 
+## Two sessions show each other's chat (Windows)
+
+If a Windows machine runs two Claude Code sessions and one session's chat shows the other's messages, or skips replies, update the hub to 0.24.1 or later. It rewrites the integration's scripts on the machine by itself (Integration tab, **Update** if it asks). Running sessions pick up the new scripts at their next event. See [Windows](computers.md#windows).
+
 ## Live numbers stopped updating
 
 For Claude Code, the numbers come from the integration. Turn it on, or **Update** it, from the machine's **Integration** tab. A session that stops reporting offers **Reconnect** or **Restart**; Settings → **Restart sessions that stop reporting** does it by itself.
