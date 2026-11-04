@@ -175,9 +175,9 @@ The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash
 
 From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else. [Security](security.md#pages) says how a page is kept away from your sign-in.
 
-## The app and the classic app
+## The new app at /next
 
-From 0.25 the page at the hub's address (for example `https://hub.example/`) is Inyon's new app, written in Rust. 0.24 served an early copy of it at `/next`; an address under `/next` now leads to the same screen without it, so old bookmarks keep working. It uses the same password and sign-in as before, keeps the same settings in the browser, and a browser that already gets notifications keeps getting them. It has the sign-in, the Overview, a session's chat and terminal, Machines, Pages, Settings and Temp files:
+From 0.24 the hub also serves an early copy of Inyon's next app, written in Rust, at `/next` on its own address (for example `https://hub.example/next`). It uses the same password and sign-in as the web app, and so far has the sign-in, the Overview, a session's chat and terminal, the Machines screen and, from 0.25, Pages, Settings and Temp files:
 
 - the conversation, with replies, tool calls and code blocks you can copy, and **Earlier messages** as you scroll up
 - the message box: Enter sends, a message sent while the agent works waits in its queue, and Esc in an empty box stops the agent
@@ -187,14 +187,12 @@ From 0.25 the page at the hub's address (for example `https://hub.example/`) is 
 - **Pages**, as [Pages](pages.md) describes them: the list by machine and project with its badge, the filter, live progress, the sandboxed viewer with **Plan**, **Mockups**, **Matrix**, **Notes** and the device sizes, **Add a folder**, **Show folder**, **Revoke links** and **Remove** with **Undo**. A machine's page lists its pages under **Pages on this machine**, a reply that names a page shows it as a card under the message, and a session with pages of its own has a **Pages** button in its header. The list follows the hub as pages change, without a refresh. The pages on a phone's own computers are only in the Android app.
 
 - **Settings**, as [Settings](settings.md) describes it for the web app on a computer, with the same sections and the side list from desktop width: the theme and the rest of **Appearance** (kept in the browser with the web app's, so the two agree), the agents with your own **custom agents**, the [companion agent](companion-agent.md), **Live numbers**, uploads, notifications, machines, your other devices, paired phones and [companion apps](companions.md) with their pairing code, the password, **Sign out**, the hub's **Update** and **About**. Right-click a custom agent, a paired phone or a companion app, or press and hold on a phone, for its menu.
-- **Temp files**, as [Temp files](temp-files.md) describes them, at `/temp` and in a machine's **Temp files** tab.
+- **Temp files**, as [Temp files](temp-files.md) describes them, at `/next/temp` and in a machine's **Temp files** tab.
 - the hub's notices as toasts (a session that finished or needs you, a page that moved on, the companion's replies), and the browser's own notification while the tab is hidden, once you allow it. From 0.25 allowing them also signs the browser up for Web Push, as the web app does, so alerts reach it while Inyon is closed, and **Send a test** goes through the push service. On an iPhone, Safari has notifications only for an app added to the Home Screen, and the row says so. **About** says how the terminal is drawn.
 - the session header's **⋯** menu, as in the web app: Remote Control, **Compact context**, **Rewind…** (OpenCode's **Undo**, **Redo** and **Share link…**), **Fork conversation**, **Copy session ID**, **Clear conversation**, **Exit to shell** and **End session…**.
 - **End session…** in a session's right-click menu, the **Companion** in the sidebar and on the Overview while it runs, *Inyon was updated* once the hub runs newer code, and the same short intro on the first load of a tab.
 
-The web app it replaces, now called the classic app, stays at `/classic` for two releases (0.25 and 0.26), for the few things only it has: pinning and parking sessions, and in the session header **Session controls…**, **Past conversations…** and renaming. **Settings → About → Open the classic app** takes you there.
-
-A hub you build from source carries the app only if you run `apps/app/build.sh` first (it needs [dx](https://github.com/DioxusLabs/dioxus/releases), Bun and `bun install`), and the classic app only if you run `bun run build:hub` in `apps/web`. Without the app, the hub sends its pages to `/classic`; without the classic app, `/classic` answers "The classic app isn't in this build of the hub" with a 503.
+A few things are still only in the web app: pinning and parking sessions, and in the session header **Session controls…**, **Past conversations…** and renaming. Everything else stays at `/` until the new app can do all of it. A hub you build from source carries it only if you run `apps/app/build.sh` first (it needs Bun and `bun install` for the terminal); without it, `/next` answers "The new app isn't in this build of the hub" with a 404.
 
 ## The hub in Rust
 

@@ -3,8 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { VERSION } from '@inyon/protocol'
 import { browserFiles, withPrecacheList } from './src/lib/precache.ts'
 import { pageview } from './src/pageview/build.ts'
@@ -56,17 +55,13 @@ const versionFile: Plugin = {
   },
 }
 
-/**
- * The service worker gets this build's hashed files to cache at install (public/sw.js has an empty
- * list). Written once the files are, from the bundle as it was written: a chunk that only imported
- * CSS (serif.css) is dropped late, and a listed file that isn't there fails the worker's install.
- */
+/** The service worker gets this build's hashed files to cache at install (public/sw.js has an empty list). */
 const precache: Plugin = {
   name: 'inyon-precache',
   apply: 'build',
-  writeBundle(out, bundle) {
+  generateBundle(_, bundle) {
     const sw = readFileSync(fileURLToPath(new URL('./public/sw.js', import.meta.url)), 'utf8')
-    writeFileSync(path.join(out.dir!, 'sw.js'), withPrecacheList(sw, browserFiles(bundle)))
+    this.emitFile({ type: 'asset', fileName: 'sw.js', source: withPrecacheList(sw, browserFiles(bundle)) })
   },
 }
 

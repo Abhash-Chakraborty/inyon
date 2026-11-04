@@ -131,6 +131,7 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
             div { class: "sidebar-head",
                 Logo { connecting: !h.connected, target: true }
                 span { class: "brand", "Inyon" }
+                span { class: "chip chip-quiet", title: "The new app, which takes over from the current one in 1.0", "Preview" }
                 if !h.connected {
                     button {
                         class: "sidebar-offline icon-button press",
@@ -143,21 +144,21 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                 }
             }
             nav { class: "sidebar-nav",
-                a { class: nav_class(overview), href: "/", "aria-current": overview.then_some("page"),
+                a { class: nav_class(overview), href: "/next/", "aria-current": overview.then_some("page"),
                     Glyph { icon: Icon::LayoutGrid, size: 16 }
                     "Overview"
                 }
                 companion::CompanionNav { current }
             }
             div { class: "sidebar-foot",
-                a { class: nav_class(on_machines), href: "/machines", "aria-current": on_machines.then_some("page"),
+                a { class: nav_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
                     Glyph { icon: Icon::Monitor, size: 16 }
                     "Machines"
                     if total > 0 {
                         span { class: "nav-count mono tabular", title: "{online} of {total} online", "{count}" }
                     }
                 }
-                a { class: nav_class(on_pages), href: "/pages", "aria-current": on_pages.then_some("page"),
+                a { class: nav_class(on_pages), href: "/next/pages", "aria-current": on_pages.then_some("page"),
                     Glyph { icon: Icon::PanelsTopLeft, size: 16 }
                     "Pages"
                     if changed > 0 {
@@ -170,7 +171,7 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                         span { class: "nav-count mono tabular", "{pages_total}" }
                     }
                 }
-                a { class: nav_class(on_settings), href: "/settings", "aria-current": on_settings.then_some("page"),
+                a { class: nav_class(on_settings), href: "/next/settings", "aria-current": on_settings.then_some("page"),
                     Glyph { icon: Icon::Settings, size: 16 }
                     "Settings"
                 }
@@ -190,7 +191,7 @@ fn TabBar(section: Section) -> Element {
     let waiting = model::agent_panes(&hub.read().hosts).iter().filter(|r| r.agent().state == inyon_protocol::AgentState::Waiting).count();
     rsx! {
         nav { class: "tabbar",
-            a { class: tab_class(overview), href: "/", "aria-current": overview.then_some("page"),
+            a { class: tab_class(overview), href: "/next/", "aria-current": overview.then_some("page"),
                 span { class: "tab-icon",
                     Glyph { icon: Icon::LayoutGrid, size: 21 }
                     if waiting > 0 {
@@ -199,7 +200,7 @@ fn TabBar(section: Section) -> Element {
                 }
                 "Overview"
             }
-            a { class: tab_class(on_pages), href: "/pages", "aria-current": on_pages.then_some("page"),
+            a { class: tab_class(on_pages), href: "/next/pages", "aria-current": on_pages.then_some("page"),
                 span { class: "tab-icon",
                     Glyph { icon: Icon::PanelsTopLeft, size: 21 }
                     if changed > 0 {
@@ -208,11 +209,11 @@ fn TabBar(section: Section) -> Element {
                 }
                 "Pages"
             }
-            a { class: tab_class(on_machines), href: "/machines", "aria-current": on_machines.then_some("page"),
+            a { class: tab_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
                 Glyph { icon: Icon::Monitor, size: 21 }
                 "Machines"
             }
-            a { class: tab_class(on_settings), href: "/settings", "aria-current": on_settings.then_some("page"),
+            a { class: tab_class(on_settings), href: "/next/settings", "aria-current": on_settings.then_some("page"),
                 Glyph { icon: Icon::Settings, size: 21 }
                 "Settings"
             }

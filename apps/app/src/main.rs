@@ -1,7 +1,8 @@
 //! Inyon's app in Rust, on Dioxus 0.7: one codebase for the browser, desktop and Android. It is the
-//! app the hub serves at `/` (over the same API as the React app in apps/web, which the hub keeps at
-//! `/classic` for two releases, and the hub's `/ws2` protocol), and the Android app (the `mobile`
-//! feature), where the same screens talk to the phone core running in the app.
+//! browser copy the hub serves at /next (sign-in, the Overview and a session's chat, over the same
+//! API as the React app in apps/web and the hub's `/ws2` protocol), and the Android app (the
+//! `mobile` feature), where the same screens talk to the phone core running in the app. The React
+//! app keeps `/` until this one reaches parity.
 
 #[cfg(target_os = "android")]
 mod android;

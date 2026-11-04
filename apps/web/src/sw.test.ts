@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { withPrecacheList } from './lib/precache.ts'
 
@@ -111,13 +111,4 @@ test('an open app is told the path, and nothing from another site', async () => 
   await w.click('//evil.example/x')
   expect(told).toEqual([{ t: 'open', href: '/m/box/p/3' }, { t: 'open', href: '/' }])
   expect(w.opened).toEqual([])
-})
-
-// a listed file that isn't there fails the worker's install, so a build's worker lists only files it
-// wrote (a chunk that only imported CSS is dropped late, after the bundle is first complete)
-const built = path.join(import.meta.dir, '../dist/sw.js')
-test.skipIf(!existsSync(built))('the built worker lists only files the build wrote', () => {
-  const list = JSON.parse(/^const ASSETS = (\[.*\])$/m.exec(readFileSync(built, 'utf8'))![1]!) as string[]
-  expect(list.length).toBeGreaterThan(0)
-  expect(list.filter((a) => !existsSync(path.join(import.meta.dir, '../dist', a)))).toEqual([])
 })

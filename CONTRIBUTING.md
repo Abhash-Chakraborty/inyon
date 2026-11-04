@@ -25,10 +25,6 @@ bun dev:hub      # the hub on :4777, a development build (cargo run -p inyon-cli
 bun dev:web      # Vite on :5173, proxies to the hub
 ```
 
-The hub carries its pages inside the program: the app (`apps/app/build.sh`, which needs dx) at `/`
-and the React app (`bun run build:hub` in `apps/web`) at `/classic`. Build them before the hub to
-see them there; a hub built without the app sends its pages to `/classic`.
-
 Requires [Rust](https://rustup.rs), [Bun](https://bun.sh) 1.3 or later and tmux. The hub, the
 `inyon` command and the phone core are Rust; Bun builds and tests the web app and is the package
 manager too: there's no npm or pnpm step. Building the web app also builds the phone core as wasm, so it needs Rust with
@@ -68,8 +64,7 @@ logs its size after each one to `window.log`, the only file it writes.
 
 ```
 apps/cli           the inyon command (Rust): setup, status, pairing, services, updates, the Windows window
-apps/app           the app in Rust (Dioxus): the hub's pages, and the Android app from 1.0
-apps/web           React + Vite app: the hub's pages at /classic, the Android app until 1.0
+apps/web           React + Vite app, also served by the hub
 installers/        get.sh and get.ps1, the one-line installers (the hub's install.sh and install.ps1
                    are in crates/inyon-hub/assets)
 apps/mobile        Capacitor shell for Android (and an unshipped iOS project); scripts/icons.ts renders every icon
@@ -89,8 +84,8 @@ The phone core is Rust (`crates/inyon-phone`), built as wasm by `bun scripts/pho
 the native plugin, the link to paired computers, and push through those computers. What the app
 hands it and gets back is typed in `apps/web/src/lib/phone-types.ts`. `bun test crates/inyon-phone/js`
 checks the module as the app calls it, and with `INYON_BIN` pointing at an `inyon` build it also
-pairs with that build's `inyon link`. `VITE_INYON_PHONE_CORE=none` leaves it out, as `bun run
-build:hub` does for the copy a hub serves at `/classic`.
+pairs with that build's `inyon link`. `VITE_INYON_PHONE_CORE=none` leaves it out, for the copy a
+hub serves.
 
 The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
 `apps/web`, then `bun scripts/readme/shots.ts` makes them again.

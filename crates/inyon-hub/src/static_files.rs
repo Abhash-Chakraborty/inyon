@@ -1,19 +1,18 @@
-//! The apps, built and carried inside the program, each served the way index.ts served the web
-//! app: the file asked for, or index.html for any other path (the app routes itself), with the page
-//! headers on both. The app (apps/app, Dioxus) has the hub's root; the React app it took over from
-//! (apps/web) stays at /classic for two releases, and /next, where the new app ran beside it, leads
-//! to the same screen at the root.
+//! The web app, built (apps/web/dist) and carried inside the program, served the way index.ts
+//! serves it: the file asked for, or index.html for any other path (the app routes itself), with
+//! the page headers on both. The new app (apps/app, Dioxus) is carried the same way and served
+//! under /next while it catches up with the web app.
 
 use crate::http::Body;
-use axum::http::{header, HeaderValue, Response};
+use axum::http::{header, HeaderValue, Response, StatusCode};
 use rust_embed::RustEmbed;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::http::{append_header, set_header, text, Resp};
+use crate::http::{set_header, text, Resp};
 
-/// The classic app, built with `bun run build:hub` (base path /classic, no phone core) before the
-/// program; a build without it says so at /classic. The phone core's wasm stays out: only the phone app and the browser copy run it, from their own
+/// Built with `bun run build` before the program; a build without it says so on every page. The
+/// phone core's wasm stays out: only the phone app and the browser copy run it, from their own
 /// files, and a hub's page can't compile wasm under PAGE_CSP anyway.
 #[derive(RustEmbed)]
 #[folder = "../../apps/web/dist"]
@@ -28,37 +27,21 @@ struct Web;
 /// policy still holds it to this hub, so together they leave the app's files on this hub.
 pub const PAGE_CSP: &str = "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/assets/ *:*/theme.js *:*/sw.js";
 
-/// The app, built by apps/app/build.sh (dx and the wasm target). It is optional: a hub built
-/// without it sends its pages to the classic app, and `cargo build` never needs dx.
+/// The new app, built by apps/app/build.sh (dx and the wasm target). It is optional: a hub built
+/// without it answers /next with a 404 that says so, and `cargo build` never needs dx.
 #[derive(RustEmbed)]
 #[folder = "../../apps/app/dist"]
 #[allow_missing = true]
-struct App;
+struct Next;
 
-/// PAGE_CSP for the app, which is wasm: a page may compile that only with 'wasm-unsafe-eval'.
-pub const APP_CSP: &str =
-    "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/assets/ *:*/theme.js *:*/sw.js 'wasm-unsafe-eval'";
+/// PAGE_CSP for the new app: its scripts are under /next/assets/, it shares the web app's theme
+/// script and service worker (which shows push notifications), and it is wasm, which a page may
+/// compile only with 'wasm-unsafe-eval'.
+pub const NEXT_CSP: &str =
+    "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/next/assets/ *:*/theme.js *:*/sw.js 'wasm-unsafe-eval'";
 
-/// The policy sent beside APP_CSP. `*:*/assets/` alone would take a script from any site's
-/// /assets/; a browser holds a page to every policy it is sent, so with this one only this hub's
-/// own files under those paths run. The classic app's page carries the same rule in a meta tag
-/// (apps/web/index.html), and its pages get this header too.
-pub const APP_ORIGIN_CSP: &str = "script-src 'self' 'wasm-unsafe-eval'";
-
-/// Where the classic app is served.
-pub const CLASSIC: &str = "/classic";
-
-/// PAGE_CSP for the classic app, whose files are all under /classic. It never compiles wasm (its
-/// hub copy has no phone core), so its own-origin policy is CLASSIC_ORIGIN_CSP, without
-/// 'wasm-unsafe-eval'.
-pub const CLASSIC_CSP: &str =
-    "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/classic/assets/ *:*/classic/theme.js *:*/classic/sw.js";
-
-/// The classic app's own-origin policy (see APP_ORIGIN_CSP).
-pub const CLASSIC_ORIGIN_CSP: &str = "script-src 'self'";
-
-/// What /classic says on a hub built without the classic app, or with one built for `/`.
-pub const CLASSIC_MISSING: &str = "The classic app isn't in this build of the hub. Run `bun run build:hub` in apps/web before building the hub.";
+/// What /next says on a hub built without the new app.
+pub const NEXT_MISSING: &str = "The new app isn't in this build of the hub. Build it with apps/app/build.sh before the hub.";
 
 pub fn page_headers(r: &mut Resp) {
     set_header(r, "content-security-policy", PAGE_CSP);
@@ -178,87 +161,62 @@ fn file(app: &str, name: &str, data: Vec<u8>, cache: &'static str, gzip: bool) -
     r
 }
 
-/// An app's two policies: the paths its scripts may come from, and this hub as their only origin.
-fn with_csp(mut r: Resp, paths: &str, origin: &str) -> Resp {
-    set_header(&mut r, "content-security-policy", paths);
-    append_header(&mut r, "content-security-policy", origin);
+fn next_file(name: &str, data: Vec<u8>, cache: &'static str, gzip: bool) -> Resp {
+    let mut r = file("next:", name, data, cache, gzip);
+    set_header(&mut r, "content-security-policy", NEXT_CSP);
     r
 }
 
-/// The classic app's page, when it was built into this program for /classic. A copy built for `/`
-/// would ask for its files there, where the app's are.
-fn classic_page(get: impl Fn(&str) -> Option<Vec<u8>>) -> Option<Vec<u8>> {
-    get("index.html").filter(|p| String::from_utf8_lossy(p).contains("/classic/assets/"))
-}
-
-/// Whether the classic app was built into this program.
+/// Whether the web app was built into this program.
 pub fn built() -> bool {
-    classic_page(|name| Web::get(name).map(|f| f.data.into_owned())).is_some()
+    Web::get("index.html").is_some()
 }
 
-/// Whether the app was built into this program.
-pub fn app_built() -> bool {
-    App::get("index.html").is_some()
-}
-
-/// One app's answer for `rel` (a normalized path inside it): the file, else its page, which
-/// routes itself. A hashed file the build doesn't have (an old page asking after an update) is a
-/// 404, never the page passed off as a script. None when the app wasn't built.
-fn from_app(app: &str, rel: &str, gzip: bool, get: impl Fn(&str) -> Option<Vec<u8>>) -> Option<Resp> {
-    if rel.len() > 1 {
-        if let Some(data) = get(&rel[1..]) {
+/// The web app's file for `path`, gzipped when `gzip` (the browser takes it) and worth it.
+pub fn serve(path: &str, gzip: bool) -> Resp {
+    let rel = normalize(path);
+    if rel != "/" {
+        if let Some(f) = Web::get(&rel[1..]) {
             let immutable = rel.starts_with("/assets/");
-            return Some(file(app, rel, data, if immutable { "public, max-age=31536000, immutable" } else { "no-cache" }, gzip));
-        }
-        if rel.starts_with("/assets/") {
-            return Some(text(404, "Not found"));
+            return file("web:", &rel, f.data.into_owned(), if immutable { "public, max-age=31536000, immutable" } else { "no-cache" }, gzip);
         }
     }
-    get("index.html").map(|data| file(app, "index.html", data, "no-cache", gzip))
-}
-
-/// A temporary redirect (an older hub may come back) to `to` on this hub.
-fn moved(to: &str) -> Resp {
-    let mut r = text(302, "");
-    set_header(&mut r, "location", to);
-    page_headers(&mut r);
-    r
-}
-
-/// `path` (as the request has it, still percent-encoded) and `query` under `base`. The rest of the
-/// path never starts with a second slash or a backslash, which a browser reads as another site.
-fn under(base: &str, path: &str, query: &str) -> String {
-    let rest = path.trim_start_matches(['/', '\\']);
-    let q = if query.is_empty() { String::new() } else { format!("?{query}") };
-    format!("{base}/{rest}{q}")
-}
-
-/// What the hub serves at a path no route took: the classic app under /classic, the same path
-/// without /next for an address from when the app ran there, and the app for the rest (the
-/// classic app instead when this hub was built without it). `gzip` when the browser takes it.
-pub fn serve(path: &str, query: &str, gzip: bool) -> Resp {
-    serve_from(path, query, gzip, |name| App::get(name).map(|f| f.data.into_owned()), |name| Web::get(name).map(|f| f.data.into_owned()))
-}
-
-fn serve_from(path: &str, query: &str, gzip: bool, app: impl Fn(&str) -> Option<Vec<u8>>, classic: impl Fn(&str) -> Option<Vec<u8>>) -> Resp {
-    let inside = |base: &str| path.strip_prefix(base).filter(|r| r.is_empty() || r.starts_with('/'));
-    if let Some(rest) = inside(CLASSIC) {
-        let rel = normalize(if rest.is_empty() { "/" } else { rest });
-        return match classic_page(&classic).and_then(|_| from_app("classic:", &rel, gzip, &classic)) {
-            Some(r) => with_csp(r, CLASSIC_CSP, CLASSIC_ORIGIN_CSP),
-            None => {
-                let mut r = text(503, CLASSIC_MISSING);
-                page_headers(&mut r);
-                r
-            }
-        };
+    match Web::get("index.html") {
+        Some(f) => file("web:", "index.html", f.data.into_owned(), "no-cache", gzip),
+        None => {
+            let mut r = text(503, "Web app not built. Run `bun run build`.");
+            *r.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+            r
+        }
     }
-    if let Some(rest) = inside("/next") {
-        return moved(&under("", rest, query));
+}
+
+/// The new app at /next: its hashed files under /next/assets/, index.html for every other path
+/// under /next (it will route itself), and a 404 when this hub was built without it.
+pub fn serve_next(path: &str, gzip: bool) -> Resp {
+    serve_next_from(path, gzip, |name| Next::get(name).map(|f| f.data.into_owned()))
+}
+
+fn serve_next_from(path: &str, gzip: bool, get: impl Fn(&str) -> Option<Vec<u8>>) -> Resp {
+    let rel = normalize(path);
+    let inner = rel.strip_prefix("/next").filter(|r| r.is_empty() || r.starts_with('/')).unwrap_or("");
+    if inner.len() > 1 {
+        if let Some(data) = get(&inner[1..]) {
+            let immutable = inner.starts_with("/assets/");
+            return next_file(inner, data, if immutable { "public, max-age=31536000, immutable" } else { "no-cache" }, gzip);
+        }
+        // a hashed file this build doesn't have (an old page asking after an update) isn't the page
+        if inner.starts_with("/assets/") {
+            return text(404, "Not found");
+        }
     }
-    match from_app("app:", &normalize(path), gzip, &app) {
-        Some(r) => with_csp(r, APP_CSP, APP_ORIGIN_CSP),
-        None => moved(&under(CLASSIC, path, query)),
+    match get("index.html") {
+        Some(data) => next_file("index.html", data, "no-cache", gzip),
+        None => {
+            let mut r = text(404, NEXT_MISSING);
+            page_headers(&mut r);
+            r
+        }
     }
 }
 
@@ -303,212 +261,81 @@ mod tests {
         String::from_utf8_lossy(&r.into_body().bytes().await.unwrap()).into_owned()
     }
 
-    fn built_app(name: &str) -> Option<Vec<u8>> {
+    fn built_next(name: &str) -> Option<Vec<u8>> {
         match name {
-            "index.html" => Some(b"<div id=main></div><script type=module src=/assets/app-1.js></script>".to_vec()),
+            "index.html" => Some(b"<div id=main></div><script type=module src=/next/assets/app-1.js></script>".to_vec()),
             "assets/app-1.js" => Some(b"export{}".to_vec()),
             "assets/app_bg-1.wasm" => Some(vec![0, 97, 115, 109]),
-            "sw.js" => Some(b"self.addEventListener('push', () => {})".to_vec()),
             _ => None,
         }
     }
 
-    fn built_classic(name: &str) -> Option<Vec<u8>> {
-        match name {
-            "index.html" => Some(b"<div id=root></div><script type=module src=/classic/assets/index-1.js></script>".to_vec()),
-            "assets/index-1.js" => Some(b"export{}".to_vec()),
-            "version.json" => Some(b"{}".to_vec()),
-            _ => None,
-        }
-    }
-
-    fn none(_: &str) -> Option<Vec<u8>> {
-        None
-    }
-
-    /// Every policy a response carries, in order.
-    fn csps(r: &Resp) -> Vec<&str> {
-        r.headers().get_all("content-security-policy").iter().map(|v| v.to_str().unwrap()).collect()
-    }
-
-    /// Whether a page at `page` (an origin) runs the script at `url` under these policies, as a
-    /// browser decides it: each policy must allow it (for the kinds of source these policies use).
-    fn runs(policies: &[&str], page: &str, url: &str) -> bool {
-        let at = url.match_indices('/').nth(2).map_or(url.len(), |(i, _)| i);
-        let (origin, path) = url.split_at(at);
-        policies.iter().all(|p| {
-            let Some(sources) = p.split("; ").find_map(|d| d.strip_prefix("script-src ")) else { return true };
-            sources.split(' ').any(|s| match s {
-                "'self'" => origin == page,
-                s => s.strip_prefix("*:*").is_some_and(|want| if want.ends_with('/') { path.starts_with(want) } else { path == want }),
-            })
-        })
-    }
-
     #[test]
-    fn each_app_runs_scripts_from_this_hub_only() {
-        let hub = "https://hub.test:4777";
-        let app = [APP_CSP, APP_ORIGIN_CSP];
-        for ok in ["/assets/app-1.js", "/theme.js", "/sw.js"] {
-            assert!(runs(&app, hub, &format!("{hub}{ok}")), "{ok}");
-        }
-        // another site's file under the same path, a page an agent wrote, the classic app's files
-        for refused in [
-            "https://evil.example/assets/x.js",
-            "http://hub.test:4778/assets/x.js",
-            "https://evil.example/theme.js",
-            "https://hub.test:4777/v/tok/x.js",
-            "https://hub.test:4777/classic/assets/index-1.js",
-        ] {
-            assert!(!runs(&app, hub, refused), "{refused}");
-        }
-        // the path list alone would have let another site's file in
-        assert!(runs(&[APP_CSP], hub, "https://evil.example/assets/x.js"));
-        let classic = [CLASSIC_CSP, CLASSIC_ORIGIN_CSP];
-        assert!(runs(&classic, hub, "https://hub.test:4777/classic/assets/index-1.js"));
-        for refused in ["https://evil.example/classic/assets/x.js", "https://hub.test:4777/assets/app-1.js", "https://hub.test:4777/v/tok/x.js"] {
-            assert!(!runs(&classic, hub, refused), "{refused}");
-        }
-        // the classic page's own meta tag says the same
-        assert!(include_str!("../../../apps/web/index.html").contains("script-src 'self'"));
-        // only the app compiles wasm
-        assert!(APP_ORIGIN_CSP.contains("'wasm-unsafe-eval'") && !CLASSIC_ORIGIN_CSP.contains("wasm") && !CLASSIC_CSP.contains("wasm"));
-    }
-
-    fn get(path: &str) -> Resp {
-        let (path, query) = path.split_once('?').unwrap_or((path, ""));
-        serve_from(path, query, false, built_app, built_classic)
-    }
-
-    #[test]
-    fn the_app_has_the_root_and_routes_itself() {
+    fn next_serves_the_new_apps_page_for_every_path_under_it() {
         crate::test_util::block(async {
-            // its page for every path of its own, /nextcloud included
-            for path in ["/", "/m/box/p/1", "/machines", "/settings", "/nextcloud", "/classicx", "/../etc/passwd"] {
-                let r = get(path);
+            for path in ["/next", "/next/", "/next/m/box/p/1", "/next/../next/"] {
+                let r = serve_next_from(path, false, built_next);
                 assert_eq!(r.status().as_u16(), 200, "{path}");
                 assert_eq!(r.headers()["content-type"], "text/html;charset=utf-8");
                 assert_eq!(r.headers()["cache-control"], "no-cache");
-                assert_eq!(csps(&r), [APP_CSP, APP_ORIGIN_CSP]);
-                assert!(body(r).await.contains("/assets/app-1.js"), "{path}");
+                assert_eq!(r.headers()["content-security-policy"], NEXT_CSP);
+                assert!(body(r).await.contains("/next/assets/app-1.js"), "{path}");
             }
         });
     }
 
     #[test]
-    fn the_app_serves_its_files_and_refuses_ones_it_does_not_have() {
-        let r = get("/assets/app-1.js");
+    fn next_serves_its_files_and_refuses_ones_it_does_not_have() {
+        let r = serve_next_from("/next/assets/app-1.js", false, built_next);
         assert_eq!(r.status().as_u16(), 200);
         assert_eq!(r.headers()["content-type"], "text/javascript;charset=utf-8");
         assert_eq!(r.headers()["cache-control"], "public, max-age=31536000, immutable");
-        assert_eq!(get("/assets/app_bg-1.wasm").headers()["content-type"], "application/wasm");
-        // the service worker is checked for updates on every visit
-        assert_eq!(get("/sw.js").headers()["cache-control"], "no-cache");
+        assert_eq!(serve_next_from("/next/assets/app_bg-1.wasm", false, built_next).headers()["content-type"], "application/wasm");
         // an old build's file is a 404, never the page passed off as a script
-        assert_eq!(get("/assets/app-0.js").status().as_u16(), 404);
-        // the classic app's files are only under /classic
-        assert_eq!(get("/assets/index-1.js").status().as_u16(), 404);
-        assert_eq!(get("/version.json").headers()["content-type"], "text/html;charset=utf-8");
+        assert_eq!(serve_next_from("/next/assets/app-0.js", false, built_next).status().as_u16(), 404);
+        // nothing outside the new app's own files
+        assert_eq!(serve_next_from("/next/../../etc/passwd", false, built_next).headers()["content-type"], "text/html;charset=utf-8");
     }
 
     #[test]
-    fn the_classic_app_keeps_its_screens_under_classic() {
+    fn a_hub_built_without_the_new_app_says_so_at_next() {
         crate::test_util::block(async {
-            for path in ["/classic", "/classic/", "/classic/m/box/p/1", "/classic/../classic/settings"] {
-                let r = get(path);
-                assert_eq!(r.status().as_u16(), 200, "{path}");
-                assert_eq!(csps(&r), [CLASSIC_CSP, CLASSIC_ORIGIN_CSP], "{path}");
-                assert!(body(r).await.contains("/classic/assets/index-1.js"), "{path}");
-            }
-            let r = get("/classic/assets/index-1.js");
-            assert_eq!(r.headers()["cache-control"], "public, max-age=31536000, immutable");
-            assert_eq!(csps(&r), [CLASSIC_CSP, CLASSIC_ORIGIN_CSP]);
-            assert_eq!(get("/classic/version.json").headers()["content-type"], "application/json;charset=utf-8");
-            assert_eq!(get("/classic/assets/app-1.js").status().as_u16(), 404);
-            // nothing above it: the path stays inside the classic app's files
-            assert!(body(get("/classic/../../etc/passwd")).await.contains("/classic/assets/"));
+            let r = serve_next_from("/next/", false, |_| None);
+            assert_eq!(r.status().as_u16(), 404);
+            assert_eq!(r.headers()["content-security-policy"], PAGE_CSP);
+            assert_eq!(body(r).await, NEXT_MISSING);
         });
     }
 
     #[test]
-    fn an_address_under_next_leads_to_the_same_screen_at_the_root() {
-        for (from, to) in [
-            ("/next", "/"),
-            ("/next/", "/"),
-            ("/next/m/box%20one/p/1?view=terminal", "/m/box%20one/p/1?view=terminal"),
-            ("/next/machines?add=1", "/machines?add=1"),
-            // never to another site
-            ("/next//evil.example/x", "/evil.example/x"),
-            ("/next/\\evil.example", "/evil.example"),
-        ] {
-            let r = get(from);
-            assert_eq!(r.status().as_u16(), 302, "{from}");
-            assert_eq!(r.headers()["location"], to, "{from}");
-        }
-    }
-
-    #[test]
-    fn a_hub_built_without_the_app_sends_its_pages_to_the_classic_app() {
-        for (from, to) in [("/", "/classic/"), ("/m/box/p/1", "/classic/m/box/p/1"), ("/machines?add=1", "/classic/machines?add=1")] {
-            let r = serve_from(from.split('?').next().unwrap(), from.split_once('?').map_or("", |q| q.1), false, none, built_classic);
-            assert_eq!(r.status().as_u16(), 302, "{from}");
-            assert_eq!(r.headers()["location"], to, "{from}");
-        }
-    }
-
-    #[test]
-    fn a_hub_built_without_the_classic_app_says_so_there() {
-        crate::test_util::block(async {
-            // not built, or built for `/`, whose files would be asked for where the app's are
-            let for_root = |name: &str| (name == "index.html").then(|| b"<script type=module src=/assets/index-1.js></script>".to_vec());
-            for r in [serve_from("/classic/", "", false, built_app, none), serve_from("/classic/machines", "", false, built_app, for_root)] {
-                assert_eq!(r.status().as_u16(), 503);
-                assert_eq!(r.headers()["content-security-policy"], PAGE_CSP);
-                assert_eq!(body(r).await, CLASSIC_MISSING);
-            }
-        });
-    }
-
-    #[test]
-    fn the_app_may_compile_wasm_and_each_app_runs_only_its_own_scripts() {
-        let scripts = |csp: &'static str| csp.split("; ").find_map(|d| d.strip_prefix("script-src ")).unwrap().split(' ').collect::<Vec<_>>();
-        assert_eq!(scripts(APP_CSP), ["*:*/assets/", "*:*/theme.js", "*:*/sw.js", "'wasm-unsafe-eval'"]);
-        assert_eq!(scripts(CLASSIC_CSP), ["*:*/classic/assets/", "*:*/classic/theme.js", "*:*/classic/sw.js"]);
-        // the rest of each policy is the page headers'
-        for csp in [APP_CSP, CLASSIC_CSP] {
-            assert_eq!(csp.split("; script-src").next(), PAGE_CSP.split("; script-src").next());
-        }
-        // the app's page loads nothing from elsewhere, and its theme script and worker are copied next to it
+    fn the_new_app_may_compile_wasm_and_runs_only_its_own_scripts() {
+        let scripts = NEXT_CSP.split("; ").find_map(|d| d.strip_prefix("script-src ")).unwrap();
+        assert_eq!(scripts.split(' ').collect::<Vec<_>>(), ["*:*/next/assets/", "*:*/theme.js", "*:*/sw.js", "'wasm-unsafe-eval'"]);
+        // the rest of the policy is the web app's
+        assert_eq!(NEXT_CSP.split("; script-src").next(), PAGE_CSP.split("; script-src").next());
+        // the page loads nothing from elsewhere
         let index = include_str!("../../../apps/app/index.html");
         assert!(index.contains(r#"<script src="/theme.js">"#));
-        assert!(!include_str!("../../../apps/app/Dioxus.toml").contains("base_path"));
-        let build = include_str!("../../../apps/app/build.sh");
-        assert!(build.contains("cp -r ../web/public/. dist/") && build.contains("bun sw.ts dist"));
-        assert!(include_str!("../../../apps/web/package.json").contains("--base /classic/"));
+        assert!(include_str!("../../../apps/app/Dioxus.toml").contains(r#"base_path = "next""#));
     }
 
     #[test]
-    fn each_app_is_carried_when_it_was_built() {
-        let here = |p: &str| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(p);
-        let built_app = here("apps/app/dist/index.html").exists();
-        assert_eq!(app_built(), built_app);
-        if built_app {
-            let index = String::from_utf8(App::get("index.html").unwrap().data.into_owned()).unwrap();
-            assert!(index.contains(r#"src="/assets/"#) && !index.contains("/next/"), "built for the root");
-            assert!(App::get("sw.js").is_some() && App::get("theme.js").is_some());
-        }
-        if let Ok(index) = std::fs::read_to_string(here("apps/web/dist/index.html")) {
-            assert_eq!(built(), index.contains("/classic/assets/"), "built with bun run build:hub");
+    fn the_new_app_is_carried_when_it_was_built() {
+        let built = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/app/dist/index.html")).exists();
+        assert_eq!(Next::get("index.html").is_some(), built);
+        if built {
+            let index = String::from_utf8(Next::get("index.html").unwrap().data.into_owned()).unwrap();
+            assert!(index.contains("/next/assets/"), "built with base_path next");
         }
     }
 
     #[test]
-    fn the_hub_gives_the_root_to_the_app_and_keeps_the_classic_app() {
+    fn the_hub_sends_next_to_the_new_app_and_keeps_the_web_app_at_the_root() {
         use crate::server::{dispatch, install_ctx, test_req, CtxInit};
-        let (app, classic) = (app_built(), built());
+        let next_built = Next::get("index.html").is_some();
         crate::test_util::block(async move {
             let ctx = CtxInit {
-                data_dir: std::env::temp_dir().join(format!("inyon-apps-{}", std::process::id())),
+                data_dir: std::env::temp_dir().join(format!("inyon-next-{}", std::process::id())),
                 bind: "127.0.0.1".into(),
                 port: 0,
                 tls: false,
@@ -522,21 +349,19 @@ mod tests {
             };
             install_ctx(ctx, crate::server::hub_routes());
             let get = |path: &'static str, host: &'static str| dispatch(test_req("GET", path, &[("host", host)], ""));
+            for path in ["/next", "/next/", "/next/m/box/p/1"] {
+                let r = get(path, "hub.test:4777").await;
+                assert_eq!(r.status().as_u16(), if next_built { 200 } else { 404 }, "{path}");
+                assert_eq!(r.headers()["content-security-policy"], if next_built { NEXT_CSP } else { PAGE_CSP }, "{path}");
+            }
+            // the web app keeps / and every path of its own, /nextcloud included
             for path in ["/", "/machines", "/nextcloud"] {
                 let r = get(path, "hub.test:4777").await;
-                assert_eq!(r.status().as_u16(), if app { 200 } else { 302 }, "{path}");
-                if app {
-                    assert_eq!(csps(&r), [APP_CSP, APP_ORIGIN_CSP], "{path}");
-                }
+                assert_eq!(r.status().as_u16(), if built() { 200 } else { 503 }, "{path}");
+                assert_ne!(r.headers().get("content-security-policy").map(|v| v.to_str().unwrap()), Some(NEXT_CSP), "{path}");
             }
-            let r = get("/classic/machines", "hub.test:4777").await;
-            assert_eq!(r.status().as_u16(), if classic { 200 } else { 503 });
-            assert_eq!(csps(&r), if classic { vec![CLASSIC_CSP, CLASSIC_ORIGIN_CSP] } else { vec![PAGE_CSP] });
-            let r = get("/next/machines?add=1", "hub.test:4777").await;
-            assert_eq!((r.status().as_u16(), r.headers()["location"].to_str().unwrap()), (302, "/machines?add=1"));
             // a name the hub doesn't answer to is refused before either app
-            assert_eq!(get("/", "evil.example").await.status().as_u16(), 421);
-            assert_eq!(get("/classic/", "evil.example").await.status().as_u16(), 421);
+            assert_eq!(get("/next/", "evil.example").await.status().as_u16(), 421);
         });
     }
 
@@ -557,32 +382,32 @@ mod tests {
         assert!(!takes_gzip(None));
     }
 
-    fn big_app(name: &str) -> Option<Vec<u8>> {
+    fn big_next(name: &str) -> Option<Vec<u8>> {
         match name {
             "assets/app_bg-1.wasm" => Some([0u8, 97, 115, 109].repeat(4096)),
             "assets/app-1.js" => Some(b"export const a = 1;\n".repeat(200)),
             "assets/geist.woff2" => Some(vec![7; 4096]),
             "assets/tiny.js" => Some(b"export{}".to_vec()),
-            _ => built_app(name),
+            _ => built_next(name),
         }
     }
 
     #[test]
     fn the_new_apps_wasm_and_scripts_go_out_gzipped_to_a_browser_that_takes_it() {
         crate::test_util::block(async {
-            for name in ["/assets/app_bg-1.wasm", "/assets/app-1.js"] {
-                let plain = big_app(&name[1..]).unwrap();
-                let r = serve_from(name, "", true, big_app, none);
+            for name in ["/next/assets/app_bg-1.wasm", "/next/assets/app-1.js"] {
+                let plain = big_next(&name["/next/".len()..]).unwrap();
+                let r = serve_next_from(name, true, big_next);
                 assert_eq!(r.headers()["content-encoding"], "gzip", "{name}");
                 assert_eq!(r.headers()["vary"], "accept-encoding");
-                assert_eq!(csps(&r), [APP_CSP, APP_ORIGIN_CSP]);
+                assert_eq!(r.headers()["content-security-policy"], NEXT_CSP);
                 let z = r.into_body().bytes().await.unwrap();
                 assert!(z.len() < plain.len() / 3, "{name}: {} of {}", z.len(), plain.len());
                 let mut out = vec![];
                 std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&z[..]), &mut out).unwrap();
                 assert_eq!(out, plain, "{name}");
                 // a browser that doesn't take gzip gets the file as it is, and caches know it varies
-                let r = serve_from(name, "", false, big_app, none);
+                let r = serve_next_from(name, false, big_next);
                 assert!(r.headers().get("content-encoding").is_none());
                 assert_eq!(r.headers()["vary"], "accept-encoding");
                 assert_eq!(r.into_body().bytes().await.unwrap(), plain);
@@ -592,8 +417,8 @@ mod tests {
 
     #[test]
     fn fonts_and_tiny_files_go_out_as_they_are() {
-        for name in ["/assets/geist.woff2", "/assets/tiny.js"] {
-            let r = serve_from(name, "", true, big_app, none);
+        for name in ["/next/assets/geist.woff2", "/next/assets/tiny.js"] {
+            let r = serve_next_from(name, true, big_next);
             assert!(r.headers().get("content-encoding").is_none(), "{name}");
         }
         assert!(compressible("index.html") && compressible("a.wasm") && compressible("a.svg") && compressible("m.webmanifest"));

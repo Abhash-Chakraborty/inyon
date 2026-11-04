@@ -342,7 +342,7 @@ pub fn meter_tone(pct: f64) -> &'static str {
 }
 
 /// Where a session opens: this app's route for it, as the web app's (`/m/<machine>/p/<pane
-/// without %>`).
+/// without %>`) under /next.
 pub fn pane_href(host: &str, pane: &str) -> String {
     crate::route::Route::Session { host: host.into(), pane: pane.into(), view: None }.href()
 }
@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(pane_title(&p[1]), "Claude Code");
         assert_eq!(tmux_target(&p[0]), "app:1.0");
         assert_eq!(card_meta(&p[0], true), "box · app:1.0 · ~/code/app");
-        assert_eq!(pane_href("box 1", "%12"), "/m/box%201/p/12");
+        assert_eq!(pane_href("box 1", "%12"), "/next/m/box%201/p/12");
     }
 
     #[test]

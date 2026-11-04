@@ -1,4 +1,4 @@
-// The terminal view's drawing for the app: xterm.js 6 with its fit, Unicode 11, links and
+// The terminal view's drawing for the app at /next: xterm.js 6 with its fit, Unicode 11, links and
 // WebGL addons, as the web app's TerminalView sets it up. term/build.ts bundles it into one file,
 // which build.sh puts in dist/assets and names in index.html; the app loads it the first time a
 // terminal opens and drives it from Rust (src/term.rs) through `window.inyonTerm`. Everything about

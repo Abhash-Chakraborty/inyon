@@ -1,5 +1,5 @@
 // bun apps/app/e2e/pages.ts — Pages in the built app (apps/app/dist, from build.sh) in Chromium behind
-// a stand-in hub: the page under the hub's own CSP at the root, the /ws2 overview and pages streams, the
+// a stand-in hub: the page under the hub's own CSP for /next, the /ws2 overview and pages streams, the
 // page endpoints and made-up sites under /v/<token>/. Checks the list and the viewer at phone and
 // desktop sizes in light and dark, the sandboxed frame and its theme, live progress, the changed
 // marks and badges, the right-click, long-press and ⋯ menus, parts, notes and device sizes, revoking,
@@ -15,15 +15,13 @@ import { info, overview } from './demo.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
+const web = path.join(root, 'apps/web/public')
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
 
 // the policy the hub sends with the page, read from the hub's source so the two can't drift
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
-const APP_CSP = /pub const APP_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
-const APP_ORIGIN_CSP = /pub const APP_ORIGIN_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
-// both, as the hub sends them: a browser holds the page to each
-const appCsp = () => [['content-security-policy', APP_CSP], ['content-security-policy', APP_ORIGIN_CSP]] as [string, string][]
+const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 
 type Entry = Record<string, any>
 const HOUR = 3600_000
@@ -130,12 +128,12 @@ const server = Bun.serve({
       if (rest.startsWith('research/') && url.searchParams.get('as') === 'note') return html(site(`Note: ${decodeURIComponent(rest.slice(9))}`))
       return new Response('Not found', { status: 404 })
     }
-    // the app at the root: its files (with the web app's icons, theme script and worker, which
-    // build.sh copies in), else its page
-    if (!p.startsWith('/api/') && !p.startsWith('/classic')) {
-      const f = Bun.file(path.join(dist, p))
-      if (p !== '/' && (await f.exists())) return new Response(f, { headers: appCsp() })
-      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: [['content-type', 'text/html;charset=utf-8'], ...appCsp()] })
+    if (p === '/theme.js' || p.startsWith('/agents/') || p === '/icon.svg') return new Response(Bun.file(path.join(web, p)))
+    if (p === '/next' || p.startsWith('/next/')) {
+      const rel = p.replace(/^\/next\/?/, '')
+      const f = Bun.file(path.join(dist, rel))
+      if (rel && (await f.exists())) return new Response(f, { headers: { 'content-security-policy': NEXT_CSP } })
+      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: { 'content-type': 'text/html;charset=utf-8', 'content-security-policy': NEXT_CSP } })
     }
     return new Response('Not found', { status: 404 })
   },
@@ -226,7 +224,7 @@ try {
     const ctx = await browser.newContext({ ...phone, colorScheme: scheme })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/pages`)
+    await page.goto(`${base}/next/pages`)
     await page.getByRole('heading', { name: 'Pages' }).waitFor()
     await page.locator('.page-card').nth(2).waitFor()
     await styled(page)
@@ -260,7 +258,7 @@ try {
       await card.getByRole('button', { name: 'More for Checkout redesign' }).focus()
       await page.keyboard.press('Enter')
       await page.getByRole('menu').waitFor()
-      check(page.url().endsWith('/pages'), `${label}: Enter on ⋯ didn't open the page`)
+      check(page.url().endsWith('/next/pages'), `${label}: Enter on ⋯ didn't open the page`)
       await page.keyboard.press('Escape')
       await page.getByRole('menu').waitFor({ state: 'detached' })
       const other = page.locator('.page-card', { hasText: 'Passkeys rollout' })
@@ -272,14 +270,14 @@ try {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
       await page.getByRole('menu').waitFor()
       check((await menuItems(page))[0] === 'Open', `${label}: long press opens the menu`)
-      check(page.url().endsWith('/pages'), `${label}: the long press didn't open the page`)
+      check(page.url().endsWith('/next/pages'), `${label}: the long press didn't open the page`)
       await page.mouse.click(200, 120)
       await page.getByRole('menu').waitFor({ state: 'detached' })
     }
 
     // the viewer
     await card.click()
-    await page.waitForURL(/\/pages\/local\/checkout-redesign$/)
+    await page.waitForURL(/\/next\/pages\/local\/checkout-redesign$/)
     const iframe = page.locator('iframe.page-frame')
     await iframe.waitFor()
     check(await page.getByText('Sandboxed page: never sign in here').isVisible(), `${label}: the sandbox line`)
@@ -307,7 +305,7 @@ try {
     await inside.getByRole('heading', { name: 'Checkout redesign: mockups' }).waitFor()
     // back to the list: the page is no longer marked, here or in the badge, and that's kept
     await page.getByRole('button', { name: 'Back to Pages' }).click()
-    await page.waitForURL(/\/pages$/)
+    await page.waitForURL(/\/next\/pages$/)
     await page.locator('.page-card').first().waitFor()
     check((await page.locator('.page-card', { hasText: 'Checkout redesign' }).locator('.changed-dot').count()) === 0, `${label}: an opened page loses its mark`)
     check((await page.locator('.tab-badge-pages').textContent()) === '2', `${label}: the badge counts one fewer`)
@@ -322,13 +320,13 @@ try {
     const ctx = await browser.newContext({ ...desktop, colorScheme: scheme })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/pages`)
+    await page.goto(`${base}/next/pages`)
     await styled(page)
     const label = `desktop ${scheme}`
     // nothing picked: the first changed page in the tree opens (the hub's machine, its projects by name)
-    await page.waitForURL(/\/pages\/local\/passkeys$/)
+    await page.waitForURL(/\/next\/pages\/local\/passkeys$/)
     await page.locator('.tree-row', { hasText: 'Checkout redesign' }).click()
-    await page.waitForURL(/\/pages\/local\/checkout-redesign$/)
+    await page.waitForURL(/\/next\/pages\/local\/checkout-redesign$/)
     const inside = page.frameLocator('iframe.page-frame')
     await inside.getByRole('heading', { name: 'Checkout redesign' }).waitFor()
     check((await page.locator('.tree-row').count()) === 3, `${label}: three rows in the tree`)
@@ -432,7 +430,7 @@ try {
     const ctx = await browser.newContext({ ...desktop, colorScheme: 'light' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/machines/local`)
+    await page.goto(`${base}/next/machines/local`)
     await styled(page)
     const section = page.locator('.machine-pages')
     await section.waitFor()
@@ -440,7 +438,7 @@ try {
     check((await section.locator('.page-row').count()) === 2, 'machine: its two pages')
     await page.screenshot({ path: path.join(shots, 'machine-pages-1440-light.png'), fullPage: true })
     // a session: its project's pages behind a header button, and the pages its reply links to
-    await page.goto(`${base}/m/local/p/11`)
+    await page.goto(`${base}/next/m/local/p/11`)
     const reply = page.locator('.reply-pages')
     await reply.waitFor()
     check((await reply.locator('.page-row').textContent())?.includes('Checkout redesign'), 'chat: the page a reply links to')
@@ -450,7 +448,7 @@ try {
     check((await sheet.locator('.page-row').count()) === 1, "session: the project's page")
     await page.screenshot({ path: path.join(shots, 'session-pages-1440-light.png') })
     await sheet.locator('.page-row').click()
-    await page.waitForURL(/\/pages\/local\/checkout-redesign$/)
+    await page.waitForURL(/\/next\/pages\/local\/checkout-redesign$/)
     await ctx.close()
   }
 } finally {

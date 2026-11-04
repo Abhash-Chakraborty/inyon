@@ -1488,13 +1488,6 @@ fn About() -> Element {
                     });
                 },
             }
-            // the hub keeps the React app for two releases, for anything this one doesn't do yet
-            if cfg!(target_arch = "wasm32") {
-                a { class: "set-action", href: "/classic/",
-                    Glyph { icon: Icon::History, size: 16, class: "fg-3" }
-                    "Open the classic app"
-                }
-            }
             ActionRow { label: "How Inyon works", icon: Icon::BookOpen, external: true, on_click: move |_| dom::open_tab(&st::guide_url()) }
             ActionRow { label: "Support Inyon", icon: Icon::Heart, external: true, on_click: move |_| dom::open_tab(st::SPONSOR) }
         }

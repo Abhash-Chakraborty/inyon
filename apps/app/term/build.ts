@@ -1,5 +1,5 @@
 // bun apps/app/term/build.ts <out dir> — bundles term.ts with xterm.js and its addons into one
-// minified file named by its content (the hub serves /assets/ as never changing), with
+// minified file named by its content (the hub serves /next/assets/ as never changing), with
 // xterm.css and the symbols face inlined so the terminal needs nothing else. Prints the file's name.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'

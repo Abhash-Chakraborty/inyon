@@ -71,7 +71,7 @@ pub fn Overview() -> Element {
                             div { class: "empty-icon", Logo { class: "mark-drawn logo-28" } }
                             p { class: "empty-title", "No machines yet" }
                             p { class: "empty-text", "Pair a machine or add one over SSH to see the coding agents running in tmux on it." }
-                            a { class: "button button-primary button-md press empty-action", href: "/machines?add=1", "Add a machine →" }
+                            a { class: "button button-primary button-md press empty-action", href: "/next/machines?add=1", "Add a machine →" }
                         }
                     } else {
                         div {
@@ -106,7 +106,7 @@ pub fn Overview() -> Element {
                             } else if groups.is_empty() {
                                 div { class: "empty",
                                     p { class: "empty-title", "No agent sessions" }
-                                    p { class: "empty-text", "Start Claude Code, Codex or another agent in tmux on any machine, or with New session on its page under Machines." }
+                                    p { class: "empty-text", "Start Claude Code, Codex or another agent in tmux on any machine, or press N in the current app to start one from here." }
                                 }
                             } else if grouped {
                                 div { class: "groups",
@@ -157,7 +157,7 @@ pub fn Overview() -> Element {
                         section {
                             div { class: "section-label",
                                 h2 { "Machines" }
-                                a { class: "section-link", href: "/machines", "Manage →" }
+                                a { class: "section-link", href: "/next/machines", "Manage →" }
                             }
                             {machines(&h.hosts, clock)}
                         }
