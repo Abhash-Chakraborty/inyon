@@ -148,8 +148,14 @@ pub async fn hold(host: &str, pane: &str, text: &str) -> Result<(), ApiError> {
 
 /// Changes what the hub keeps about a session (pins, parking, snoozes, tags, notes; from 0.24):
 /// `PATCH …/organize` with only the fields that change, `null` clearing one.
-pub async fn organize_pane(host: &str, pane: &str, patch: &serde_json::Value) -> Result<(), ApiError> {
-    request("PATCH", &format!("{}/organize", pane_path(host, pane)), Some(patch.to_string())).await.map(drop)
+#[derive(Deserialize)]
+struct Organized {
+    session: Option<inyon_protocol::SessionMark>,
+}
+
+/// `PATCH …/organize`: the session's mark after the change, or None when nothing is kept about it.
+pub async fn organize_pane(host: &str, pane: &str, patch: &serde_json::Value) -> Result<Option<inyon_protocol::SessionMark>, ApiError> {
+    parse::<Organized>(&request("PATCH", &format!("{}/organize", pane_path(host, pane)), Some(patch.to_string())).await?).map(|o| o.session)
 }
 
 #[derive(Serialize)]

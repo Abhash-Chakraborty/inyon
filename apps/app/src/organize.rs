@@ -179,8 +179,10 @@ pub fn short_ago(ms: f64, clock: Clock) -> String {
 }
 
 /// When a snoozed session comes back: "14:00" today, "Tue 9:00" within the week, else the date.
-pub fn wakes_at(at: u64, clock: Clock) -> String {
-    let t = local_time(at as f64, clock.tz_minutes);
+/// Today is read with the offset in effect now and the wake time with `at_tz`, the one in effect then,
+/// so a wake past a clock change still names its own day.
+pub fn wakes_at(at: u64, clock: Clock, at_tz: i32) -> String {
+    let t = local_time(at as f64, at_tz);
     let today = local_time(clock.now, clock.tz_minutes);
     let days = (at as f64 - clock.now) / 86_400_000.0;
     if t.day == today.day && days < 1.0 {
@@ -189,6 +191,19 @@ pub fn wakes_at(at: u64, clock: Clock) -> String {
         format!("{} {}:{:02}", ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][t.weekday as usize], t.hour, t.minute)
     } else {
         t.month_day()
+    }
+}
+
+/// The hub's answer to a change to `key`, taken in before the organize stream brings it, so the
+/// next change and its Undo are planned from it: the mark as it is now, or None once nothing is
+/// kept about the session.
+pub fn take_mark(org: &mut Organize, key: &Key, mark: Option<SessionMark>) {
+    match mark {
+        Some(m) => match org.sessions.iter_mut().find(|x| x.id == m.id) {
+            Some(x) => *x = m,
+            None => org.sessions.push(m),
+        },
+        None => org.sessions.retain(|x| !(x.host == key.0 && x.pane == key.1)),
     }
 }
 
@@ -288,12 +303,12 @@ mod tests {
         assert_eq!(short_ago(NOW - 3.0 * 3_600_000.0, CLOCK), "3h");
         assert_eq!(short_ago(NOW - 2.0 * 86_400_000.0, CLOCK), "2d");
         let h = 3_600_000u64;
-        assert_eq!(wakes_at(NOW as u64 + 2 * h, CLOCK), "14:00");
-        assert_eq!(wakes_at(NOW as u64 + 21 * h, CLOCK), "Wed 9:00");
+        assert_eq!(wakes_at(NOW as u64 + 2 * h, CLOCK, CLOCK.tz_minutes), "14:00");
+        assert_eq!(wakes_at(NOW as u64 + 21 * h, CLOCK, CLOCK.tz_minutes), "Wed 9:00");
         let kolkata = Clock { now: NOW, tz_minutes: 330 };
-        assert_eq!(wakes_at(NOW as u64 + 2 * h, kolkata), "19:30");
-        assert_eq!(wakes_at(NOW as u64 + 6 * 24 * h - 3 * h, CLOCK), "Mon 9:00", "next week");
-        assert_eq!(wakes_at(NOW as u64 + 8 * 24 * h, CLOCK), "Nov 11");
+        assert_eq!(wakes_at(NOW as u64 + 2 * h, kolkata, kolkata.tz_minutes), "19:30");
+        assert_eq!(wakes_at(NOW as u64 + 6 * 24 * h - 3 * h, CLOCK, CLOCK.tz_minutes), "Mon 9:00", "next week");
+        assert_eq!(wakes_at(NOW as u64 + 8 * 24 * h, CLOCK, CLOCK.tz_minutes), "Nov 11");
         assert_eq!(note_line("\n  ask about the cache \nmore"), "ask about the cache");
     }
 }

@@ -88,6 +88,14 @@ impl Undo {
         }
     }
 
+    /// The sessions its tag can't go back on, since each has eight tags already.
+    pub fn full(&self, org: &Organize) -> Vec<Key> {
+        match &self.tag {
+            Some((keys, t, true)) => keys.iter().filter(|k| no_room(std::slice::from_ref(*k), org, t)).cloned().collect(),
+            _ => vec![],
+        }
+    }
+
     /// What to send for it now, against what the hub keeps now.
     pub fn changes(&self, org: &Organize) -> Vec<(Key, Value)> {
         let mut list = self.fields.clone();
@@ -232,7 +240,7 @@ fn name_of(hosts: &[inyon_protocol::HostState], org: &Organize, k: &Key) -> Stri
 
 /// A wake time as this device shows it, by the offset in effect at that time.
 pub fn wakes_at_here(at: u64, clock: Clock) -> String {
-    wakes_at(at, Clock { tz_minutes: platform::tz_at(at), ..clock })
+    wakes_at(at, clock, platform::tz_at(at))
 }
 
 /// Sends each session its change; the sessions the hub refused, and the last reason.
@@ -240,9 +248,13 @@ async fn send_all(list: Vec<(Key, Value)>) -> (Vec<Key>, Option<String>) {
     let mut failed = vec![];
     let mut why = None;
     for (k, body) in list {
-        if let Err(e) = api::organize_pane(&k.0, &k.1, &body).await {
-            failed.push(k);
-            why = Some(e.message);
+        match api::organize_pane(&k.0, &k.1, &body).await {
+            // planned from at once, though the stream brings it a moment later
+            Ok(mark) => crate::organize::take_mark(&mut ORG.write().org, &k, mark),
+            Err(e) => {
+                failed.push(k);
+                why = Some(e.message);
+            }
         }
     }
     (failed, why)
@@ -271,7 +283,13 @@ pub fn run(op: OrgOp, hub: Signal<Hub>) {
         OrgOp::ClearSelection => SELECTION.write().clear(),
         // not tied to the screen that asked: the toast whose Undo this is goes away at once
         OrgOp::Restore(undo) => {
-            let list = undo.changes(&ORG.peek().org);
+            let org = ORG.peek().org.clone();
+            let full = undo.full(&org);
+            if let (false, Some((_, t, _))) = (full.is_empty(), &undo.tag) {
+                let why = if full.len() == 1 { format!("That session has {MAX_TAGS} tags already.") } else { format!("{} sessions have {MAX_TAGS} tags already.", full.len()) };
+                toast::toast(format!("Could not put “{t}” back"), Some(why), ToastTone::Error);
+            }
+            let list = undo.changes(&org);
             dioxus::core::spawn_forever(async move {
                 let n = list.len();
                 let (failed, why) = send_all(list).await;
@@ -663,7 +681,10 @@ fn NoteSheet(open: bool, on_close: EventHandler<()>, k: Key) -> Element {
             busy.set(true);
             spawn(async move {
                 match api::organize_pane(&k.0, &k.1, &json!({ "note": note })).await {
-                    Ok(()) => on_close.call(()),
+                    Ok(mark) => {
+                        crate::organize::take_mark(&mut ORG.write().org, &k, mark);
+                        on_close.call(());
+                    }
                     Err(e) => toast::toast("Could not save the note", Some(e.message), ToastTone::Error),
                 }
                 busy.set(false);
@@ -900,6 +921,36 @@ mod tests {
     }
 
     #[test]
+    fn the_hubs_answer_is_planned_from_before_the_stream_brings_it() {
+        let wake = |_: SnoozeFor| 0;
+        let mut org = Organize { sessions: vec![mark(json!({ "tags": ["ui"] }))], ..Default::default() };
+        let first = plan(&OrgOp::Tag(vec![k("%1")], "review".into(), true), &org, NOW, &wake);
+        // the hub answers with the mark as it keeps it now; the stream hasn't caught up
+        crate::organize::take_mark(&mut org, &k("%1"), Some(mark(json!({ "tags": ["ui", "review"] }))));
+        let second = plan(&OrgOp::Tag(vec![k("%1")], "later".into(), true), &org, NOW, &wake);
+        assert_eq!(second.changes, vec![(k("%1"), json!({ "tags": ["ui", "review", "later"] }))], "the first tag isn't lost");
+        // and the first one's Undo finds its tag to take off
+        assert_eq!(first.undo.changes(&org), vec![(k("%1"), json!({ "tags": ["ui"] }))]);
+        // nothing kept any more: the mark goes
+        crate::organize::take_mark(&mut org, &k("%1"), None);
+        assert!(org.sessions.is_empty());
+        crate::organize::take_mark(&mut org, &k("%1"), Some(mark(json!({ "id": "s-2" }))));
+        assert_eq!(org.sessions.len(), 1, "a new mark is added");
+    }
+
+    #[test]
+    fn undo_names_the_sessions_with_no_room_for_their_tag() {
+        let full = mark(json!({ "tags": ["a", "b", "c", "d", "e", "f", "g", "h"] }));
+        let room = mark(json!({ "id": "s-2", "pane": "%2", "tags": ["a"] }));
+        let org = Organize { sessions: vec![full, room], ..Default::default() };
+        let undo = Undo { tag: Some((vec![k("%1"), k("%2")], "x".into(), true)), ..Default::default() };
+        assert_eq!(undo.full(&org), vec![k("%1")]);
+        assert_eq!(undo.changes(&org), vec![(k("%2"), json!({ "tags": ["a", "x"] }))]);
+        let off = Undo { tag: Some((vec![k("%1")], "x".into(), false)), ..Default::default() };
+        assert!(off.full(&org).is_empty(), "taking a tag off always fits");
+    }
+
+    #[test]
     fn a_new_sign_in_forgets_the_last_hubs_marks_and_selection() {
         use std::sync::atomic::{AtomicBool, Ordering};
         static CLEARED: AtomicBool = AtomicBool::new(false);
@@ -960,7 +1011,10 @@ mod tests {
         let at = wake_at(SnoozeFor::Tomorrow, now, 60, berlin);
         // 9:00 on Sunday in summer time is 7:00 UTC
         assert_eq!(at, 1_774_767_600_000);
-        assert_eq!(wakes_at(at, Clock { now: now as f64, tz_minutes: berlin(at) }), "Sun 9:00");
+        assert_eq!(wakes_at(at, Clock { now: now as f64, tz_minutes: 60 }, berlin(at)), "Sun 9:00");
+        // at 23:30 that night it's still Saturday here, though the wake's offset is a day on
+        let late = 1_774_737_000_000;
+        assert_eq!(wakes_at(at, Clock { now: late as f64, tz_minutes: berlin(late) }, berlin(at)), "Sun 9:00");
         // without a change it's plain 9:00, and an hour's snooze is an hour
         assert_eq!(wake_at(SnoozeFor::Tomorrow, now, 60, |_| 60), 1_774_771_200_000);
         assert_eq!(wake_at(SnoozeFor::Hour, now, 60, berlin), now + 3_600_000);
