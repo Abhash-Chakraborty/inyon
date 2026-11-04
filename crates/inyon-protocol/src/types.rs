@@ -1043,6 +1043,12 @@ pub struct PageEntry {
     /// the name Inyon last gave that session, for when it isn't running
     #[serde(rename = "sessionName")]
     pub session_name: Option<String>,
+    /// the tmux session it belongs to, by its name now (from 0.25): the one its conversation runs
+    /// in, else the one it was added or found in. The app lists a machine's pages under it
+    pub tmux: Option<String>,
+    /// that tmux session's id ("$3"), as tmux last gave it
+    #[serde(rename = "tmuxId")]
+    pub tmux_id: Option<String>,
 }
 
 /// GET /api/pages
@@ -1074,7 +1080,9 @@ pub struct PageRegister {
 }
 
 /// One entry of ~/.inyon/pages.json, the machine's list of pages.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
 pub struct PageRecord {
     pub slug: String,
     pub name: String,
@@ -1083,6 +1091,13 @@ pub struct PageRecord {
     pub by: String,
     /// unix ms
     pub added: u64,
+    /// the agent conversation that last added it (from 0.22.5)
+    pub session: Option<String>,
+    /// the tmux session it was last added from, by name (from 0.25)
+    pub tmux: Option<String>,
+    /// that tmux session's id ("$3")
+    #[serde(rename = "tmuxId")]
+    pub tmux_id: Option<String>,
 }
 
 /// ~/.inyon/pages.json. Written to a temp file and renamed, under pages.json.lock.

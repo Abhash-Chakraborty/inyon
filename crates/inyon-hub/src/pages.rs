@@ -65,18 +65,44 @@ fn record_json(r: &Record) -> Value {
     if let Some(s) = &r.session {
         v["session"] = json!(s);
     }
+    if let Some(t) = &r.tmux {
+        v["tmux"] = json!(t);
+    }
+    if let Some(id) = &r.tmux_id {
+        v["tmuxId"] = json!(id);
+    }
     v
 }
 
-/// The session a page belongs to: the one that added it, or the one it was found under (kept by
-/// the hub, since a machine's older inyon can't write it). With the name Inyon last gave it.
-fn with_session(v: &mut Value, host: &str, r: &Record) {
-    let session = r.session.clone().or_else(|| crate::finding::session_of(host, &r.slug));
+/// Whose a page is: the conversation that added it, or the one it was found under (kept by the
+/// hub, since a machine's older inyon can't write it), with the name Inyon last gave it; and the
+/// tmux session that conversation runs in now, else the one the hub last saw it in, else the one
+/// it was added from. A name seen now is kept, so it stays once the agent has stopped.
+fn with_owner(v: &mut Value, host: &str, r: &Record) {
+    let kept = crate::finding::owner_of(host, &r.slug);
+    let session = r.session.clone().or_else(|| kept.session.clone());
+    let live = session.as_deref().and_then(|s| pages_remote::live_tmux(host, s));
+    let (tmux_id, tmux) = match live {
+        Some((id, name)) => {
+            if kept.tmux.as_deref() != Some(name.as_str()) || kept.tmux_id.as_deref() != Some(id.as_str()) {
+                crate::finding::remember(host, &r.slug, &crate::finding::Owner { session: session.clone(), tmux: Some(name.clone()), tmux_id: Some(id.clone()) });
+            }
+            (Some(id), Some(name))
+        }
+        None if kept.tmux.is_some() => (kept.tmux_id, kept.tmux),
+        None => (r.tmux_id.clone(), r.tmux.clone()),
+    };
     if let Some(s) = session {
         if let Some(name) = inyon_core::hosts::names::last_name(host, &s) {
             v["sessionName"] = json!(name);
         }
         v["session"] = json!(s);
+    }
+    if let Some(t) = tmux {
+        v["tmux"] = json!(t);
+        if let Some(id) = tmux_id {
+            v["tmuxId"] = json!(id);
+        }
     }
 }
 
@@ -742,7 +768,7 @@ impl Pages {
         if !notes.is_empty() {
             v["notes"] = json!(notes);
         }
-        with_session(&mut v, LOCAL_HOST, r);
+        with_owner(&mut v, LOCAL_HOST, r);
         v
     }
 
@@ -756,7 +782,7 @@ impl Pages {
         if !p.notes.is_empty() {
             v["notes"] = json!(p.notes);
         }
-        with_session(&mut v, host, r);
+        with_owner(&mut v, host, r);
         v
     }
 
@@ -904,7 +930,17 @@ async fn register_page(mut req: Req) -> HubResult<Resp> {
                 Some(s) => s.clone(),
                 None => unique_slug(&marker_slug.clone().unwrap_or_else(|| slugify(&basename)), taken),
             };
-            let added = Record { slug, name: name.clone(), path: folder.clone(), project: project.clone(), by: "app".into(), added: Number::from(now), session: None };
+            let added = Record {
+                slug,
+                name: name.clone(),
+                path: folder.clone(),
+                project: project.clone(),
+                by: "app".into(),
+                added: Number::from(now),
+                session: None,
+                tmux: None,
+                tmux_id: None,
+            };
             let mut next = pages.to_vec();
             next.push(record_json(&added));
             Ok((Some(next), added))

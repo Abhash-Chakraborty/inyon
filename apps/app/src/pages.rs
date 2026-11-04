@@ -594,6 +594,8 @@ mod tests {
             notes: None,
             session: None,
             session_name: None,
+            tmux: None,
+            tmux_id: None,
         }
     }
 

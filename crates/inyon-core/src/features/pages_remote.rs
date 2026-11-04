@@ -65,6 +65,10 @@ pub struct Record {
     pub added: Number,
     /// the agent conversation that added it, when the file says (from 0.22.5)
     pub session: Option<String>,
+    /// the tmux session it was added from, by name, when the file says (from 0.25)
+    pub tmux: Option<String>,
+    /// that tmux session's id ("$3")
+    pub tmux_id: Option<String>,
 }
 
 pub fn as_record(v: &Value) -> Option<Record> {
@@ -76,7 +80,36 @@ pub fn as_record(v: &Value) -> Option<Record> {
         _ => return None,
     };
     let session = s("session").filter(|x| is_session(x));
-    Some(Record { slug, name: s("name")?, path: s("path")?, project: s("project")?, by: s("by")?, added, session })
+    let tmux = s("tmux").filter(|x| is_tmux_name(x));
+    let tmux_id = s("tmuxId").filter(|x| is_tmux_id(x));
+    Some(Record { slug, name: s("name")?, path: s("path")?, project: s("project")?, by: s("by")?, added, session, tmux, tmux_id })
+}
+
+/// A tmux session's name as pages.json keeps it: some text, at most 200 bytes, without control
+/// characters (tmux itself refuses `:` and `.` in one).
+pub fn is_tmux_name(s: &str) -> bool {
+    !s.trim().is_empty() && s.len() <= 200 && !s.chars().any(char::is_control)
+}
+
+/// A tmux session id: `$` and digits.
+pub fn is_tmux_id(s: &str) -> bool {
+    s.len() > 1 && s.len() <= 12 && s.starts_with('$') && s[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The tmux session a conversation runs in on a machine now, as (id, name): renaming the session
+/// shows up here at once.
+pub fn tmux_of(state: &inyon_protocol::HostState, session: &str) -> Option<(String, String)> {
+    state.sessions.iter().find_map(|t| {
+        let here = t.windows.iter().flat_map(|w| &w.panes).any(|p| !p.dead && p.agent.as_ref().and_then(|a| a.session_id.as_deref()) == Some(session));
+        here.then(|| (t.id.clone(), t.name.clone()))
+    })
+}
+
+/// The tmux session a page's conversation runs in now on a connected machine, as (id, name).
+pub fn live_tmux(host: &str, session: &str) -> Option<(String, String)> {
+    let rt = registry().get(host)?;
+    let state = rt.borrow().state.clone();
+    tmux_of(&state, session)
 }
 
 /// A conversation id as pages.json keeps it: letters, digits and `._:-`, at most 128 of them.

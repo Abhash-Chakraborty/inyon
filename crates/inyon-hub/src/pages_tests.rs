@@ -1928,8 +1928,9 @@ fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
         machine.calls.borrow_mut().clear();
         crate::finding::find_all(&mut not_before, 1_000).await;
         assert_eq!(machine.calls.borrow().iter().filter(|c| c.starts_with("find ")).cloned().collect::<Vec<_>>(), ["find --json --by 'claude' -- 'D:\\Dev\\shop'"]);
-        // the hub keeps which conversation's folder the page was found under
-        assert_eq!(crate::finding::session_of("laptop", "plan").as_deref(), Some("chat-7"));
+        // the hub keeps whose folder the page was found under: the conversation and its tmux session
+        let owner = crate::finding::owner_of("laptop", "plan");
+        assert_eq!((owner.session.as_deref(), owner.tmux.as_deref(), owner.tmux_id.as_deref()), (Some("chat-7"), Some("s"), Some("$1")));
         // an inyon from before 0.22.4 is left alone for a while
         found.set(false);
         crate::finding::find_all(&mut not_before, 2_000).await;
@@ -1937,6 +1938,61 @@ fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
         let asked = machine.count("find ");
         crate::finding::find_all(&mut not_before, 3_000).await;
         assert_eq!(machine.count("find "), asked);
+    });
+}
+
+// two sites made in one tmux session ("cardboard robot" and "mob robot") list under it, by the name
+// it has now
+#[test]
+fn a_page_lists_under_the_tmux_session_it_belongs_to_by_its_name_now() {
+    let tmp = Tmp::new("owner");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let machine = Rc::new(Machine::new(Box::new(|_| Value::Null)));
+        laptop(machine.clone());
+        // added from inside tmux: the conversation, and the session as it was called then
+        let robot = json!({ "slug": "robot", "name": "Cardboard robot", "path": "D:\\Dev\\robot", "project": "D:\\Dev\\robot", "by": "claude", "added": 5, "session": "chat-9", "tmux": "robots", "tmuxId": "$4" });
+        // added by hand from the same session, with no conversation
+        let mob = json!({ "slug": "mob", "name": "Mob robot", "path": "D:\\Dev\\mob", "project": "D:\\Dev\\mob", "by": "cli", "added": 6, "tmux": "robots", "tmuxId": "$4" });
+        // an older inyon's entry
+        let old = json!({ "slug": "old", "name": "Old", "path": "D:\\Dev\\old", "project": "D:\\Dev\\old", "by": "cli", "added": 7 });
+        *machine.answer.borrow_mut() =
+            Box::new(move |_| json!({ "v": 1, "pages": [robot, mob, old], "host": "local", "machine": "laptop", "hub": false, "serves": true, "skipped": 0, "message": "" }));
+        let rt = inyon_core::hosts::registry::registry().get("laptop").unwrap();
+        let running = |name: &str, dead: bool| -> Vec<inyon_protocol::SessionInfo> {
+            serde_json::from_value(json!([{ "id": "$4", "name": name, "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": [
+                { "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "D:\\Dev\\robot", "title": "", "width": 80, "height": 24, "dead": dead, "agent": { "kind": "claude", "pid": 1, "state": "idle", "sessionId": "chat-9" } }
+            ] }] }]))
+            .unwrap()
+        };
+        let tmux = |entries: &[Value]| -> Vec<(String, Option<String>, Option<String>)> {
+            entries
+                .iter()
+                .map(|e| {
+                    (e["slug"].as_str().unwrap().to_owned(), e.get("tmux").and_then(Value::as_str).map(str::to_owned), e.get("tmuxId").and_then(Value::as_str).map(str::to_owned))
+                })
+                .collect()
+        };
+        let list = || async { crate::pages::entries(&crate::pages::pages()).await.into_iter().filter(|e| e["host"] == "laptop").collect::<Vec<_>>() };
+        let pair = |slug: &str, t: Option<&str>| (slug.to_owned(), t.map(str::to_owned), t.map(|_| "$4".to_owned()));
+        // the session was renamed since: its conversation runs there, so the page shows the new name
+        rt.borrow_mut().state.sessions = running("cardboard", false);
+        crate::pages::pages().remote.forget("laptop");
+        let entries = list().await;
+        assert_eq!(tmux(&entries), [pair("robot", Some("cardboard")), pair("mob", Some("robots")), ("old".into(), None, None)]);
+        // the conversation is kept with it (the agent's session id), with its tmux session
+        assert_eq!(entries[0]["session"], "chat-9");
+        // the agent stops: the name it had last stays
+        rt.borrow_mut().state.sessions = running("cardboard", true);
+        crate::pages::pages().remote.forget("laptop");
+        assert_eq!(tmux(&list().await)[0], pair("robot", Some("cardboard")));
+        rt.borrow_mut().state.sessions = vec![];
+        crate::pages::pages().remote.forget("laptop");
+        assert_eq!(tmux(&list().await)[0], pair("robot", Some("cardboard")));
+        // and the stream's rows carry it
+        let rows = crate::pages_stream::rows(list().await);
+        assert_eq!((rows[0].tmux.as_deref(), rows[0].tmux_id.as_deref()), (Some("cardboard"), Some("$4")));
     });
 }
 

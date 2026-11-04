@@ -278,6 +278,14 @@ fn entry(host: &str, p: &RemotePage) -> Value {
         }
         v["session"] = json!(s);
     }
+    // the tmux session its conversation runs in now, else the one it was added from
+    let live = r.session.as_deref().and_then(|s| inyon_core::features::pages_remote::live_tmux(host, s));
+    if let Some((id, name)) = live.or_else(|| r.tmux.clone().map(|t| (r.tmux_id.clone().unwrap_or_default(), t))) {
+        v["tmux"] = json!(name);
+        if !id.is_empty() {
+            v["tmuxId"] = json!(id);
+        }
+    }
     v
 }
 

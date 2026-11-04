@@ -200,7 +200,7 @@ async fn remove(p: PageEntry, machine: String) -> bool {
                 body: Some(format!("The folder stays on {machine}.")),
                 tone: ToastTone::Success,
                 href: None,
-                action: Some(("Undo".into(), Action::Page(PageOp::Restore(p)))),
+                action: Some(("Undo".into(), Action::Page(Box::new(PageOp::Restore(p))))),
                 agent: None,
             });
             true
@@ -220,13 +220,13 @@ pub fn page_menu(p: &PageEntry, m: &PageMachine, open: bool) -> Vec<Item> {
     }
     let off = !m.online;
     v.push(
-        Item::new("Open in browser", Icon::ExternalLink, Action::Page(PageOp::OpenInBrowser(p.clone())))
+        Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone()))))
             .hint(if off { format!("{} is offline", m.name) } else { BROWSER_HINT.into() })
             .disabled(off),
     );
-    v.push(Item::new("Revoke links", Icon::Link2Off, Action::Page(PageOp::Revoke(p.clone()))).separated());
-    v.push(Item::new("Show folder", Icon::FolderOpen, Action::Page(PageOp::ShowFolder(p.clone()))));
-    v.push(Item::new("Remove", Icon::Trash2, Action::Page(PageOp::Remove { page: p.clone(), back: false })).danger().separated());
+    v.push(Item::new("Revoke links", Icon::Link2Off, Action::Page(Box::new(PageOp::Revoke(p.clone())))).separated());
+    v.push(Item::new("Show folder", Icon::FolderOpen, Action::Page(Box::new(PageOp::ShowFolder(p.clone())))));
+    v.push(Item::new("Remove", Icon::Trash2, Action::Page(Box::new(PageOp::Remove { page: p.clone(), back: false }))).danger().separated());
     v
 }
 
@@ -519,11 +519,12 @@ fn PageFrame(src: String, title: String, #[props(default)] class: String) -> Ele
 fn notes_menu(p: &PageEntry, part: Part, note: Option<&str>, linked: bool) -> Vec<Item> {
     let mut v = Vec::new();
     if note.is_some() {
-        v.push(Item::new(format!("Back to {}", part.label()), part_icon(part), Action::Page(PageOp::Viewer(ViewerOp::Part(part)))));
+        v.push(Item::new(format!("Back to {}", part.label()), part_icon(part), Action::Page(Box::new(PageOp::Viewer(ViewerOp::Part(part))))));
     }
     for (i, name) in p.notes.iter().flatten().enumerate() {
-        let mut item =
-            Item::new(pg::note_title(name), Icon::FileText, Action::Page(PageOp::Viewer(ViewerOp::Note(name.clone())))).checked(note == Some(name.as_str())).disabled(!linked);
+        let mut item = Item::new(pg::note_title(name), Icon::FileText, Action::Page(Box::new(PageOp::Viewer(ViewerOp::Note(name.clone())))))
+            .checked(note == Some(name.as_str()))
+            .disabled(!linked);
         if note.is_some() && i == 0 {
             item = item.separated();
         }
@@ -964,14 +965,14 @@ fn PhoneViewer(host: String, slug: String) -> Element {
         };
     };
     let linked = link.is_some();
-    let mut more: Vec<Item> = vec![Item::new("Reload", Icon::RotateCw, Action::Page(PageOp::Viewer(ViewerOp::Reload))).disabled(!linked)];
+    let mut more: Vec<Item> = vec![Item::new("Reload", Icon::RotateCw, Action::Page(Box::new(PageOp::Viewer(ViewerOp::Reload)))).disabled(!linked)];
     if parts.len() > 1 {
         for (i, pt) in parts.iter().enumerate() {
-            let item = Item::new(pt.label(), part_icon(*pt), Action::Page(PageOp::Viewer(ViewerOp::Part(*pt)))).checked(note.is_none() && part == *pt).disabled(!linked);
+            let item = Item::new(pt.label(), part_icon(*pt), Action::Page(Box::new(PageOp::Viewer(ViewerOp::Part(*pt))))).checked(note.is_none() && part == *pt).disabled(!linked);
             more.push(if i == 0 { item.separated() } else { item });
         }
     }
-    more.push(Item::new("Open in browser", Icon::ExternalLink, Action::Page(PageOp::OpenInBrowser(p.clone()))).hint(BROWSER_HINT).separated().disabled(!linked));
+    more.push(Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone())))).hint(BROWSER_HINT).separated().disabled(!linked));
     let mut machine_items: Vec<Item> = siblings.iter().map(|s| Item::new(s.name.clone(), Icon::FileText, Action::Go(page_route(s))).checked(s.slug == p.slug)).collect();
     if let Some((mid, _)) = &m.known {
         machine_items.push(Item::new(format!("Open {}", m.name), Icon::Server, Action::Go(Route::Machine { id: mid.clone() })).separated());
@@ -1267,10 +1268,10 @@ fn DesktopViewer(p: PageEntry, m: PageMachine) -> Element {
     let names = pg::running_names(&hub.read().hosts);
     let group = pg::group_name(&p, &names);
     let menu_items = vec![
-        Item::new("Revoke links", Icon::Link2Off, Action::Page(PageOp::Revoke(p.clone()))),
-        Item::new("Copy folder path", Icon::Copy, Action::Page(PageOp::CopyFolder(p.folder.clone()))),
-        Item::new("Show folder", Icon::FolderOpen, Action::Page(PageOp::ShowFolder(p.clone()))),
-        Item::new("Remove", Icon::Trash2, Action::Page(PageOp::Remove { page: p.clone(), back: true })).danger().separated(),
+        Item::new("Revoke links", Icon::Link2Off, Action::Page(Box::new(PageOp::Revoke(p.clone())))),
+        Item::new("Copy folder path", Icon::Copy, Action::Page(Box::new(PageOp::CopyFolder(p.folder.clone())))),
+        Item::new("Show folder", Icon::FolderOpen, Action::Page(Box::new(PageOp::ShowFolder(p.clone())))),
+        Item::new("Remove", Icon::Trash2, Action::Page(Box::new(PageOp::Remove { page: p.clone(), back: true }))).danger().separated(),
     ];
     let notes = notes_menu(&p, part, note.as_deref(), link.is_some());
     let has_notes = p.notes.as_ref().is_some_and(|n| !n.is_empty());
@@ -1669,6 +1670,8 @@ mod tests {
             notes: Some(vec!["a.md".into(), "b.md".into()]),
             session: None,
             session_name: None,
+            tmux: None,
+            tmux_id: None,
         }
     }
 

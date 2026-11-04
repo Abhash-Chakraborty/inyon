@@ -41,7 +41,8 @@ pub enum Action {
     /// asks, then removes a machine from the hub
     RemoveMachine(String),
     /// what can be done to a page (components/pages/shared.tsx's page menu)
-    Page(super::pages::PageOp),
+    /// boxed: a page's entry is far bigger than the other actions
+    Page(Box<super::pages::PageOp>),
     /// a temp item or file (pages/Temp.tsx)
     Temp(super::temp::TempOp),
     /// a custom agent or a paired companion app in Settings
@@ -441,7 +442,7 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
                 super::machines::remove(&h).await;
             });
         }
-        Action::Page(op) => super::pages::run(op, here, hub),
+        Action::Page(op) => super::pages::run(*op, here, hub),
         Action::Temp(op) => super::temp::run(op),
         Action::Settings(op) => super::settings::run(op),
         Action::Session(act) => super::session_menu::run(act, here),
