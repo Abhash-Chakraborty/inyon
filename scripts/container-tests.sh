@@ -31,7 +31,7 @@ engine="inyon-engine-linux-$arch"
 engine_musl="inyon-engine-linux-$arch-musl"
 keys="$root/apps/cli/tests/keys"
 pubkey=$(sed -n 2p "$keys/test.pub")
-version=${INYON_TEST_VERSION:-0.24.0}
+version=${INYON_TEST_VERSION:-0.25.0}
 old=0.12.0
 old17=0.17.6
 work=$(mktemp -d "${TMPDIR:-/tmp}/inyon-containers.XXXXXX")
@@ -63,10 +63,11 @@ else
   # the TLS library has C in it; without a musl cross compiler the host one does, for the same processor
   cc_var="CC_$(printf '%s' "$target" | tr '-' '_')"
   if command -v musl-gcc >/dev/null 2>&1; then cc=musl-gcc; else cc=cc; fi
-  # the hub in the command carries the web app, so it's built first
+  # the hub in the command carries both apps (the app at /, the classic one at /classic), so they're built first
   grep -qs /classic/assets/ "$root/apps/web/dist/index.html" || (cd "$root" && bun run --cwd apps/web build:hub >/dev/null)
+  [ -f "$root/apps/app/dist/index.html" ] || "$root/apps/app/build.sh" >/dev/null
   (cd "$root/apps/cli" && env "$cc_var=$cc" cargo build --release --target "$target" --quiet)
-  cp "$root/target/$target/release/inyon" "$dist/$cli"
+  cp "${CARGO_TARGET_DIR:-$root/target}/$target/release/inyon" "$dist/$cli"
 fi
 chmod +x "$dist/$cli"
 # the engine files, as the release makes them
