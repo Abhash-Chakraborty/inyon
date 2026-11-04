@@ -494,10 +494,11 @@ function browserNotice(title: string, body: string, href: string, tag: string) {
  */
 function pageNotify(m: Extract<ServerMsg, { t: 'page.notify' }>) {
   if (!useStore.getState().settings.notifyPages) return
-  const href = `/pages/${encodeURIComponent(m.host)}/${m.slug}`
+  const href = `/blueprints/${encodeURIComponent(m.host)}/${m.slug}`
   const tag = `page:${m.host}/${m.slug}`
   if (document.visibilityState === 'visible') {
-    if (routeOf(location.pathname) !== href) toast({ title: m.title, body: m.body, tone: 'success', href })
+    // open under either address (/pages/ from before 0.25)
+    if (routeOf(location.pathname).replace(/^\/pages\//, '/blueprints/') !== href) toast({ title: m.title, body: m.body, tone: 'success', href })
     return
   }
   if (isNative()) return void nativeNotify(m.title, m.body, href, tag, 'page')

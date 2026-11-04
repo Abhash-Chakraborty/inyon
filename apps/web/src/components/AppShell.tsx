@@ -171,7 +171,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
             </span>
           )}
         </NavLink>
-        <NavLink to="/pages" className={({ isActive }) => item(isActive)}>
+        <NavLink to="/blueprints" className={({ isActive }) => item(isActive)}>
           <PanelsTopLeft className="size-4" /> Blueprints
           {changed > 0 ? (
             <span className="tabular animate-pop ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-fg px-1.5 font-mono text-[12px] leading-none font-semibold text-bg" title={`${changed} changed since you last opened ${changed === 1 ? 'it' : 'them'}`}>
@@ -202,7 +202,7 @@ function TabBar({ onNew }: { onNew: () => void }) {
         </span>
         Overview
       </NavLink>
-      <NavLink to="/pages" className={tab}>
+      <NavLink to="/blueprints" className={tab}>
         <span className="relative">
           <PanelsTopLeft className="size-[21px]" />
           {changed > 0 && (

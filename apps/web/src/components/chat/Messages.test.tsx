@@ -56,8 +56,8 @@ test('a reply that links to a page shows it as a card that opens it, once the re
   const at = (row: typeof done) => render(<MemoryRouter><ChatHost.Provider value="hub:h1/laptop"><AssistantTurn row={row} live={false} /></ChatHost.Provider></MemoryRouter>)
   const shown = at(done)
   const card = screen.getByRole('link', { name: /My plan/ })
-  expect(card.getAttribute('href')).toBe('/pages/hub%3Ah1%2Flocal/my-plan')
-  expect(screen.getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/pages/'))).toHaveLength(1)
+  expect(card.getAttribute('href')).toBe('/blueprints/hub%3Ah1%2Flocal/my-plan')
+  expect(screen.getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/blueprints/'))).toHaveLength(1)
   shown.unmount()
   if (open.open) {
     at(open)

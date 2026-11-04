@@ -257,9 +257,13 @@ describe('page notices', () => {
 
   test("a page's board moving on toasts with a link to the page, unless that page is open", () => {
     moved('hub:h1/box')
-    expect(useStore.getState().toasts[0]).toMatchObject({ title: 'Robot', body: '3 of 12 done · Payment sheet', href: '/pages/hub%3Ah1%2Fbox/robot' })
+    expect(useStore.getState().toasts[0]).toMatchObject({ title: 'Robot', body: '3 of 12 done · Payment sheet', href: '/blueprints/hub%3Ah1%2Fbox/robot' })
     expect(useStore.getState().activity).toEqual([])
     useStore.setState({ toasts: [] })
+    history.pushState({}, '', '/blueprints/laptop/robot')
+    moved()
+    expect(useStore.getState().toasts).toEqual([])
+    // and under the address from before 0.25
     history.pushState({}, '', '/pages/laptop/robot')
     moved()
     expect(useStore.getState().toasts).toEqual([])
@@ -283,7 +287,7 @@ describe('page notices', () => {
     try {
       moved()
       await Promise.resolve()
-      expect(posted).toEqual([{ title: 'Robot', body: '3 of 12 done · Payment sheet', href: '/pages/laptop/robot', tag: 'page:laptop/robot', kind: 'page' }])
+      expect(posted).toEqual([{ title: 'Robot', body: '3 of 12 done · Payment sheet', href: '/blueprints/laptop/robot', tag: 'page:laptop/robot', kind: 'page' }])
       expect(useStore.getState().toasts).toEqual([])
     } finally {
       delete (window as any).Capacitor

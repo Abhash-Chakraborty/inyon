@@ -65,21 +65,44 @@ describe("the session's pages", () => {
   beforeEach(() => useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'claude')] })] }))
   afterEach(() => usePages.setState({ pages: null }))
 
-  test('a Pages tab with the pages from its project, each a link to its viewer', async () => {
+  test('a Blueprints tab with the pages from its project, each opening right in the panel', async () => {
     usePages.setState({ pages: [page('robot', { progress: { done: 2, total: 3, now: 'Wiring' } }), page('elsewhere', { project: '/home/me/other', folder: '/home/me/other/p' })] })
     const user = userEvent.setup()
     panel()
     await user.click(screen.getByRole('tab', { name: /Blueprints/ }))
     const link = screen.getByRole('link', { name: /Plan robot/ })
-    expect(link.getAttribute('href')).toBe('/pages/box/robot')
+    expect(link.getAttribute('href')).toBe('/blueprints/box/robot')
     expect(link.textContent).toContain('Wiring')
     expect(link.textContent).toContain('2/3')
     expect(screen.queryByText('Plan elsewhere')).toBeNull()
+    // it opens beside the chat, saying which blueprint and where, with the way back
+    await user.click(link)
+    expect(document.querySelector('.viewer-name')!.textContent).toBe('Plan robot')
+    expect(document.querySelector('.viewer-where')!.textContent).toBe('box')
+    await user.click(screen.getByRole('button', { name: "This session's blueprints" }))
+    expect(screen.getByRole('link', { name: /Plan robot/ })).toBeTruthy()
   })
 
-  test('no Pages tab for a session with none', () => {
+  test("this tmux session's blueprints, this conversation's first; another tmux session's stay out, even in the same folder", async () => {
+    useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'claude', { agent: { kind: 'claude', pid: 1, state: 'idle', sessionId: 'chat-2' } })] })] })
+    usePages.setState({
+      pages: [
+        page('mine', { session: 'chat-2', tmux: 'main', project: '/srv/elsewhere', folder: '/srv/elsewhere/p' }),
+        page('earlier', { session: 'chat-1', tmux: 'main', tmuxId: '$1' }),
+        page('theirs', { session: 'chat-9', tmux: 'accounts' }),
+      ],
+    })
+    const user = userEvent.setup()
+    panel()
+    await user.click(screen.getByRole('tab', { name: /Blueprints/ }))
+    expect([...document.querySelectorAll('.side-label')].map((e) => e.textContent)).toEqual(['This conversation', 'Earlier in main'])
+    expect(screen.getAllByRole('link').map((l) => l.textContent?.startsWith('Plan mine') || l.textContent?.startsWith('Plan earlier'))).toEqual([true, true])
+    expect(screen.queryByText('Plan theirs')).toBeNull()
+  })
+
+  test('no Blueprints tab for a session with none', () => {
     usePages.setState({ pages: [page('far', { host: 'other' })] })
     panel()
-    expect(screen.queryByRole('tab', { name: /Pages/ })).toBeNull()
+    expect(screen.queryByRole('tab', { name: /Blueprints/ })).toBeNull()
   })
 })

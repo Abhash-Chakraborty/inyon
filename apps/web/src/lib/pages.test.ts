@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { PageEntry } from '@inyon/protocol'
 import {
-  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupName, groupPages, isBridged, isChanged, leftText, linkedPages, loadPages, localDeadline, markSeen, matchesPage,
-  pageHosts, pageId, previewRefusal, projectName, renewIn, runningNames, sessionPages, shouldRenew, usePages, type Page,
+  RENEW_BEFORE_MS, agoText, appOrigins, browserPath, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupName, groupPages, isBridged, isChanged, leftText, linkedPages, liveSessions, loadPages, localDeadline,
+  manyMachines, markSeen, matchesPage, namesOf, pageHosts, pageHref, pageId, previewRefusal, projectName, renewIn, runningNames, sessionCount, sessionPages, shouldRenew, tmuxOf, usePages, type Names, type Page,
 } from './pages.ts'
+import { sections } from '../components/pages/SessionBlueprints.tsx'
 import { api } from '../test/fakes.ts'
 import { ApiError } from './api.ts'
 
@@ -16,8 +17,11 @@ const nameOf = (h: string) => names[h] ?? h
 
 beforeEach(() => usePages.setState({ pages: null, outdated: [], error: undefined, seen: {}, unreachable: [], forgotten: [] }))
 
+const none: Names = { tmux: new Map(), titles: new Map() }
+const slugsOf = (l: Page[]) => l.map((p) => p.slug)
+
 describe('grouping', () => {
-  test('machine, then project, then page; the hub machine first, the newest change on top', () => {
+  test('by project when no session is known, the newest change on top, each heading on its machine', () => {
     const groups = groupPages(
       [
         entry('old', { added: 10 }),
@@ -27,18 +31,38 @@ describe('grouping', () => {
       ],
       nameOf,
     )
-    expect(groups.map((g) => g.host)).toEqual(['local', 'laptop'])
-    expect(groups[0]!.projects.map((p) => [p.name, p.pages.map((x) => x.slug)])).toEqual([
-      ['app', ['busy', 'old']],
-      ['site', ['site']],
+    expect(groups.map((g) => [g.name, g.host, g.session, slugsOf(g.pages)])).toEqual([
+      ['app', 'local', false, ['busy', 'old']],
+      // a Windows path names its project by its last folder too
+      ['demo', 'laptop', false, ['win']],
+      ['site', 'local', false, ['site']],
     ])
-    // a Windows path names its project by its last folder too
-    expect(groups[1]!.projects[0]!.name).toBe('demo')
+    expect(manyMachines(groups)).toBe(true)
+    expect(manyMachines(groups.slice(2))).toBe(false)
   })
 
-  test("other machines follow by name, and a paired hub's own machine counts as a hub machine", () => {
-    const groups = groupPages([entry('a', { host: 'zeta' }), entry('b', { host: 'hub:h1/local' }), entry('c', { host: 'alpha' })], nameOf)
-    expect(groups.map((g) => g.host)).toEqual(['hub:h1/local', 'alpha', 'zeta'])
+  test("sites made in one tmux session sit under its name, whichever conversation made them, before the projects", () => {
+    const pages = [
+      entry('cardboard', { session: 'chat-1', tmux: 'robots', tmuxId: '$2' }),
+      entry('mob', { session: 'chat-2', tmux: 'robots', tmuxId: '$2', project: '/home/me/code/mob' }),
+      entry('loose'),
+    ]
+    const groups = groupPages(pages, nameOf, none)
+    expect(groups.map((g) => [g.name, g.session, slugsOf(g.pages).sort()])).toEqual([
+      ['robots', true, ['cardboard', 'mob']],
+      ['app', false, ['loose']],
+    ])
+  })
+
+  test('the same session name on two machines is two headings, and a renamed tmux session takes its pages along', () => {
+    const pages = [entry('a', { tmux: 'main', session: 'c1' }), entry('b', { host: 'laptop', tmux: 'main' })]
+    expect(groupPages(pages, nameOf, none).map((g) => g.key)).toEqual(['laptop/s:main', 'local/s:main'])
+    // the conversation runs in a tmux session called shop now
+    const live: Names = { tmux: new Map([[pageId('local', 'c1'), { id: '$4', name: 'shop' }]]), titles: new Map() }
+    expect(groupName(pages[0]!, live)).toBe('shop')
+    expect(tmuxOf(pages[0]!, live)).toEqual({ id: '$4', name: 'shop' })
+    expect(tmuxOf(pages[1]!, live)).toEqual({ id: undefined, name: 'main' })
+    expect(matchesPage(pages[0]!, 'studio', 'sho', live)).toBe(true)
   })
 
   test('the filter looks at the name, the project and the machine', () => {
@@ -51,14 +75,13 @@ describe('grouping', () => {
     expect(projectName('/a/b/c/')).toBe('c')
   })
 
-  test("a session's pages are grouped under the name the session has now", () => {
+  test("a page from before pages kept their tmux session goes by its conversation's name", () => {
     const pages = [entry('plan', { session: 'chat-1', sessionName: 'Handy redesign' }), entry('mock', { session: 'chat-1' }), entry('other'), entry('gone', { session: 'chat-9' })]
     // renamed while it runs: the group follows the running session's name
-    const running = new Map([[pageId('local', 'chat-1'), 'Legato development']])
-    const groups = groupPages(pages, nameOf, running)
-    expect(groups[0]!.projects.map((p) => [p.name, p.pages.map((x) => x.slug).sort()])).toEqual([
-      ['app', ['gone', 'other']],
+    const running: Names = { tmux: new Map(), titles: new Map([[pageId('local', 'chat-1'), 'Legato development']]) }
+    expect(groupPages(pages, nameOf, running).map((g) => [g.name, slugsOf(g.pages).sort()])).toEqual([
       ['Legato development', ['mock', 'plan']],
+      ['app', ['gone', 'other']],
     ])
     // not running: the name Inyon last gave it, else the project folder
     expect(groupName(pages[0]!)).toBe('Handy redesign')
@@ -67,12 +90,14 @@ describe('grouping', () => {
     expect(matchesPage(pages[2]!, 'studio', 'legato', running)).toBe(false)
   })
 
-  test("running sessions name their pages by the title they show, not the agent's own name", () => {
-    const pane = (id: string, title: string, sessionId?: string) => ({
-      id, index: 0, active: true, command: 'claude', cwd: '/x', title, width: 80, height: 24, dead: false, agent: { kind: 'claude' as const, pid: 1, state: 'idle' as const, sessionId },
+  test("running sessions name their pages by the title they show, not the agent's own name, and by the tmux session they run in", () => {
+    const pane = (id: string, title: string, sessionId?: string, dead = false) => ({
+      id, index: 0, active: true, command: 'claude', cwd: '/x', title, width: 80, height: 24, dead, agent: { kind: 'claude' as const, pid: 1, state: 'idle' as const, sessionId },
     })
-    const host = { config: { id: 'local', name: 'studio', kind: 'local' }, hostname: 'studio', status: 'online', sessions: [{ id: '$1', name: 's', attached: 0, windows: [{ id: '@1', index: 0, name: 'claude', active: true, activity: 0, panes: [pane('%1', '✳ Legato development', 'chat-1'), pane('%2', 'Claude Code', 'chat-2'), pane('%3', '✳ No id')] }] }] }
+    const host = { config: { id: 'local', name: 'studio', kind: 'local' }, hostname: 'studio', status: 'online', sessions: [{ id: '$1', name: 's', attached: 0, windows: [{ id: '@1', index: 0, name: 'claude', active: true, activity: 0, panes: [pane('%1', '✳ Legato development', 'chat-1'), pane('%2', 'Claude Code', 'chat-2'), pane('%3', '✳ No id'), pane('%4', 'x', 'chat-dead', true)] }] }] }
     expect([...runningNames([host as never])]).toEqual([['local/chat-1', 'Legato development']])
+    expect([...liveSessions([host as never])]).toEqual([['local/chat-1', { id: '$1', name: 's' }], ['local/chat-2', { id: '$1', name: 's' }]])
+    expect(namesOf([host as never]).tmux.size).toBe(2)
   })
 })
 
@@ -82,29 +107,51 @@ describe("a session's pages", () => {
   const scratch = entry('scratch', { project: '/home/me/scratch/x', folder: '/home/me/scratch/x' })
   const win = entry('win', { host: 'laptop', project: 'C:\\Dev\\Robot', folder: 'C:\\Dev\\Robot\\plans' })
   const all = [plan, site, scratch, win]
+  const at = (host: string, cwd?: string, session?: string, tmux?: string) => sessionPages(all, none, { host, cwd, session, tmux })
   test("the session's project, from anywhere inside it", () => {
-    expect(sessionPages(all, 'local', '/home/me/code/app').map((p) => p.slug)).toEqual(['plan'])
-    expect(sessionPages(all, 'local', '/home/me/code/app/apps/web/').map((p) => p.slug)).toEqual(['plan'])
+    expect(slugsOf(at('local', '/home/me/code/app').nearby)).toEqual(['plan'])
+    expect(slugsOf(at('local', '/home/me/code/app/apps/web/').nearby)).toEqual(['plan'])
     // not a folder that only starts the same
-    expect(sessionPages(all, 'local', '/home/me/code/application')).toEqual([])
+    expect(sessionCount(at('local', '/home/me/code/application'))).toBe(0)
   })
   test('pages in folders under the session, but not every page under a home folder', () => {
-    expect(sessionPages(all, 'local', '/home/me/code').map((p) => p.slug)).toEqual(['site', 'plan'])
-    expect(sessionPages(all, 'local', '/home/me')).toEqual([])
-    expect(sessionPages(all, 'local', '/')).toEqual([])
+    expect(slugsOf(at('local', '/home/me/code').nearby)).toEqual(['site', 'plan'])
+    expect(sessionCount(at('local', '/home/me'))).toBe(0)
+    expect(sessionCount(at('local', '/'))).toBe(0)
   })
   test('the same machine only, Windows paths in any case and slash', () => {
-    expect(sessionPages(all, 'laptop', 'c:/dev/robot').map((p) => p.slug)).toEqual(['win'])
-    expect(sessionPages(all, 'laptop', '/home/me/code/app')).toEqual([])
-    expect(sessionPages(all, 'local', undefined)).toEqual([])
+    expect(slugsOf(at('laptop', 'c:/dev/robot').nearby)).toEqual(['win'])
+    expect(sessionCount(at('laptop', '/home/me/code/app'))).toBe(0)
+    expect(sessionCount(at('local'))).toBe(0)
     expect(folderKey('C:\\Dev\\')).toBe('c:/dev')
     expect(folderKey('/')).toBe('/')
   })
-  test('the pages its conversation added, wherever they are', () => {
-    const mine = entry('mine', { project: '/srv/elsewhere', folder: '/srv/elsewhere/plan', session: 'chat-1' })
-    expect(sessionPages([...all, mine], 'local', '/home/me/code/app', 'chat-1').map((p) => p.slug)).toEqual(['mine', 'plan'])
-    expect(sessionPages([...all, mine], 'local', undefined, 'chat-1').map((p) => p.slug)).toEqual(['mine'])
-    expect(sessionPages([...all, mine], 'laptop', 'c:/dev/robot', 'chat-1').map((p) => p.slug)).toEqual(['win'])
+  test("a new conversation's pages come first, then those earlier conversations in the same tmux session made", () => {
+    const mine = entry('mine', { project: '/srv/elsewhere', folder: '/srv/elsewhere/plan', session: 'chat-2', tmux: 'robots', added: 1 })
+    const earlier = entry('earlier', { session: 'chat-1', tmux: 'robots', added: 50 })
+    const list = sessionPages([...all, mine, earlier], none, { host: 'local', cwd: '/home/me/code/app', session: 'chat-2', tmux: 'robots' })
+    expect([slugsOf(list.mine), slugsOf(list.earlier), slugsOf(list.nearby)]).toEqual([['mine'], ['earlier'], ['plan']])
+    expect(sections(list, 'robots').map((x) => x.label)).toEqual(['This conversation', 'Earlier in robots', 'In this folder'])
+    // only this conversation's: no labels; no conversation of its own yet: "In <tmux>"
+    expect(sections({ mine: [mine], earlier: [], nearby: [] }, 'robots')).toEqual([{ label: undefined, pages: [mine] }])
+    expect(sections({ mine: [], earlier: [earlier], nearby: [] }, 'robots').map((x) => x.label)).toEqual(['In robots'])
+    expect(sections({ mine: [mine], earlier: [earlier], nearby: [] }).map((x) => x.label)).toEqual(['This conversation', 'Earlier in this session'])
+  })
+  test("a page made in another tmux session stays out, even in the same folder", () => {
+    const other = entry('other', { session: 'chat-9', tmux: 'accounts' })
+    const list = sessionPages([plan, other], none, { host: 'local', cwd: '/home/me/code/app', session: 'chat-2', tmux: 'robots' })
+    expect(slugsOf(list.nearby)).toEqual(['plan'])
+    expect(sessionCount(list)).toBe(1)
+  })
+})
+
+describe('addresses', () => {
+  test("a page's viewer, and what Open in browser adds to its link: the part or note on screen", () => {
+    expect(pageHref('my box', 'plan')).toBe('/blueprints/my%20box/plan')
+    expect(browserPath('plan')).toBe('')
+    expect(browserPath('mockups')).toBe('mockups/')
+    expect(browserPath('matrix')).toBe('matrix.html')
+    expect(browserPath('plan', 'a b.md')).toBe('research/a%20b.md?as=note')
   })
 })
 
