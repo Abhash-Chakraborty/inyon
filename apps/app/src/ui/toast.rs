@@ -296,9 +296,9 @@ mod tests {
 
     #[test]
     fn at_most_three_toasts_and_one_per_thing() {
-        let list = push(&[t(1, None), t(2, Some("/m/a/p/1")), t(3, None)], t(4, None));
+        let list = push(&[t(1, None), t(2, Some("/next/m/a/p/1")), t(3, None)], t(4, None));
         assert_eq!(list.iter().map(|x| x.id).collect::<Vec<_>>(), [2, 3, 4]);
-        let list = push(&list, t(5, Some("/m/a/p/1")));
+        let list = push(&list, t(5, Some("/next/m/a/p/1")));
         assert_eq!(list.iter().map(|x| x.id).collect::<Vec<_>>(), [3, 4, 5]);
         assert_eq!(toast_ms(ToastTone::Error, false), 6000);
         assert_eq!(toast_ms(ToastTone::Success, false), 4500);

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the browser app into apps/app/dist, which the hub carries and serves at its root
+# Builds the browser app into apps/app/dist, which the hub carries and serves at /next
 # (crates/inyon-hub/src/static_files.rs). Needs dx at the version below (the Dioxus CLI, a
 # prebuilt binary from github.com/DioxusLabs/dioxus/releases), the wasm32-unknown-unknown target, and
 # Bun with the workspace installed (bun install) for the terminal's xterm.js.
@@ -21,17 +21,10 @@ trap 'rm -rf "$out"' EXIT
 dx bundle --platform web --release --package inyon-app --debug-symbols false --out-dir "$out"
 rm -rf dist
 cp -r "$out/public" dist
-# without a base path dx writes its files as /./assets/
-sed -i.bak 's|"/\./assets/|"/assets/|g' dist/index.html
-rm dist/index.html.bak
 # the terminal's drawing (xterm.js, term/), loaded the first time a terminal opens; the page finds
 # its hashed name in a meta tag. Needs the workspace's packages (bun install).
 term=$(bun term/build.ts dist/assets)
-sed -i.bak "s|</head>|<meta name=\"inyon-term\" content=\"/assets/$term\"></head>|" dist/index.html
+sed -i.bak "s|</head>|<meta name=\"inyon-term\" content=\"/next/assets/$term\"></head>|" dist/index.html
 rm dist/index.html.bak
 grep -q "assets/$term" dist/index.html
-# the web app's icons, manifest, agent marks and theme script, and its service worker (which shows
-# push notifications) told to keep this build's files
-cp -r ../web/public/. dist/
-bun sw.ts dist
 ls -l dist dist/assets

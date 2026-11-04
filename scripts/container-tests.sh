@@ -63,8 +63,8 @@ else
   # the TLS library has C in it; without a musl cross compiler the host one does, for the same processor
   cc_var="CC_$(printf '%s' "$target" | tr '-' '_')"
   if command -v musl-gcc >/dev/null 2>&1; then cc=musl-gcc; else cc=cc; fi
-  # the hub in the command carries both apps (the app at /, the classic one at /classic), so they're built first
-  grep -qs /classic/assets/ "$root/apps/web/dist/index.html" || (cd "$root" && bun run --cwd apps/web build:hub >/dev/null)
+  # the hub in the command carries the web app (and the new app at /next), so they're built first
+  [ -f "$root/apps/web/dist/index.html" ] || (cd "$root" && VITE_INYON_PHONE_CORE=none bun run build >/dev/null)
   [ -f "$root/apps/app/dist/index.html" ] || "$root/apps/app/build.sh" >/dev/null
   (cd "$root/apps/cli" && env "$cc_var=$cc" cargo build --release --target "$target" --quiet)
   cp "${CARGO_TARGET_DIR:-$root/target}/$target/release/inyon" "$dist/$cli"

@@ -655,6 +655,6 @@ mod tests {
         assert_eq!(line(&comp(Shown::Idle, false, None)), "Ask about your sessions, or tell it what to send.");
         assert_eq!(name(&comp(Shown::Idle, false, None), 1), "Companion");
         assert_eq!(name(&comp(Shown::Idle, false, None), 2), "Companion on hub");
-        assert_eq!(href(&comp(Shown::Idle, false, None)), "/m/local/p/9");
+        assert_eq!(href(&comp(Shown::Idle, false, None)), "/next/m/local/p/9");
     }
 }

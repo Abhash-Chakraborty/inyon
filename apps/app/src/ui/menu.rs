@@ -502,7 +502,7 @@ mod tests {
         assert_eq!(labels(&m), ["Open", "New session", "Open in new tab", "Temp files", "Rename…", "Update to inyon 0.23.1", "Remove…"]);
         assert!(m[4].separated && m[6].separated && m[6].danger);
         assert_eq!(m[0].action, Action::Go(Route::Machine { id: "box".into() }));
-        assert_eq!(m[2].action, Action::NewTab("/machines/box".into()));
+        assert_eq!(m[2].action, Action::NewTab("/next/machines/box".into()));
         // offline, an SSH server, in the phone app: no new session, Edit, no tab
         let ssh = host(json!({ "config": { "id": "s", "name": "srv", "kind": "ssh", "target": "me@srv" }, "status": "error" }));
         assert_eq!(labels(&machine_menu(&ssh, false)), ["Open", "Temp files", "Edit…", "Remove…"]);
@@ -517,7 +517,7 @@ mod tests {
     fn a_sessions_menu_opens_it_its_terminal_or_a_tab() {
         let m = pane_menu("box", "%3", true, Some("abc-123"), true);
         assert_eq!(labels(&m), ["Open", "Open terminal", "Open in new tab", "Copy session ID", "End session…"]);
-        assert_eq!(m[2].action, Action::NewTab("/m/box/p/3".into()));
+        assert_eq!(m[2].action, Action::NewTab("/next/m/box/p/3".into()));
         assert!(m[4].danger && m[4].separated);
         assert_eq!(m[4].action, Action::EndSession { host: "box".into(), pane: "%3".into() });
         assert_eq!(labels(&pane_menu("box", "%4", false, None, false)), ["Open", "End session…"]);
