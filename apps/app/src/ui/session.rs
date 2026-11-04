@@ -16,7 +16,6 @@ use super::rows::Ctx;
 use super::terminal::TerminalView;
 use super::toast::{self, confirm, Ask, ToastTone};
 use crate::model::Shown;
-use crate::route::BASE;
 use crate::state::{self, Chats, Hub};
 use crate::{dom, format, platform};
 
@@ -153,7 +152,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let home = home_view(agent);
     let shows = shown_view(view, agent, r.is_some() || info.is_some());
     // each view's address: the pane's own view goes without ?view=
-    let view_href = |v: PaneView| format!("{BASE}{}", pane_href(&host, &pane, (v != home).then_some(v)));
+    let view_href = |v: PaneView| pane_href(&host, &pane, (v != home).then_some(v));
     let (chat_href, terminal_href) = (view_href(PaneView::Chat), view_href(PaneView::Terminal));
     dom::set_title(&format!("{title} · Inyon"));
     // the header's ⋯, as the web app's session menu
@@ -176,7 +175,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         div { class: match skin { Some(k) => format!("session skin-{}", k.as_str()), None => "session".into() },
             header { class: "session-head",
                 div { class: "session-head-row",
-                    a { class: "back-link press", href: "/next/", "aria-label": "Back",
+                    a { class: "back-link press", href: "/", "aria-label": "Back",
                         Glyph { icon: Icon::ChevronLeft, size: 20 }
                     }
                     if let Some(kind) = agent {
@@ -223,7 +222,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                     div { class: "empty chat-empty",
                         div { class: "empty-title", "This pane is gone" }
                         div { class: "empty-text", "Its tmux pane closed, or its machine no longer lists it." }
-                        a { class: "button button-md button-primary press empty-action", href: "/next/", "Back to the Overview" }
+                        a { class: "button button-md button-primary press empty-action", href: "/", "Back to the Overview" }
                     }
                 }
             } else if shows == Some(PaneView::Terminal) {

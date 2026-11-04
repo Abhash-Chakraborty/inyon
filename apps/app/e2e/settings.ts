@@ -1,5 +1,5 @@
 // bun apps/app/e2e/settings.ts — Settings and the rest of the built app (apps/app/dist, from build.sh)
-// in Chromium behind a stand-in hub: the page under the hub's own CSP for /next, the /ws2 overview
+// in Chromium behind a stand-in hub: the page under the hub's own CSP at the root, the /ws2 overview
 // and the settings endpoints, fed made-up data (demo.ts). Checks Settings at phone and desktop sizes
 // in light and dark, the theme and the other app settings (kept with the web app's own keys), the
 // hub's settings, custom agents with their menus and Undo, the companion (start, its sidebar item and
@@ -7,7 +7,8 @@
 // changing the password, the hub update, "Inyon was updated", notices as toasts, ending a session,
 // Temp files (pick, delete, a folder's files, a preview) and the cold-start intro, and saves a
 // screenshot of each to $SHOTS (default: a temp folder). REACT=1 also serves the web app
-// (apps/web/dist, from its build) at / and saves its Settings and Temp files beside them, to compare.
+// (apps/web/dist, from `bun run build:hub`) at /classic and saves its Settings and Temp files beside
+// them, to compare.
 // CHROME=/path/to/chrome uses a browser other than Playwright's own.
 import { existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -18,7 +19,6 @@ import { overview } from './demo.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
-const web = path.join(root, 'apps/web/public')
 const react = path.join(root, 'apps/web/dist')
 const withReact = !!process.env.REACT && existsSync(react)
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
@@ -26,7 +26,10 @@ mkdirSync(shots, { recursive: true })
 
 // the policy the hub sends with the page, read from the hub's source so the two can't drift
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
-const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+const APP_CSP = /pub const APP_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+const APP_ORIGIN_CSP = /pub const APP_ORIGIN_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+// both, as the hub sends them: a browser holds the page to each
+const appCsp = () => [['content-security-policy', APP_CSP], ['content-security-policy', APP_ORIGIN_CSP]] as [string, string][]
 // the version the page is built as: the hub serving it runs the same
 const cargo = await Bun.file(path.join(root, 'Cargo.toml')).text()
 const VERSION = /^version = "([^"]+)"/m.exec(cargo)![1]!
@@ -256,20 +259,18 @@ const server = Bun.serve({
         return json({ ok: true })
       }
     }
-    if (p === '/theme.js' || p.startsWith('/agents/') || p === '/icon.svg' || p.endsWith('.png')) {
-      const f = Bun.file(path.join(web, p))
-      return (await f.exists()) ? new Response(f) : new Response('Not found', { status: 404 })
-    }
-    if (p === '/next' || p.startsWith('/next/')) {
-      const rel = p.replace(/^\/next\/?/, '')
-      const f = Bun.file(path.join(dist, rel))
-      if (rel && (await f.exists())) return new Response(f, { headers: { 'content-security-policy': NEXT_CSP } })
-      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: { 'content-type': 'text/html;charset=utf-8', 'content-security-policy': NEXT_CSP } })
-    }
-    if (withReact) {
-      const f = Bun.file(path.join(react, p))
-      if (p !== '/' && (await f.exists())) return new Response(f)
+    // the web app, built with `bun run build:hub`, where the hub keeps it
+    if (withReact && (p === '/classic' || p.startsWith('/classic/'))) {
+      const f = Bun.file(path.join(react, p.slice('/classic'.length)))
+      if (p.length > '/classic/'.length && (await f.exists())) return new Response(f)
       return new Response(Bun.file(path.join(react, 'index.html')), { headers: { 'content-type': 'text/html;charset=utf-8' } })
+    }
+    // the app at the root: its files (with the web app's icons, theme script and worker, which
+    // build.sh copies in), else its page
+    if (!p.startsWith('/api/') && !p.startsWith('/classic')) {
+      const f = Bun.file(path.join(dist, p))
+      if (p !== '/' && (await f.exists())) return new Response(f, { headers: appCsp() })
+      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: [['content-type', 'text/html;charset=utf-8'], ...appCsp()] })
     }
     return new Response('Not found', { status: 404 })
   },
@@ -370,7 +371,7 @@ try {
     const page = await ctx.newPage()
     const thrown: string[] = []
     page.on('pageerror', (e) => thrown.push(e.message))
-    await page.goto(`${base}/next/settings`)
+    await page.goto(`${base}/settings`)
     await page.getByText('Update available: 0.25.1').waitFor()
     await page.getByText('Pixel 9').waitFor()
     check(!thrown.length, `posix locale: the page threw (${thrown.join(' | ')})`)
@@ -385,7 +386,7 @@ try {
       const ctx = await context({ ...opts, colorScheme: scheme })
       const page = await ctx.newPage()
       watch(page)
-      await page.goto(`${base}/next/settings`)
+      await page.goto(`${base}/settings`)
       await page.getByRole('heading', { name: 'Settings', exact: true }).waitFor()
       await styled(page)
       await page.getByText('Update available: 0.25.1').waitFor()
@@ -412,7 +413,7 @@ try {
     // reads that fail say so, keep what was there, and try again
     state.phonesFail = true
     state.settingsReadFails = 1
-    await page.goto(`${base}/next/settings`)
+    await page.goto(`${base}/settings`)
     await styled(page)
     await page.getByText("Couldn't read the hub's settings: No settings here").waitFor()
     await page.getByText("Couldn't read the paired phones: The hub is busy").waitFor()
@@ -667,7 +668,7 @@ try {
     watch(page)
     const pushes = () => called('POST', '/api/push')
     const before = pushes().length
-    await page.goto(`${base}/next/settings`)
+    await page.goto(`${base}/settings`)
     await styled(page)
     check(await until(() => pushes().length > before, 5000), 'push: the subscription goes to the hub at start')
     const body = pushes().at(-1)?.body
@@ -696,7 +697,7 @@ try {
     watch(page)
     state.companion = { agent: 'claude', host: 'local', pane: '%30' }
     state.hosts[0]!.sessions.push(companionPane('claude'))
-    await page.goto(`${base}/next/`)
+    await page.goto(`${base}/`)
     await styled(page)
     const line = page.locator('.companion-line')
     await line.waitFor()
@@ -704,7 +705,7 @@ try {
     check(!(await page.locator('.card', { hasText: 'Companion' }).count()), 'overview: the companion is not a card')
     await page.screenshot({ path: path.join(shots, 'companion-overview-390-dark.png') })
     await line.click()
-    await page.waitForURL(/\/next\/m\/local\/p\/30$/)
+    await page.waitForURL(/\/m\/local\/p\/30$/)
     state.hosts[0]!.sessions = state.hosts[0]!.sessions.filter((s: Entry) => s.name !== 'companion')
     state.companion = { agent: null, host: 'local', pane: null }
     await ctx.close()
@@ -715,7 +716,7 @@ try {
     const ctx = await context({ ...desktop, colorScheme: 'light' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/machines/build-box`)
+    await page.goto(`${base}/machines/build-box`)
     await styled(page)
     const row = page.locator('.pane-row', { hasText: 'Tidy the billing API types' })
     await row.waitFor()
@@ -733,7 +734,7 @@ try {
 
     // from the session's own screen: a failure says so and stays, a success goes to the Overview
     state.endFails = true
-    await page.goto(`${base}/next/m/build-box/p/13`)
+    await page.goto(`${base}/m/build-box/p/13`)
     await styled(page)
     await page.getByRole('button', { name: 'More' }).click()
     await page.getByRole('menuitem', { name: 'End session…' }).click()
@@ -747,24 +748,24 @@ try {
     await page.getByRole('menuitem', { name: 'End session…' }).click()
     await ask.getByRole('button', { name: 'End session' }).click()
     await toast(page, 'Session ended').waitFor()
-    await page.waitForURL(/\/next\/?$/)
+    await page.waitForURL(/\/?$/)
 
     // gone somewhere else while the machine ends it: stays there
-    await page.goto(`${base}/next/m/local/p/12`)
+    await page.goto(`${base}/m/local/p/12`)
     await styled(page)
     state.endLag = 1500
     await page.getByRole('button', { name: 'More' }).click()
     await page.getByRole('menuitem', { name: 'End session…' }).click()
     await ask.getByRole('button', { name: 'End session' }).click()
     await page.locator('.sidebar').getByRole('link', { name: 'Pages' }).click()
-    await page.waitForURL(/\/next\/pages/)
+    await page.waitForURL(/\/pages/)
     await toast(page, 'Session ended').waitFor()
     await Bun.sleep(300)
-    check(/\/next\/pages/.test(page.url()), `end: stays where you went meanwhile (${page.url()})`)
+    check(/\/pages/.test(page.url()), `end: stays where you went meanwhile (${page.url()})`)
     state.endLag = 0
 
     // the pane closed by itself while the question was open: it has ended all the same
-    await page.goto(`${base}/next/m/local/p/11`)
+    await page.goto(`${base}/m/local/p/11`)
     await styled(page)
     state.endGone = true
     await page.getByRole('button', { name: 'More' }).click()
@@ -782,7 +783,7 @@ try {
       const ctx = await context({ ...opts, colorScheme: scheme })
       const page = await ctx.newPage()
       watch(page)
-      await page.goto(`${base}/next/temp/local`)
+      await page.goto(`${base}/temp/local`)
       await styled(page)
       await page.getByRole('heading', { name: 'Temp files' }).waitFor()
       await page.locator('.temp-row').nth(2).waitFor()
@@ -858,7 +859,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/`)
+    await page.goto(`${base}/`)
     const intro = page.getByTestId('intro')
     await intro.waitFor()
     check(await page.evaluate(() => document.documentElement.classList.contains('intro-running')), 'intro: the header mark waits')
@@ -883,11 +884,11 @@ try {
         state.temp = temp(Date.now())
         const ctx = await context({ ...opts, colorScheme: scheme })
         const page = await ctx.newPage()
-        await page.goto(`${base}/settings`)
+        await page.goto(`${base}/classic/settings`)
         await page.getByText('Agent marks belong to their owners').waitFor({ timeout: 15000 }).catch(() => {})
         await Bun.sleep(800)
         await page.screenshot({ path: path.join(shots, `react-settings-${size}-${scheme}.png`), fullPage: true })
-        await page.goto(`${base}/temp/local`)
+        await page.goto(`${base}/classic/temp/local`)
         await Bun.sleep(1500)
         await page.screenshot({ path: path.join(shots, `react-temp-${size}-${scheme}.png`), fullPage: true })
         await ctx.close()

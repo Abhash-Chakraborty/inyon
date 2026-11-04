@@ -11,7 +11,7 @@ use inyon_protocol::{HostState, ServerMsg};
 
 use super::icons::{Glyph, Icon};
 use super::toast::{self, Toast, ToastTone};
-use crate::route::{Route, BASE};
+use crate::route::Route;
 use crate::settings::{self as st, Build, Permission};
 use crate::{api, dom, platform, state};
 
@@ -63,16 +63,10 @@ pub fn haptic(kind: Haptic) {
     });
 }
 
-/// A route as the notices compare it: without the base path.
+/// A route as the notices compare it: without its query.
 fn route_path(r: &Route) -> String {
     let href = r.href();
-    let path = href.strip_prefix(BASE).unwrap_or(&href);
-    let path = path.split('?').next().unwrap_or(path);
-    if path.is_empty() {
-        "/".into()
-    } else {
-        path.into()
-    }
+    href.split('?').next().unwrap_or(&href).into()
 }
 
 /// A notice from the hub: a toast unless what it's about is on screen, a buzz, and the browser's
@@ -94,7 +88,7 @@ pub fn handle(msg: &ServerMsg, here: &Route, hosts: &[HostState]) {
                 Tone::Warn => ToastTone::Warn,
                 Tone::Error => ToastTone::Error,
             },
-            href: t.href.map(|h| format!("{BASE}{h}")),
+            href: t.href,
             action: None,
             agent: t.agent,
         });
@@ -103,7 +97,7 @@ pub fn handle(msg: &ServerMsg, here: &Route, hosts: &[HostState]) {
         match e {
             Effect::Haptic(k) => haptic(k),
             Effect::BrowserNotify { title, body, href, tag } => {
-                dom::show_notice(&title, &body, &tag, Some(&format!("{BASE}{href}")));
+                dom::show_notice(&title, &body, &tag, Some(&href));
             }
             Effect::ClearNotification { tag } => dom::close_notice(&tag),
             Effect::Toast { .. } | Effect::NativeNotify { .. } => {}

@@ -103,7 +103,7 @@ The app from 1.0 is that next app. On its first start it reads the copy, keeps y
 
 ## The app from 1.0
 
-From 1.0 the Android app is built from the same Rust code as the rest of Inyon. Its screens are the new app's, the one a hub serves at `/next`, and the phone's core runs as native code inside the app rather than as WebAssembly in a web page. It keeps the app ID and signing key, so it installs over the app you have.
+From 1.0 the Android app is built from the same Rust code as the rest of Inyon. Its screens are the ones a hub serves at its address from 0.25, and the phone's core runs as native code inside the app rather than as WebAssembly in a web page. It keeps the app ID and signing key, so it installs over the app you have.
 
 What changes for you:
 

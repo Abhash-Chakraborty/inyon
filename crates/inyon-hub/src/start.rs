@@ -155,8 +155,11 @@ pub fn serve() -> i32 {
         let scheme = if tls.is_some() { "https" } else { "http" };
         crate::server::serve(listener, tls, core);
         console::log(&format!("Inyon hub listening on {scheme}://{bind}:{port}"));
+        if !crate::static_files::app_built() {
+            console::log("This hub was built without the app (apps/app/dist); its pages go to the classic app at /classic until it's rebuilt.");
+        }
         if !crate::static_files::built() {
-            console::log("This hub was built without the web app (apps/web/dist); its pages say so until it's rebuilt.");
+            console::log("This hub was built without the classic app (apps/web/dist); /classic says so until it's rebuilt.");
         }
         dist.prebuild();
         if !crate::password::has_password() {

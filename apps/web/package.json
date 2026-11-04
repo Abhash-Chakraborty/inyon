@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "bun scripts/phone-core.ts && bun --bun vite build",
+    "build:hub": "VITE_INYON_PHONE_CORE=none bun --bun vite build --base /classic/",
     "build:hosted": "bun scripts/phone-core.ts && VITE_INYON_HOSTED=1 bun --bun vite build --outDir dist-hosted",
     "icons": "bun ../mobile/scripts/icons.ts",
     "typecheck": "tsc --noEmit",

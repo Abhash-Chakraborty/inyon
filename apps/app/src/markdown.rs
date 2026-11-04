@@ -303,7 +303,7 @@ mod tests {
         let md = parse("<img src=x onerror=alert(1)>\n\n```html\n<b>hi</b>\n```");
         assert_eq!(text_of(&md[..1]), "<img src=x onerror=alert(1)>");
         assert_eq!(code_blocks(&md), vec![(Some("html".into()), "<b>hi</b>\n".into())]);
-        assert_eq!(picture("/next/assets/a.png"), Picture::Show);
+        assert_eq!(picture("/assets/a.png"), Picture::Show);
         assert_eq!(picture("data:image/png;base64,AAA"), Picture::Show);
         // "//host/x" is another site: not drawn, and not a web link either
         assert_eq!(picture("//evil.example/x.png"), Picture::Alt);

@@ -1,5 +1,5 @@
 // bun apps/app/e2e/overview.ts — the built app (apps/app/dist, from build.sh) in Chromium behind a
-// stand-in hub: the page under the hub's own CSP for /next, the sign-in endpoints, the pane actions
+// stand-in hub: the page under the hub's own CSP at the root, the sign-in endpoints, the pane actions
 // and the /ws2 streams (protocol v2), fed made-up data (demo.ts). Signs in, checks the Overview and
 // a session's screen at phone and desktop sizes in light and dark, answers a waiting agent from a
 // card and from the chat, sends a message, loads older messages, opens the terminal (typing, an IME,
@@ -15,13 +15,15 @@ import { accounts, overview, storefront, twoQuestions } from './demo.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
-const web = path.join(root, 'apps/web/public')
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
 
 // the policy the hub sends with the page, read from the hub's source so the two can't drift
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
-const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+const APP_CSP = /pub const APP_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+const APP_ORIGIN_CSP = /pub const APP_ORIGIN_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+// both, as the hub sends them: a browser holds the page to each
+const appCsp = () => [['content-security-policy', APP_CSP], ['content-security-policy', APP_ORIGIN_CSP]] as [string, string][]
 
 const PASSWORD = 'correct horse'
 const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0, controls: [] as Record<string, unknown>[] }
@@ -117,12 +119,14 @@ const server = Bun.serve({
       }
       return json({ ok: true })
     }
-    if (p === '/theme.js' || p.startsWith('/agents/') || p === '/icon.svg') return new Response(Bun.file(path.join(web, p)))
-    if (p === '/next' || p.startsWith('/next/')) {
-      const rel = p.replace(/^\/next\/?/, '')
-      const f = Bun.file(path.join(dist, rel))
-      if (rel && (await f.exists())) return new Response(f, { headers: { 'content-security-policy': NEXT_CSP } })
-      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: { 'content-type': 'text/html;charset=utf-8', 'content-security-policy': NEXT_CSP } })
+    // a script the CSP check below tries to load from this address and from another
+    if (p === '/assets/probe.js') return new Response('window.probes = (window.probes || 0) + 1', { headers: [['content-type', 'text/javascript'], ...appCsp()] })
+    // the app at the root: its files (with the web app's icons, theme script and worker, which
+    // build.sh copies in), else its page
+    if (!p.startsWith('/api/') && !p.startsWith('/classic')) {
+      const f = Bun.file(path.join(dist, p))
+      if (p !== '/' && (await f.exists())) return new Response(f, { headers: appCsp() })
+      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: [['content-type', 'text/html;charset=utf-8'], ...appCsp()] })
     }
     return new Response('Not found', { status: 404 })
   },
@@ -250,7 +254,7 @@ try {
     const ctx = await browser.newContext({ ...devices['iPhone 13'], colorScheme: 'light', reducedMotion: 'reduce' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/`)
+    await page.goto(`${base}/`)
     await page.getByRole('heading', { name: 'Welcome back' }).waitFor()
     await page.screenshot({ path: path.join(shots, 'signin-390-light.png') })
     await layout(page, 'sign-in')
@@ -265,13 +269,40 @@ try {
     await ctx.close()
   }
 
+  // ---- the page runs scripts from this hub only ----
+  {
+    // not watched: the refused script is logged as an error, on purpose
+    const ctx = await browser.newContext({ viewport: { width: 1024, height: 700 } })
+    const page = await ctx.newPage()
+    await page.goto(`${base}/`)
+    const load = (src: string) =>
+      page.evaluate(
+        (src) =>
+          new Promise<string>((done) => {
+            // refused by the page's policy, not lost on the way
+            document.addEventListener('securitypolicyviolation', (e) => e.blockedURI === src && done('refused'))
+            const s = document.createElement('script')
+            s.src = src
+            s.onload = () => done('ran')
+            s.onerror = () => setTimeout(() => done('failed'), 500)
+            document.head.append(s)
+          }),
+        src,
+      )
+    check((await load(`${base}/assets/probe.js`)) === 'ran', 'csp: a script from this hub runs')
+    // the same file under the same path, at another address (localhost is another origin than 127.0.0.1)
+    check((await load(`http://localhost:${server.port}/assets/probe.js`)) === 'refused', 'csp: the same path on another host is refused')
+    check((await page.evaluate(() => (window as unknown as { probes?: number }).probes)) === 1, 'csp: only this hub\'s copy ran')
+    await ctx.close()
+  }
+
   // ---- the first password on a new hub, with its setup code ----
   {
     Object.assign(state, { authed: false, setup: true, setupCode: true })
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', reducedMotion: 'reduce' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next`)
+    await page.goto(`${base}/`)
     await page.getByRole('heading', { name: 'Create your password' }).waitFor()
     const submit = page.getByRole('button', { name: 'Create password' })
     await page.getByLabel('New password').fill('long enough')
@@ -296,7 +327,7 @@ try {
       const ctx = await browser.newContext({ ...(phone ? devices['iPhone 13'] : {}), viewport: { width: w, height: h }, colorScheme: scheme, reducedMotion: 'reduce' })
       const page = await ctx.newPage()
       watch(page)
-      await page.goto(`${base}/next/`)
+      await page.goto(`${base}/`)
       await page.getByRole('heading', { name: 'Overview' }).waitFor()
       await page.locator('.card').first().waitFor()
       check((await page.evaluate(() => document.documentElement.dataset.theme)) === scheme, `${label}: the theme follows the system`)
@@ -305,7 +336,7 @@ try {
       check(await page.getByText('Plan limits').isVisible(), `${label}: the plan limits`)
       check(await page.locator(phone ? '.machine-list' : '.machine-table').isVisible(), `${label}: the machines as a ${phone ? 'list' : 'table'}`)
       check(await page.locator(phone ? '.tabbar' : '.sidebar').isVisible(), `${label}: the ${phone ? 'tab bar' : 'sidebar'}`)
-      check((await page.locator('a[href="/next/m/local/p/11"]').count()) === 1, `${label}: a card opens its session in this app`)
+      check((await page.locator('a[href="/m/local/p/11"]').count()) === 1, `${label}: a card opens its session in this app`)
       await layout(page, label)
       await page.screenshot({ path: path.join(shots, `overview-${w}-${scheme}.png`) })
       // the page scrolls inside the shell, so the lower half is a second picture
@@ -323,7 +354,7 @@ try {
       const ctx = await browser.newContext({ ...(phone ? devices['iPhone 13'] : {}), viewport: { width: w, height: h }, colorScheme: scheme, reducedMotion: 'reduce' })
       const page = await ctx.newPage()
       watch(page)
-      await page.goto(`${base}/next/m/local/p/11`)
+      await page.goto(`${base}/m/local/p/11`)
       await page.getByRole('heading', { name: 'Fix flaky checkout test' }).waitFor()
       await page.getByText('All 20 runs pass now.').waitFor()
       check(await page.getByText('Claude Code · studio · storefront:1').isVisible(), `${label}: where the pane is`)
@@ -331,7 +362,7 @@ try {
       check(await page.getByRole('button', { name: 'Queue follow-up' }).count() + (await page.getByRole('button', { name: 'Stop' }).count()) === 1, `${label}: one send/stop button`)
       check(await page.locator('.composer-controls').filter({ hasText: 'Sonnet 5.5 · medium' }).isVisible(), `${label}: the model and effort under the box`)
       check(phone === (await page.getByRole('link', { name: 'Back' }).isVisible()), `${label}: a back link on phones only`)
-      check((await page.getByRole('link', { name: /Terminal/ }).getAttribute('href')) === '/next/m/local/p/11?view=terminal', `${label}: the terminal opens in this app`)
+      check((await page.getByRole('link', { name: /Terminal/ }).getAttribute('href')) === '/m/local/p/11?view=terminal', `${label}: the terminal opens in this app`)
       // only the rows near the screen are in the page
       const drawn = await page.locator('.vrow').count()
       check(drawn > 3 && drawn < 40, `${label}: ${drawn} of 64 rows drawn`)
@@ -343,7 +374,7 @@ try {
       await page.waitForTimeout(400)
       await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-history.png`) })
 
-      await page.goto(`${base}/next/m/local/p/12`)
+      await page.goto(`${base}/m/local/p/12`)
       await page.getByText('Would you like to run the following command?').waitFor()
       check(!(await page.locator('.composer').count()), `${label}: the question takes the box's place`)
       check(await page.locator('.prompt-why').isVisible(), `${label}: one line says where the model controls went`)
@@ -362,10 +393,10 @@ try {
     const page = await ctx.newPage()
     watch(page)
     // from the Overview's card, without loading the page again
-    await page.goto(`${base}/next/`)
-    await page.locator('a[href="/next/m/local/p/11"]').click()
+    await page.goto(`${base}/`)
+    await page.locator('a[href="/m/local/p/11"]').click()
     await page.getByRole('heading', { name: 'Fix flaky checkout test' }).waitFor()
-    check(await page.evaluate(() => performance.getEntriesByType('navigation').length === 1 && location.pathname === '/next/m/local/p/11'), 'route: the card opens the session in place')
+    check(await page.evaluate(() => performance.getEntriesByType('navigation').length === 1 && location.pathname === '/m/local/p/11'), 'route: the card opens the session in place')
 
     // a message's own indentation and the code block's survive (Ghostex #252)
     const bubble = await page.locator('.bubble').filter({ hasText: 'expect(total)' }).evaluate((el) => ({ text: el.textContent, ws: getComputedStyle(el).whiteSpace }))
@@ -403,7 +434,7 @@ try {
     // the agent asks: keys pick, and the answer names its question (Ghostex #251). The keys go
     // in as soon as the card shows: the card holds focus from its first frame, before its likely
     // choice can take it (that gap lost the keys on slow CI runners)
-    await page.goto(`${base}/next/m/local/p/12`)
+    await page.goto(`${base}/m/local/p/12`)
     await page.getByText('Would you like to run the following command?').waitFor()
     check(await page.evaluate(() => !!document.activeElement?.closest('.prompt')), 'questions: the card has focus as soon as it shows')
     await page.keyboard.press('ArrowDown')
@@ -434,7 +465,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', reducedMotion: 'reduce' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/m/local/p/12`)
+    await page.goto(`${base}/m/local/p/12`)
     await page.getByText('Would you like to run the following command?').waitFor()
     await page.getByRole('option', { name: /Yes, proceed/ }).click()
     await page.getByText('Which store should the passkeys live in?').waitFor()
@@ -454,13 +485,13 @@ try {
     await page.clock.install()
     // an agent's pane waits to learn what runs in it, rather than opening a terminal its chat replaces
     state.slow = 1500
-    await page.goto(`${base}/next/m/local/p/11`)
+    await page.goto(`${base}/m/local/p/11`)
     await page.getByRole('link', { name: 'Terminal' }).waitFor()
     state.slow = 0
     check(!(state.frames as Frame[]).some((f) => f.t.startsWith('term.')), `terminal: a chat pane opens no terminal while it loads (${trail()})`)
     // the header's Terminal, from the chat
     await page.getByRole('link', { name: 'Terminal' }).click()
-    await page.waitForURL(/\/next\/m\/local\/p\/11\?view=terminal$/)
+    await page.waitForURL(/\/m\/local\/p\/11\?view=terminal$/)
     const [open] = await frames('term.open')
     check(open?.host === 'local' && open.pane === '%11' && Number(open.cols) >= 30 && Number(open.rows) >= 10, `terminal: opened ${JSON.stringify(open)}`)
     const id = String(open?.id)
@@ -569,7 +600,7 @@ try {
     // back to the chat: the terminal lets go
     at = state.frames.length
     await page.getByRole('link', { name: 'Chat' }).click()
-    await page.waitForURL(/\/next\/m\/local\/p\/11$/)
+    await page.waitForURL(/\/m\/local\/p\/11$/)
     check((await frames('term.close', 1, at)).length === 1, 'terminal: closed when the chat shows')
     await ctx.close()
   }
@@ -585,7 +616,7 @@ try {
       const at = state.frames.length
       // a slow hub: the terminal opens before the session learns its agent and puts its skin on
       if (phone) state.slow = 1200
-      await page.goto(`${base}/next/m/local/p/11?view=terminal`)
+      await page.goto(`${base}/m/local/p/11?view=terminal`)
       const [open] = await frames('term.open', 1, at)
       await page.locator('.xterm').waitFor()
       await page.locator('.session.skin-claude').waitFor()
@@ -619,7 +650,7 @@ try {
     const ctx = await plain.newContext({ viewport: { width: 1024, height: 700 }, colorScheme: 'light', reducedMotion: 'reduce' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/m/local/p/11?view=terminal`)
+    await page.goto(`${base}/m/local/p/11?view=terminal`)
     await page.locator('.xterm-rows').waitFor()
     await page.keyboard.type('pwd')
     await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('storefront on main $ pwd'), null, { timeout: 8000 }).catch(() => {})
@@ -637,7 +668,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/`)
+    await page.goto(`${base}/`)
     await page.locator('.card').first().waitFor()
     await page.locator('.card-waiting').getByRole('button', { name: 'Yes' }).click()
     await page.locator('.card-waiting').getByText('Sent').waitFor()
@@ -683,7 +714,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/m/local/p/11`)
+    await page.goto(`${base}/m/local/p/11`)
     const more = page.locator('.session-head').getByRole('button', { name: 'More' })
     await more.click()
     const items = await page.getByRole('menuitem').allTextContents()
@@ -707,7 +738,7 @@ try {
     await page.getByText('Claude Code exited').waitFor()
     check(state.controls.at(-1)?.what === 'exit', 'session menu: exited at the hub')
     // Codex rewinds through the hub, after asking
-    await page.goto(`${base}/next/m/local/p/12`)
+    await page.goto(`${base}/m/local/p/12`)
     await more.click()
     await page.getByRole('menuitem', { name: 'Rewind…' }).click()
     await page.getByRole('dialog', { name: 'Rewind your last message?' }).getByRole('button', { name: 'Rewind' }).click()
