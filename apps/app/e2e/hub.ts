@@ -14,6 +14,8 @@ const dist = process.env.APP_DIST ?? path.join(import.meta.dir, '../dist')
 const web = path.join(root, 'apps/web/public')
 const reactDist = path.join(root, 'apps/web/dist')
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
+// the version the page is built as, so it doesn't offer to reload into another
+const VERSION = /^version = "([^"]+)"/m.exec(await Bun.file(path.join(root, 'Cargo.toml')).text())![1]!
 // a debug build (APP_DIST) loads its script from /next/wasm, which the policy doesn't allow
 const NEXT_CSP = process.env.APP_DIST ? "frame-ancestors 'none'" : /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 
@@ -146,7 +148,7 @@ const server = Bun.serve({
       const res = await r(req, url)
       if (res) return res
     }
-    if (p === '/api/session') return json({ authed: state.authed, setup: false, setupCode: false, version: '0.25.0' })
+    if (p === '/api/session') return json({ authed: state.authed, setup: false, setupCode: false, version: VERSION })
     const up = await uploads(req, p)
     if (up) return up
     const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/([a-z]+)$/.exec(p)
