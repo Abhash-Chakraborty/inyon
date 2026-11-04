@@ -5,7 +5,7 @@
 //!
 //! A subscription is tied to one signing (VAPID) key, which this page makes once and keeps where
 //! the web app keeps it, so both copies of the app share one subscription. The service worker that
-//! shows the notifications is the web app's (`/sw.js`).
+//! shows the notifications is the web app's (`/sw.js`, which build.sh copies next to this app).
 
 use serde::Serialize;
 
@@ -204,8 +204,12 @@ mod imp {
         Ok(endpoint)
     }
 
-    /// The service worker brings a tapped notification to this page: go to its session.
+    /// Registers the service worker (it also keeps the app's files for the next open, as the web
+    /// app's does), and goes to a tapped notification's session when the worker brings it here.
     pub fn listen() {
+        wasm_bindgen_futures::spawn_local(async {
+            let _ = worker().await;
+        });
         let sw = get(&navigator(), "serviceWorker");
         let on = Closure::<dyn FnMut(JsValue)>::new(move |e: JsValue| {
             let data = get(&e, "data");
@@ -215,7 +219,7 @@ mod imp {
             let Some(href) = get(&data, "href").as_string().filter(|h| h.starts_with('/') && !h.starts_with("//") && !h.starts_with("/\\")) else { return };
             let Some(w) = web_sys::window() else { return };
             if let Ok(h) = w.history() {
-                let _ = h.push_state_with_url(&JsValue::NULL, "", Some(&format!("{}{href}", crate::route::BASE)));
+                let _ = h.push_state_with_url(&JsValue::NULL, "", Some(&href));
             }
             if let Ok(e) = web_sys::Event::new("popstate") {
                 let _ = w.dispatch_event(&e);

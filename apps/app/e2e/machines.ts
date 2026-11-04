@@ -1,5 +1,5 @@
 // bun apps/app/e2e/machines.ts — the Machines pages of the built app (apps/app/dist, from build.sh)
-// in Chromium behind a stand-in hub: the page under the hub's own CSP for /next, the /ws2 overview
+// in Chromium behind a stand-in hub: the page under the hub's own CSP at the root, the /ws2 overview
 // and the machine endpoints, fed made-up data (demo.ts). Checks the list and a machine's page at
 // phone and desktop sizes in light and dark, the right-click and long-press menus, adding a machine
 // both ways, a new session, every tab (setup, config, uploads, integration and its sign-in),
@@ -15,13 +15,15 @@ import { overview } from './demo.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
-const web = path.join(root, 'apps/web/public')
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
 
 // the policy the hub sends with the page, read from the hub's source so the two can't drift
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
-const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+const APP_CSP = /pub const APP_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+const APP_ORIGIN_CSP = /pub const APP_ORIGIN_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
+// both, as the hub sends them: a browser holds the page to each
+const appCsp = () => [['content-security-policy', APP_CSP], ['content-security-policy', APP_ORIGIN_CSP]] as [string, string][]
 
 const PASSWORD = 'correct horse'
 
@@ -167,12 +169,12 @@ const server = Bun.serve({
       }
       if (rest === '/signin/40') return json({ ok: true })
     }
-    if (p === '/theme.js' || p.startsWith('/agents/') || p === '/icon.svg') return new Response(Bun.file(path.join(web, p)))
-    if (p === '/next' || p.startsWith('/next/')) {
-      const rel = p.replace(/^\/next\/?/, '')
-      const f = Bun.file(path.join(dist, rel))
-      if (rel && (await f.exists())) return new Response(f, { headers: { 'content-security-policy': NEXT_CSP } })
-      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: { 'content-type': 'text/html;charset=utf-8', 'content-security-policy': NEXT_CSP } })
+    // the app at the root: its files (with the web app's icons, theme script and worker, which
+    // build.sh copies in), else its page
+    if (!p.startsWith('/api/') && !p.startsWith('/classic')) {
+      const f = Bun.file(path.join(dist, p))
+      if (p !== '/' && (await f.exists())) return new Response(f, { headers: appCsp() })
+      return new Response(Bun.file(path.join(dist, 'index.html')), { headers: [['content-type', 'text/html;charset=utf-8'], ...appCsp()] })
     }
     return new Response('Not found', { status: 404 })
   },
@@ -255,7 +257,7 @@ try {
       const ctx = await browser.newContext({ ...opts, colorScheme: scheme })
       const page = await ctx.newPage()
       watch(page)
-      await page.goto(`${base}/next/machines`)
+      await page.goto(`${base}/machines`)
       await page.getByRole('heading', { name: 'Machines' }).waitFor()
       await page.locator('.machine-item').nth(2).waitFor()
       check((await page.locator('.machine-item').count()) === 3, `list ${size} ${scheme}: three machines`)
@@ -266,7 +268,7 @@ try {
       await layout(page, `machines ${size} ${scheme}`)
       await page.locator('.machine-item').first().click()
       await page.getByRole('radio', { name: 'Sessions' }).waitFor()
-      check(page.url().endsWith('/next/machines/local'), `page ${size} ${scheme}: the address is the machine's (${page.url()})`)
+      check(page.url().endsWith('/machines/local'), `page ${size} ${scheme}: the address is the machine's (${page.url()})`)
       check(await page.getByText('This hub · Linux · responds in 38 ms').isVisible(), `page ${size} ${scheme}: the line under the title`)
       check((await page.locator('.pane-row').count()) === 2, `page ${size} ${scheme}: its two sessions`)
       await page.screenshot({ path: path.join(shots, `machine-${size}-${scheme}.png`) })
@@ -280,7 +282,7 @@ try {
     const ctx = await browser.newContext({ ...desktop, colorScheme: 'light' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/machines`)
+    await page.goto(`${base}/machines`)
     const laptop = page.locator('.machine-item', { hasText: 'build-box' })
     await laptop.click({ button: 'right' })
     const items = await page.getByRole('menuitem').allTextContents()
@@ -310,7 +312,7 @@ try {
     const ctx = await browser.newContext({ ...phone, colorScheme: 'light' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/machines`)
+    await page.goto(`${base}/machines`)
     const row = page.locator('.machine-item').first()
     await page.locator('.machine-item', { hasText: 'gpu-rig' }).waitFor()
     await page.evaluate(() => document.fonts.ready)
@@ -331,7 +333,7 @@ try {
     await Bun.sleep(150)
     await page.getByRole('menu').waitFor({ timeout: 3000 }).catch(() => {})
     check(await page.getByRole('menuitem', { name: 'New session' }).isVisible(), 'long press: the menu opens')
-    check(page.url().endsWith('/next/machines'), `long press: the row isn't opened as well (${page.url()})`)
+    check(page.url().endsWith('/machines'), `long press: the row isn't opened as well (${page.url()})`)
     await page.screenshot({ path: path.join(shots, 'machines-menu-390-light.png') })
     // a later tap outside it closes it
     await Bun.sleep(700)
@@ -347,7 +349,7 @@ try {
     await ctx.grantPermissions(['clipboard-read', 'clipboard-write'])
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/machines?add=1`)
+    await page.goto(`${base}/machines?add=1`)
     const sheet = page.getByRole('dialog', { name: 'Add a machine' })
     await sheet.waitFor()
     await sheet.getByLabel('Name').fill('Work laptop')
@@ -363,7 +365,7 @@ try {
     await page.screenshot({ path: path.join(shots, 'add-pair-1440-dark.png') })
     await sheet.getByRole('button', { name: 'Done' }).click()
     await sheet.waitFor({ state: 'hidden' })
-    check(page.url().endsWith('/next/machines'), `pair: closing drops ?add=1 (${page.url()})`)
+    check(page.url().endsWith('/machines'), `pair: closing drops ?add=1 (${page.url()})`)
 
     await page.getByRole('button', { name: 'Add machine' }).click()
     await sheet.getByRole('radio', { name: 'Reach it over SSH' }).click()
@@ -386,7 +388,7 @@ try {
     const ctx = await browser.newContext({ ...desktop, colorScheme: 'light' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/machines/build-box`)
+    await page.goto(`${base}/machines/build-box`)
     await page.getByText('inyon 0.23.1 · update available').waitFor()
     await page.getByRole('button', { name: 'Update', exact: true }).click()
     await page.getByText('Updating inyon…').waitFor()
@@ -462,17 +464,17 @@ try {
     await ns.getByRole('button', { name: 'Start Reviewer' }).click()
     const launch = await calls('POST', '/api/hosts/local/launch')
     check(JSON.stringify(launch[0]?.body) === JSON.stringify({ agent: 'claude', custom: 'reviewer', cwd: '~' }), `new session: ${JSON.stringify(launch[0]?.body)}`)
-    await page.waitForURL(/\/next\/m\/local\/p\/31$/)
+    await page.waitForURL(/\/m\/local\/p\/31$/)
 
     // Remove, asked first
-    await page.goto(`${base}/next/machines/gpu-rig`)
+    await page.goto(`${base}/machines/gpu-rig`)
     await page.getByText('ssh sam@gpu-rig.lan -p 2222').waitFor()
     await page.getByRole('button', { name: 'Remove' }).click()
     const ask = page.getByRole('dialog', { name: 'Remove gpu-rig?' })
     await ask.waitFor()
     await page.screenshot({ path: path.join(shots, 'remove-1440-light.png') })
     await ask.getByRole('button', { name: 'Remove' }).click()
-    await page.waitForURL(/\/next\/machines$/)
+    await page.waitForURL(/\/machines$/)
     check(called('DELETE', '/api/hosts/gpu-rig').length === 1, 'remove: the hub is asked')
     await ctx.close()
   }
@@ -485,7 +487,7 @@ try {
     await ctx.grantPermissions(['clipboard-read', 'clipboard-write'])
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/machines/gpu-rig`)
+    await page.goto(`${base}/machines/gpu-rig`)
     await page.getByRole('button', { name: "Can't connect?" }).click()
     const help = page.getByRole('dialog', { name: "Can't connect?" })
     await help.getByText('Hub reaches it').waitFor()
@@ -508,7 +510,7 @@ try {
     const ctx = await browser.newContext({ ...desktop, colorScheme: 'light' })
     const page = await ctx.newPage()
     watch(page)
-    await page.goto(`${base}/next/machines`)
+    await page.goto(`${base}/machines`)
     await page.getByRole('button', { name: 'Phone' }).click()
     const sheet = page.getByRole('dialog', { name: 'Open on your phone' })
     await sheet.getByLabel('Password').fill(PASSWORD)

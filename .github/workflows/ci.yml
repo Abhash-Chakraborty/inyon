@@ -61,11 +61,8 @@ jobs:
       - if: steps.paths.outputs.run == 'true'
         run: bun install --frozen-lockfile
       - if: steps.paths.outputs.run == 'true'
-        run: bun run build
+        run: bun run build:hub
         working-directory: apps/web
-        env:
-          # a hub's copy never runs the phone core (vite.config.ts)
-          VITE_INYON_PHONE_CORE: none
       - if: steps.paths.outputs.run == 'true'
         run: cargo build -p inyon-cli
       - if: steps.paths.outputs.run == 'true'

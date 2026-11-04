@@ -1,13 +1,15 @@
 //! Where the app is: the Overview, a session at `/m/<machine>/p/<pane>`, the machines at
 //! `/machines`, one machine at `/machines/<id>`, the pages at `/pages[/<machine>/<slug>]`, Settings at
-//! `/settings` and the temp files at `/temp[/<machine>]`, as the web app routes them (App.tsx), under the
-//! `/next` base path while both apps run side by side. Links are plain hrefs;
-//! a click on one inside the app changes the route without loading the page again.
+//! `/settings` and the temp files at `/temp[/<machine>]`, as the web app routes them (App.tsx), at
+//! the hub's root. Links are plain hrefs; a click on one inside the app changes the route without
+//! loading the page again.
 
 use inyon_chat_core::overview::PaneView;
 
-/// The page base path the hub serves this app under (Dioxus.toml's `base_path`).
-pub const BASE: &str = "/next";
+/// The first part of every path this app routes itself (`/` is the Overview). Any other path on
+/// the hub (a page under `/v/`, a file under `/api/`, the classic app at `/classic`) is loaded as
+/// a page of its own.
+const SECTIONS: [&str; 5] = ["m", "machines", "pages", "settings", "temp"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
@@ -56,9 +58,8 @@ pub fn decode(s: &str) -> String {
 }
 
 impl Route {
-    /// The route for a path and query, with or without the base path in front.
+    /// The route for a path and query.
     pub fn parse(path: &str, query: &str) -> Route {
-        let path = path.strip_prefix(BASE).filter(|r| r.is_empty() || r.starts_with('/')).unwrap_or(path);
         let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         if let ["m", host, "p", pane] = parts.as_slice() {
             let host = decode(host);
@@ -84,33 +85,32 @@ impl Route {
         }
     }
 
-    /// The path in the address bar, base path included.
+    /// The path in the address bar.
     pub fn href(&self) -> String {
         match self {
-            Route::Overview => format!("{BASE}/"),
-            Route::Session { host, pane, view } => format!("{BASE}{}", inyon_chat_core::overview::pane_href(host, pane, *view)),
-            Route::Machines { add } => format!("{BASE}/machines{}", if *add { "?add=1" } else { "" }),
-            Route::Machine { id } => format!("{BASE}/machines/{}", inyon_chat_core::js::encode_uri_component(id)),
-            Route::Pages { page: None } => format!("{BASE}/pages"),
+            Route::Overview => "/".into(),
+            Route::Session { host, pane, view } => inyon_chat_core::overview::pane_href(host, pane, *view),
+            Route::Machines { add } => format!("/machines{}", if *add { "?add=1" } else { "" }),
+            Route::Machine { id } => format!("/machines/{}", inyon_chat_core::js::encode_uri_component(id)),
+            Route::Pages { page: None } => "/pages".into(),
             Route::Pages { page: Some((host, slug)) } => {
-                format!("{BASE}/pages/{}/{}", inyon_chat_core::js::encode_uri_component(host), inyon_chat_core::js::encode_uri_component(slug))
+                format!("/pages/{}/{}", inyon_chat_core::js::encode_uri_component(host), inyon_chat_core::js::encode_uri_component(slug))
             }
-            Route::Settings => format!("{BASE}/settings"),
-            Route::Temp { host: None } => format!("{BASE}/temp"),
-            Route::Temp { host: Some(h) } => format!("{BASE}/temp/{}", inyon_chat_core::js::encode_uri_component(h)),
+            Route::Settings => "/settings".into(),
+            Route::Temp { host: None } => "/temp".into(),
+            Route::Temp { host: Some(h) } => format!("/temp/{}", inyon_chat_core::js::encode_uri_component(h)),
         }
     }
 }
 
-/// A link inside the app: one that leads under the base path, opened with a plain click.
+/// A link inside the app: a path of this site under one of the app's own sections, opened with a
+/// plain click.
 pub fn internal(href: &str) -> Option<Route> {
-    let path = href.strip_prefix(BASE)?;
-    if !(path.is_empty() || path.starts_with('/')) {
-        return None;
-    }
+    let path = href.strip_prefix('/').filter(|p| !p.starts_with('/') && !p.starts_with('\\'))?;
     let path = path.split_once('#').map_or(path, |(p, _)| p);
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
-    Some(Route::parse(path, query))
+    let first = path.split('/').next().unwrap_or("");
+    (first.is_empty() || SECTIONS.contains(&first)).then(|| Route::parse(path, query))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -134,8 +134,8 @@ mod imp {
             if replace { h.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&href)) } else { h.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&href)) };
     }
 
-    /// Back and forward, and clicks on links into the app (any `a` under the base path, without a
-    /// modifier key or a target), reported as routes.
+    /// Back and forward, and clicks on links into the app (any `a` to one of its sections, without
+    /// a modifier key or a target), reported as routes.
     pub fn listen(tx: UnboundedSender<Route>) {
         let Some(win) = web_sys::window() else { return };
         let t = tx.clone();
@@ -185,7 +185,7 @@ mod imp {
             const t = a.getAttribute('target');
             if ((t && t !== '_self') || a.hasAttribute('download')) return;
             const href = a.getAttribute('href');
-            if (href !== '/next' && !href.startsWith('/next/') && !href.startsWith('/next?')) return;
+            if (!/^\/(?:(?:m|machines|pages|settings|temp)(?:[/?#]|$)|[?#]|$)/.test(href || '')) return;
             e.preventDefault();
             history.pushState(null, '', href);
             dioxus.send(href);
@@ -268,13 +268,13 @@ mod tests {
 
     #[test]
     fn sessions_route_as_the_web_app_does() {
-        assert_eq!(Route::parse("/next/m/box/p/12", ""), session("box", "%12", false));
+        assert_eq!(Route::parse("/m/box/p/12", ""), session("box", "%12", false));
         assert_eq!(Route::parse("/m/box/p/12", "?view=terminal"), session("box", "%12", true));
-        assert_eq!(Route::parse("/next/m/hub%3Ah1%2Flaptop/p/%253", ""), session("hub:h1/laptop", "%3", false));
-        assert_eq!(Route::parse("/next/m/box%20one/p/7/", "?a=1&view=terminal"), session("box one", "%7", true));
+        assert_eq!(Route::parse("/m/hub%3Ah1%2Flaptop/p/%253", ""), session("hub:h1/laptop", "%3", false));
+        assert_eq!(Route::parse("/m/box%20one/p/7/", "?a=1&view=terminal"), session("box one", "%7", true));
         // a terminal-first agent's chat is asked for by name
-        assert_eq!(Route::parse("/next/m/box/p/4", "?view=chat"), Route::Session { host: "box".into(), pane: "%4".into(), view: Some(PaneView::Chat) });
-        for other in ["/next", "/next/", "/next/m/box", "/nextcloud/m/a/p/1", "/next/machines/a/b"] {
+        assert_eq!(Route::parse("/m/box/p/4", "?view=chat"), Route::Session { host: "box".into(), pane: "%4".into(), view: Some(PaneView::Chat) });
+        for other in ["/", "", "/m/box", "/next/m/a/p/1", "/machines/a/b"] {
             assert_eq!(Route::parse(other, ""), Route::Overview, "{other}");
         }
     }
@@ -283,25 +283,25 @@ mod tests {
     #[test]
     fn the_android_page_records_each_move_in_its_history() {
         let r = Route::Machine { id: "box \"one\"".into() };
-        assert_eq!(imp::history_js(&r, false), r#"history.pushState(null, '', "/next/machines/box%20%22one%22")"#);
+        assert_eq!(imp::history_js(&r, false), r#"history.pushState(null, '', "/machines/box%20%22one%22")"#);
         assert_eq!(imp::history_js(&Route::Overview, true), format!("history.replaceState(null, '', {:?})", Route::Overview.href()));
     }
 
     #[test]
     fn machines_route_as_the_web_app_does() {
-        assert_eq!(Route::parse("/next/machines", ""), Route::Machines { add: false });
-        assert_eq!(Route::parse("/next/machines/", "?add=1"), Route::Machines { add: true });
-        assert_eq!(Route::parse("/next/machines/hub%3Ah1%2Flaptop", ""), Route::Machine { id: "hub:h1/laptop".into() });
-        assert_eq!(Route::Machine { id: "box one".into() }.href(), "/next/machines/box%20one");
-        assert_eq!(internal("/next/machines?add=1"), Some(Route::Machines { add: true }));
+        assert_eq!(Route::parse("/machines", ""), Route::Machines { add: false });
+        assert_eq!(Route::parse("/machines/", "?add=1"), Route::Machines { add: true });
+        assert_eq!(Route::parse("/machines/hub%3Ah1%2Flaptop", ""), Route::Machine { id: "hub:h1/laptop".into() });
+        assert_eq!(Route::Machine { id: "box one".into() }.href(), "/machines/box%20one");
+        assert_eq!(internal("/machines?add=1"), Some(Route::Machines { add: true }));
     }
 
     #[test]
     fn pages_route_as_the_web_app_does() {
-        assert_eq!(Route::parse("/next/pages", ""), Route::Pages { page: None });
-        assert_eq!(Route::parse("/next/pages/hub%3Ah1%2Flocal/my-plan", ""), Route::Pages { page: Some(("hub:h1/local".into(), "my-plan".into())) });
-        assert_eq!(Route::Pages { page: Some(("box one".into(), "plan".into())) }.href(), "/next/pages/box%20one/plan");
-        assert_eq!(Route::parse("/next/pages/a/b/c", ""), Route::Overview);
+        assert_eq!(Route::parse("/pages", ""), Route::Pages { page: None });
+        assert_eq!(Route::parse("/pages/hub%3Ah1%2Flocal/my-plan", ""), Route::Pages { page: Some(("hub:h1/local".into(), "my-plan".into())) });
+        assert_eq!(Route::Pages { page: Some(("box one".into(), "plan".into())) }.href(), "/pages/box%20one/plan");
+        assert_eq!(Route::parse("/pages/a/b/c", ""), Route::Overview);
     }
 
     #[test]
@@ -321,16 +321,34 @@ mod tests {
             Route::Temp { host: Some("hub:h1/box".into()) },
         ] {
             let href = r.href();
-            assert!(href.starts_with("/next/"), "{href}");
+            assert!(href.starts_with('/'), "{href}");
             assert_eq!(internal(&href), Some(r));
         }
-        assert_eq!(session("box", "%12", true).href(), "/next/m/box/p/12?view=terminal");
+        assert_eq!(session("box", "%12", true).href(), "/m/box/p/12?view=terminal");
+        assert_eq!(internal("/?x=1"), Some(Route::Overview));
         // a section of Settings is the same screen, scrolled to it
-        assert_eq!(internal("/next/settings#notifications"), Some(Route::Settings));
-        // links out of the app load their page
-        assert_eq!(internal("/machines"), None);
-        assert_eq!(internal("/nextcloud"), None);
-        assert_eq!(internal("https://example.com/next/"), None);
+        assert_eq!(internal("/settings#notifications"), Some(Route::Settings));
+    }
+
+    #[test]
+    fn links_to_the_hubs_other_paths_load_their_page() {
+        // pages, files, the classic app, the old /next address (the hub sends it here), other sites
+        for out in [
+            "/v/tok/index.html",
+            "/api/temp/x",
+            "/classic/",
+            "/classic",
+            "/next/machines",
+            "/settingsx",
+            "/mx/1",
+            "//evil.example/settings",
+            "/\\evil.example",
+            "https://example.com/settings",
+            "settings",
+            "",
+        ] {
+            assert_eq!(internal(out), None, "{out}");
+        }
     }
 
     #[test]
