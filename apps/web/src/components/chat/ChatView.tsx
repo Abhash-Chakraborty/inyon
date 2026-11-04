@@ -472,6 +472,8 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                   <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting to {machine!.config.name}…<HelpLink id={host} /></div>
                 ) : machineDown ? (
                   <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.<HelpLink id={host} /></div>
+                ) : !shownPrompt && agent === 'claude' && screen?.dialog ? (
+                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">{panelText(screen.dialog)}</div>
                 ) : null}
                 {shownPrompt ? <PromptCard prompt={shownPrompt} host={host} pane={pane} disabled={!connected} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} ultracode={ultracode} />}
               </div>
@@ -485,6 +487,14 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
     </ChatHost.Provider>
     </ChatAgent.Provider>
   )
+}
+
+/**
+ * Claude Code's panel for a background shell or monitor covers its input box in the terminal; a
+ * send closes it first, so the line only says what's there.
+ */
+export function panelText(title: string) {
+  return title.endsWith(' details') ? `${title} cover the input box. Sending closes them.` : `${title} covers the input box. Sending closes it.`
 }
 
 /** How long a machine that isn't answering counts as reconnecting rather than offline. */

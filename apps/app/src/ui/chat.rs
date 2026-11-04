@@ -126,6 +126,8 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
     let chat = &e.chat;
     let prompt = chat.screen.as_ref().and_then(|s| s.prompt.clone());
     let working = chat.screen.as_ref().is_some_and(|s| s.working);
+    // Claude Code's panel for a background shell, open over its input box in the terminal
+    let panel = chat.screen.as_ref().and_then(|s| s.dialog.clone()).filter(|_| ctx.agent == Some(inyon_protocol::AgentKind::Claude));
     let running = chat.info.as_ref().is_none_or(|i| i.running);
     let rows = chat.rows();
     let w = scroll.borrow().window(&e.list);
@@ -240,6 +242,8 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                     div { class: "chat-foot-column",
                         if !connected {
                             div { class: "chat-status fade-in", role: "status", "Reconnecting…" }
+                        } else if let Some(title) = panel.filter(|_| prompt.is_none()) {
+                            div { class: "chat-status fade-in", role: "status", {crate::format::panel_text(&title)} }
                         }
                         if let Some(p) = prompt {
                             PromptCard { prompt: p, host: ctx.host.clone(), pane: ctx.pane.clone(), disabled: !connected, agent: ctx.agent }

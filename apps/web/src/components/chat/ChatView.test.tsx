@@ -178,6 +178,18 @@ describe('ChatView', () => {
     expect(screen.queryByText('Stopped: signed out')).toBeNull()
   })
 
+  test("a background shell's panel over Claude's input box is named in one line, and goes with it", async () => {
+    useStore.setState({ connected: true, hosts: [host('box', { panes: [agentPane('%1', 'claude')] })] })
+    render(view())
+    load([item.user('start the server'), item.text('Started')])
+    act(() => emit({ t: 'chat.screen', key: 'box:%1', screen: { working: false, background: '1 shell', dialog: 'Shell details', width: 120 } }))
+    await flush()
+    expect(screen.getByRole('status').textContent).toBe('Shell details cover the input box. Sending closes them.')
+    act(() => emit({ t: 'chat.screen', key: 'box:%1', screen: { working: false, background: '1 shell', inputVisible: true, width: 120 } }))
+    await flush()
+    expect(screen.queryByText(/cover the input box/)).toBeNull()
+  })
+
   test('renders a long conversation without throwing', async () => {
     useStore.setState({ connected: true, hosts: [host('box')] })
     render(view())

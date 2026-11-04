@@ -1,0 +1,23 @@
+{
+  "auto": {
+    "screen": {
+      "working": false,
+      "dialog": "Shell details",
+      "width": 120
+    }
+  },
+  "80": {
+    "screen": {
+      "working": false,
+      "dialog": "Shell details",
+      "width": 80
+    }
+  },
+  "120": {
+    "screen": {
+      "working": false,
+      "dialog": "Shell details",
+      "width": 120
+    }
+  }
+}

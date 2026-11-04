@@ -191,13 +191,14 @@ async fn send_first(host_id: &str, pane_id: &str) -> HubResult<()> {
     r
 }
 
-/// Whether the pane's agent is free for the next message: running, idle with nothing in the
-/// background, not asking anything, and for long enough.
+/// Whether the pane's agent is free for the next message: running, idle at its prompt, not asking
+/// anything, and for long enough. Shells or monitors it left running in the background don't count:
+/// the agent takes messages meanwhile, and a dev server or a watcher never ends, so a message held
+/// until they did never went in. A panel covering the input box is closed by the send itself.
 fn free(host_id: &str, pane_id: &str, now: u64) -> bool {
     let k = key(host_id, pane_id);
     let agent = registry().find_pane(host_id, pane_id).and_then(|f| f.pane.agent);
-    let idle = agent.is_some_and(|a| a.state == AgentState::Idle && a.waiting_for.is_none() && !inyon_protocol::is_busy(a.state, a.background.as_deref()))
-        && watchers().peek(host_id, pane_id).is_none_or(|w| w.screen().prompt.is_none());
+    let idle = agent.is_some_and(|a| a.state == AgentState::Idle && a.waiting_for.is_none()) && watchers().peek(host_id, pane_id).is_none_or(|w| w.screen().prompt.is_none());
     IDLE_SINCE.with(|m| {
         let mut m = m.borrow_mut();
         if !idle {

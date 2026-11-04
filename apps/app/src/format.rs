@@ -61,6 +61,16 @@ pub fn background_text(bg: &str) -> String {
     format!("{list} running in the background")
 }
 
+/// Claude Code's panel for a background shell or monitor, by its title: it covers the input box in
+/// the terminal, and a send closes it first (panelText in ChatView.tsx).
+pub fn panel_text(title: &str) -> String {
+    if title.ends_with(" details") {
+        format!("{title} cover the input box. Sending closes them.")
+    } else {
+        format!("{title} covers the input box. Sending closes it.")
+    }
+}
+
 /// "Stopped: rate limit · resets 14:05", with the day when the reset is more than 20 hours away.
 pub fn failure_text(f: &TurnFailure, clock: Clock) -> String {
     let what = match f.error.as_str() {
@@ -164,6 +174,12 @@ mod tests {
         assert_eq!(background_text("1 shell"), "1 shell running in the background");
         assert_eq!(background_text("1 background task"), "1 task running in the background");
         assert_eq!(background_text("1 shell, 2 agents"), "1 shell and 2 agents running in the background");
+    }
+
+    #[test]
+    fn a_panel_over_the_box_in_words() {
+        assert_eq!(panel_text("Shell details"), "Shell details cover the input box. Sending closes them.");
+        assert_eq!(panel_text("Monitor details"), "Monitor details cover the input box. Sending closes them.");
     }
 
     #[test]

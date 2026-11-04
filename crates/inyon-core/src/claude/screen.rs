@@ -388,7 +388,27 @@ pub fn parse_screen(captured: &[String], pane_width: Option<u32>, agent: AgentKi
 
     let tops: Vec<usize> = (0..lines.len()).filter(|&i| RULE!().is_match(&lines[i]) || DIALOG_TOP!().is_match(&lines[i])).collect();
     state.prompt = parse_prompt(&lines, &tops, width).or_else(|| parse_cursor_menu(&lines)).or_else(|| parse_input_dialog(&lines, &tops, width));
+    if state.prompt.is_none() {
+        state.dialog = claude_panel(&lines);
+    }
     finish(state)
+}
+
+/// Claude Code's panel for one background shell or monitor ("Shell details", "Monitor details"),
+/// opened from the footer's "↓ to manage" list. It covers the input box and takes every key, so
+/// the app says it's open; a send closes it with Esc first (actions.rs). By its title, or None.
+/// Only an input box below the title means it's closed: earlier messages above it start with ❯ too.
+pub fn claude_panel(lines: &[String]) -> Option<String> {
+    let tail: Vec<&str> = lines.iter().rev().take(60).map(String::as_str).collect();
+    for l in tail {
+        if re!(r"^\s*❯").is_match(l) {
+            return None;
+        }
+        if let Some(c) = re!(r"^\s*((?:Shell|Monitor) details)\s*$").captures(l) {
+            return Some(c[1].to_owned());
+        }
+    }
+    None
 }
 
 /// Pulls links out of a prompt's text and drops the indent its lines share.

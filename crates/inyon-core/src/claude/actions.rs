@@ -219,8 +219,7 @@ async fn confirm_delivery(host_id: &str, pane_id: &str, id: &str, text: &str) ->
 /// arrives.
 pub fn claude_details_panel(lines: &[String]) -> bool {
     let text = re!(r"\x1b\[[0-9;]*m", "g").replace_all(&lines.join("\n"), "").into_owned();
-    let tail: Vec<&str> = text.lines().rev().take(60).collect();
-    tail.iter().any(|l| re!(r"^\s*(Shell|Monitor) details\s*$").is_match(l)) && !tail.iter().any(|l| re!(r"^\s*❯").is_match(l))
+    super::screen::claude_panel(&text.lines().map(str::to_owned).collect::<Vec<_>>()).is_some()
 }
 
 /// Closes that panel with Esc, which only dismisses it, so the message goes to the input box.
