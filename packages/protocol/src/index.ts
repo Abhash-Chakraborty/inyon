@@ -505,7 +505,7 @@ export interface ScreenState {
   contextPct?: number
   contextUsed?: number
   costUsd?: number
-  /** a menu of the agent's own open over the box, by its title ("Select model", "Select variant") */
+  /** a menu or panel of the agent's own open over the box, by its title (OpenCode's "Select model", Claude's "Shell details") */
   dialog?: string
   width: number
 }

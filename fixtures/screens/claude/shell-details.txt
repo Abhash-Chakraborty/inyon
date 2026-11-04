@@ -1,0 +1,27 @@
+● ALPHA
+
+✻ Cogitated for 4s · done 10:46 · 1 shell still running
+
+❯ Use your Bash tool with run_in_background set to true to run: ping -n 600 127.0.0.1 . Then reply with the word
+  STARTED.
+
+● Bash(ping -n 600 127.0.0.1)
+  ⎿  Running in the background (↓ to manage)
+
+● STARTED
+
+✻ Sautéed for 7s · done 10:51 · 1 shell still running
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Shell details
+
+  Status:   running
+  Runtime:  9m 1s
+  Command:  ping -n 600 127.0.0.1
+
+  Output:
+  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ Reply from 127.0.0.1: bytes=32 time<1ms TTL=128                                                                │
+  │ Reply from 127.0.0.1: bytes=32 time<1ms TTL=128                                                                │
+  │ Reply from 127.0.0.1: bytes=32 time<1ms TTL=128                                                                │
+  │ Reply from 127.0.0.1: bytes=32 time<1ms TTL=128                                                                │

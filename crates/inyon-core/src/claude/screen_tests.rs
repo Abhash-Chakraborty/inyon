@@ -39,6 +39,26 @@ fn permission_prompt() {
     assert!(!p.multi);
 }
 
+/// a background shell's details panel covers the input box: read by its title, not as a question,
+/// although an earlier message above it starts with ❯ (captured on Windows, Claude Code 2.1.317)
+#[test]
+fn a_shell_details_panel_is_read_by_its_title() {
+    let lines = screen_fixture("claude", "shell-details");
+    let s = claude(&lines, Some(120));
+    assert_eq!(s.dialog.as_deref(), Some("Shell details"));
+    assert_eq!(s.prompt, None);
+    assert_ne!(s.input_visible, Some(true));
+    assert!(crate::claude::actions::claude_details_panel(&lines));
+    let monitor: Vec<String> = lines.iter().map(|l| l.replace("Shell details", "Monitor details")).collect();
+    assert_eq!(claude(&monitor, Some(120)).dialog.as_deref(), Some("Monitor details"));
+    // once Esc closes it the input box is back below, and nothing is open
+    let mut closed: Vec<String> = lines.iter().take_while(|l| !l.starts_with('─')).cloned().collect();
+    closed.extend(["─".repeat(120), "❯ ".to_owned(), "─".repeat(120), "  ⏵⏵ auto mode on · 1 shell · ↓ to manage".to_owned()]);
+    let s = claude(&closed, Some(120));
+    assert_eq!(s.dialog, None);
+    assert!(!crate::claude::actions::claude_details_panel(&closed));
+}
+
 /// ask user question, single select
 #[test]
 fn ask_user_question_single_select() {

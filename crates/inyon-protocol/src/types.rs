@@ -824,7 +824,7 @@ pub struct ScreenState {
     pub context_pct: Option<Num>,
     pub context_used: Option<Num>,
     pub cost_usd: Option<Num>,
-    /// a menu of the agent's own open over the box, by its title ("Select model", "Select variant")
+    /// a menu or panel of the agent's own open over the box, by its title (OpenCode's "Select model", Claude's "Shell details")
     pub dialog: Option<String>,
     pub width: u32,
 }

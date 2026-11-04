@@ -97,7 +97,11 @@ Inyon presses Enter only once your message shows in the agent's input box. For C
 
 ### Holding a message until the agent is free
 
-From 0.22 the hub can hold a message for you and type it in once the agent has been idle for a moment, with no question open and nothing running in the background. Right-click (or long-press) the send button and choose **Hold until … is free**, or press Alt+Enter (⌥Enter on a Mac). Held messages show under the conversation with a dashed outline, in the order they go. Each has **Send now** and **Drop** beside it, and its menu also has **Edit**, **Move up** and **Move down**; dropping one can be undone. Unlike a message the agent queues itself, a held message can still be changed from any device, and it survives a restart of the hub.
+From 0.22 the hub can hold a message for you and type it in once the agent has been idle at its prompt for a moment, with no question open. Right-click (or long-press) the send button and choose **Hold until … is free**, or press Alt+Enter (⌥Enter on a Mac). Held messages show under the conversation with a dashed outline, in the order they go. Each has **Send now** and **Drop** beside it, and its menu also has **Edit**, **Move up** and **Move down**; dropping one can be undone. Unlike a message the agent queues itself, a held message can still be changed from any device, and it survives a restart of the hub.
+
+From 0.24.1 shells, monitors and agents left running in the background don't hold messages back. The agent takes messages at its prompt while they run, so a message held behind a dev server goes in when the turn ends, and so does a model, effort or mode you picked. The session still shows that work as **Background**. Before 0.24.1 these waited until every background shell had stopped, which for a server meant never.
+
+Claude Code's details for a background shell or monitor, opened from *↓ to manage* in its footer, cover its input box. While they're open the chat says so above the message box, and a send, held or not, closes them with Esc first.
 
 If a held message can't be sent, it stays first in line with the reason, and nothing more goes until you edit it, send it now or drop it. Up to 50 messages can be held per session. The phone app holds messages only through a hub of 0.22 or later.
 

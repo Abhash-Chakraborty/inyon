@@ -316,6 +316,38 @@ fn held_messages_wait_for_the_agent_to_be_free_then_go_in_order() {
     });
 }
 
+/// A dev server or watcher Claude runs in the background never ends, and a message held until the
+/// footer stopped listing it never went in (a laptop, 4 Nov 2026: held for ten minutes behind a
+/// ping). Idle at its prompt is free, background work or not; a Shell details panel left open over
+/// the box is closed by the send, not waited for.
+#[test]
+fn a_held_message_goes_in_while_shells_run_in_the_background_and_closes_a_panel_first() {
+    run(|| async {
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+        let b = fake_claude(vec![]);
+        b.borrow_mut().panel = true;
+        let busy = |state: &str| pane("local", json!([{ "id": "%9", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": state, "background": "1 shell" } }]));
+        busy("working");
+        crate::claude::held::hold("local", "%9", "Check the server log").unwrap();
+        let t0 = 2_000_000;
+        crate::claude::held::tick(t0).await;
+        crate::claude::held::tick(t0 + crate::claude::held::SETTLE_MS).await;
+        sleep(50).await;
+        assert!(b.borrow().sent.is_empty(), "nothing goes mid-turn");
+        busy("idle");
+        crate::claude::held::tick(t0 + 10_000).await;
+        crate::claude::held::tick(t0 + 10_000 + crate::claude::held::SETTLE_MS).await;
+        for _ in 0..200 {
+            if !b.borrow().sent.is_empty() && crate::claude::held::list("local", "%9").is_empty() {
+                break;
+            }
+            sleep(100).await;
+        }
+        assert_eq!((b.borrow().escapes, b.borrow().sent.clone()), (1, vec!["Check the server log".to_owned()]));
+        assert!(crate::claude::held::list("local", "%9").is_empty());
+    });
+}
+
 #[test]
 fn a_held_message_that_fails_stays_first_with_the_reason_and_holding_stops() {
     run(|| async {

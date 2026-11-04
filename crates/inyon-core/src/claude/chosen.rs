@@ -94,12 +94,11 @@ fn waits(kind: AgentKind) -> bool {
     matches!(kind, AgentKind::Claude | AgentKind::Codex | AgentKind::Antigravity)
 }
 
-/// Whether the pane's agent can take a pick now: idle, with nothing in the background and
-/// nothing asked on screen.
+/// Whether the pane's agent can take a pick now: idle at its prompt and nothing asked on screen.
+/// Shells or monitors running in the background don't hold it up, as for held messages.
 fn takes_now(host_id: &str, pane_id: &str) -> bool {
     let agent = registry().find_pane(host_id, pane_id).and_then(|f| f.pane.agent);
-    agent.is_some_and(|a| a.state == AgentState::Idle && a.waiting_for.is_none() && !inyon_protocol::is_busy(a.state, a.background.as_deref()))
-        && watchers().peek(host_id, pane_id).is_none_or(|w| w.screen().prompt.is_none())
+    agent.is_some_and(|a| a.state == AgentState::Idle && a.waiting_for.is_none()) && watchers().peek(host_id, pane_id).is_none_or(|w| w.screen().prompt.is_none())
 }
 
 /// Keeps the pick for later when the pane's agent can't take it now, or when picks are already
