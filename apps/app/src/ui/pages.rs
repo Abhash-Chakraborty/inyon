@@ -47,6 +47,8 @@ static WIDE: GlobalSignal<bool> = Signal::global(|| dom::viewport().0 >= WIDE_FR
 static VIEWER_OP: GlobalSignal<Option<(u64, ViewerOp)>> = Signal::global(|| None);
 static SHEET: GlobalSignal<Option<PageSheet>> = Signal::global(|| None);
 static SHEET_OPEN: GlobalSignal<bool> = Signal::global(|| false);
+/// Where the phone viewer's back goes: the session a page was opened from, else the list.
+static BACK_TO: GlobalSignal<Option<Route>> = Signal::global(|| None);
 
 thread_local! {
     static LISTENING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -70,7 +72,8 @@ fn listen() {
 /// What a page menu item does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PageOp {
-    OpenInBrowser(PageEntry),
+    /// the page, at a part or note of it (see [`pg::browser_path`]); the plain link when None
+    OpenInBrowser(PageEntry, Option<(Part, Option<String>)>),
     Revoke(PageEntry),
     ShowFolder(PageEntry),
     CopyFolder(String),
@@ -118,7 +121,7 @@ fn page_route(p: &PageEntry) -> Route {
 /// Runs a page menu item. Its work outlives what started it (a toast's Undo goes as it's tapped).
 pub fn run(op: PageOp, mut here: Signal<Route>, hub: Signal<Hub>) {
     match op {
-        PageOp::OpenInBrowser(p) => open_in_browser(p),
+        PageOp::OpenInBrowser(p, at) => open_in_browser(p, at),
         PageOp::Revoke(p) => {
             dioxus::core::spawn_forever(revoke(p));
         }
@@ -153,13 +156,17 @@ pub fn run(op: PageOp, mut here: Signal<Route>, hub: Signal<Hub>) {
     }
 }
 
-/// Opens a page outside the app, with a new link so it lasts the full 12 hours. A browser blocks a
-/// window opened after a wait, so one is opened first and sent to the link once it is minted.
-fn open_in_browser(p: PageEntry) {
+/// Opens a page outside the app, with a new link so it lasts the full 12 hours, at the part or note
+/// a viewer shows (`at`). A browser blocks a window opened after a wait, so one is opened first and
+/// sent to the link once it is minted.
+fn open_in_browser(p: PageEntry, at: Option<(Part, Option<String>)>) {
     let tab = dom::PendingTab::open();
     dioxus::core::spawn_forever(async move {
         match api::open_page(&p.host, &p.slug).await {
-            Ok(l) => tab.go(&format!("{}{}", dom::origin(), l.url)),
+            Ok(l) => {
+                let path = at.map_or_else(|| l.url.clone(), |(part, note)| pg::browser_path(&l.url, part, note.as_deref()));
+                tab.go(&format!("{}{path}", dom::origin()));
+            }
             Err(e) => {
                 tab.close();
                 toast::toast(format!("Couldn't open “{}”", p.name), Some(e.message), ToastTone::Error);
@@ -220,7 +227,7 @@ pub fn page_menu(p: &PageEntry, m: &PageMachine, open: bool) -> Vec<Item> {
     }
     let off = !m.online;
     v.push(
-        Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone()))))
+        Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone(), None))))
             .hint(if off { format!("{} is offline", m.name) } else { BROWSER_HINT.into() })
             .disabled(off),
     );
@@ -554,7 +561,14 @@ fn StateCard(icon: Icon, #[props(default)] danger: bool, title: String, children
 
 /// What the stage shows while there's no frame: opening, gone, or out of reach.
 #[component]
-fn FrameState(page: PageEntry, m: PageMachine, error: Option<ApiError>, on_retry: EventHandler<()>, on_back: EventHandler<()>) -> Element {
+fn FrameState(
+    page: PageEntry,
+    m: PageMachine,
+    error: Option<ApiError>,
+    on_retry: EventHandler<()>,
+    on_back: EventHandler<()>,
+    #[props(default = "Back to Pages".to_string())] back_label: String,
+) -> Element {
     if !m.online {
         let folder = page.folder.clone();
         return rsx! {
@@ -589,7 +603,7 @@ fn FrameState(page: PageEntry, m: PageMachine, error: Option<ApiError>, on_retry
                 if gone {
                     button { class: "button button-sm button-quiet press", r#type: "button", onclick: move |_| on_back.call(()),
                         Glyph { icon: Icon::ChevronLeft, size: 14 }
-                        "Back to Pages"
+                        "{back_label}"
                     }
                 } else {
                     button { class: "button button-sm button-quiet press", r#type: "button", onclick: move |_| on_retry.call(()),
@@ -663,26 +677,6 @@ fn NoPages(#[props(default)] wide: bool) -> Element {
     }
 }
 
-#[component]
-fn MachineHeading(m: PageMachine, #[props(default)] small: bool) -> Element {
-    let kind = m.known.as_ref().map_or(MachineKind::Server, |k| k.1);
-    rsx! {
-        div { class: if small { "machine-heading machine-heading-sm" } else { "machine-heading" },
-            MachineGlyph { kind, size: if small { 14 } else { 16 }, class: "fg-2" }
-            span { class: "truncate", "{m.name}" }
-            if m.hub {
-                span { class: "chip chip-quiet mono", "hub" }
-            }
-            if !m.online {
-                span { class: "machine-heading-off mono",
-                    Glyph { icon: Icon::CloudOff, size: 14 }
-                    "offline"
-                }
-            }
-        }
-    }
-}
-
 /// A thin done/total bar; it moves with transform only.
 #[component]
 pub fn ProgressBar(done: u32, total: u32, #[props(default)] class: String) -> Element {
@@ -707,10 +701,36 @@ fn ChangedDot() -> Element {
 }
 
 /// The pages that match the filter, grouped.
-fn grouped(list: &[PageEntry], hub: &Hub, q: &str, running: &HashMap<String, String>) -> Vec<pg::PageGroup> {
+fn grouped(list: &[PageEntry], hub: &Hub, q: &str, names: &pg::Names) -> Vec<pg::PageGroup> {
     let name = |h: &str| pg::machine_of(&hub.hosts, h).name;
-    let shown: Vec<&PageEntry> = list.iter().filter(|p| pg::matches_page(p, &name(&p.host), q, running)).collect();
-    pg::group_pages(&shown, name, running)
+    let shown: Vec<&PageEntry> = list.iter().filter(|p| pg::matches_page(p, &name(&p.host), q, names)).collect();
+    pg::group_pages(&shown, name, names)
+}
+
+/// A heading of the list: the tmux session's name (or the project's), with its machine as a small
+/// label when the list spans machines or the machine is offline.
+#[component]
+fn GroupHeading(name: String, session: bool, m: PageMachine, machine: bool, #[props(default)] count: Option<usize>) -> Element {
+    let kind = m.known.as_ref().map_or(MachineKind::Server, |k| k.1);
+    rsx! {
+        span { class: "group-heading",
+            Glyph { icon: if session { Icon::SquareTerminal } else { Icon::Folder }, size: 14, class: "fg-3" }
+            span { class: "truncate group-heading-name", "{name}" }
+            if machine || !m.online {
+                span { class: if m.online { "group-machine mono" } else { "group-machine group-machine-off mono" }, title: if m.online { m.name.clone() } else { format!("{} is offline", m.name) },
+                    if m.online {
+                        MachineGlyph { kind, size: 12 }
+                    } else {
+                        Glyph { icon: Icon::CloudOff, size: 12 }
+                    }
+                    span { class: "truncate", "{m.name}" }
+                }
+            }
+            if let Some(n) = count {
+                span { class: "mono fg-3 tree-group-count", "{n}" }
+            }
+        }
+    }
 }
 
 #[component]
@@ -744,13 +764,16 @@ fn FilterInput(q: Signal<String>, placeholder: String, #[props(default)] class: 
 #[component]
 fn PhoneList() -> Element {
     let hub = use_context::<Signal<Hub>>();
+    // the list itself: a viewer opened from here goes back here
+    use_effect(|| *BACK_TO.write() = None);
     let mut filtering = use_signal(|| false);
     let mut q = use_signal(String::new);
     let list = PAGES.read();
     let h = hub.read();
-    let running = pg::running_names(&h.hosts);
+    let names = pg::Names::of(&h.hosts);
     let query = q();
-    let groups = list.pages.as_deref().map(|v| grouped(v, &h, &query, &running)).unwrap_or_default();
+    let groups = list.pages.as_deref().map(|v| grouped(v, &h, &query, &names)).unwrap_or_default();
+    let many = pg::many_machines(&groups);
     let any = list.pages.as_ref().is_some_and(|v| !v.is_empty());
     rsx! {
         div { class: "scroll",
@@ -805,16 +828,13 @@ fn PhoneList() -> Element {
                             {
                                 let m = pg::machine_of(&h.hosts, &g.host);
                                 rsx! {
-                                    section { key: "{g.host}", class: "pages-machine",
-                                        MachineHeading { m: m.clone() }
-                                        for pr in g.projects {
-                                            div { key: "{pr.key}",
-                                                div { class: "pages-project mono", "{pr.name}" }
-                                                div { class: "page-cards",
-                                                    for p in pr.pages {
-                                                        PageCard { key: "{p.host}/{p.slug}", changed: pg::is_changed(&p, &list.seen), p, m: m.clone() }
-                                                    }
-                                                }
+                                    section { key: "{g.key}", class: "pages-group",
+                                        h2 { class: "pages-group-head",
+                                            GroupHeading { name: g.name.clone(), session: g.session, m: m.clone(), machine: many }
+                                        }
+                                        div { class: "page-cards",
+                                            for p in g.pages {
+                                                PageCard { key: "{p.host}/{p.slug}", changed: pg::is_changed(&p, &list.seen), p, m: m.clone() }
                                             }
                                         }
                                     }
@@ -927,7 +947,12 @@ fn PhoneViewer(host: String, slug: String) -> Element {
     let v = use_viewer(page.clone());
     let src = use_frame_src(v, page.as_ref());
     // back closes the viewer; it never walks back through the pages opened inside the frame
-    let back = move |_| route::replace(&mut here, Route::Pages { page: None });
+    let mut go_back = move || {
+        let to = BACK_TO.write().take().unwrap_or(Route::Pages { page: None });
+        route::replace(&mut here, to);
+    };
+    let back = move |_: MouseEvent| go_back();
+    let back_label = if BACK_TO.peek().is_some() { "Back to the session" } else { "Back to Pages" };
     let m = pg::machine_of(&hub.read().hosts, &host);
     let id = pg::page_id(&host, &slug);
     let link = v.link(&id);
@@ -940,7 +965,7 @@ fn PhoneViewer(host: String, slug: String) -> Element {
             div { class: "viewer-phone",
                 header { class: "viewer-head",
                     div { class: "viewer-head-row",
-                        button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Back to Pages", onclick: back,
+                        button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "{back_label}", onclick: back,
                             Glyph { icon: Icon::ChevronLeft, size: 20 }
                         }
                         h1 { class: "viewer-title truncate" }
@@ -953,7 +978,7 @@ fn PhoneViewer(host: String, slug: String) -> Element {
                             div { class: "state-actions",
                                 button { class: "button button-sm button-quiet press", r#type: "button", onclick: back,
                                     Glyph { icon: Icon::ChevronLeft, size: 14 }
-                                    "Back to Pages"
+                                    "{back_label}"
                                 }
                             }
                         }
@@ -972,7 +997,12 @@ fn PhoneViewer(host: String, slug: String) -> Element {
             more.push(if i == 0 { item.separated() } else { item });
         }
     }
-    more.push(Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone())))).hint(BROWSER_HINT).separated().disabled(!linked));
+    more.push(
+        Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone(), Some((part, note.clone()))))))
+            .hint(BROWSER_HINT)
+            .separated()
+            .disabled(!linked),
+    );
     let mut machine_items: Vec<Item> = siblings.iter().map(|s| Item::new(s.name.clone(), Icon::FileText, Action::Go(page_route(s))).checked(s.slug == p.slug)).collect();
     if let Some((mid, _)) = &m.known {
         machine_items.push(Item::new(format!("Open {}", m.name), Icon::Server, Action::Go(Route::Machine { id: mid.clone() })).separated());
@@ -980,6 +1010,7 @@ fn PhoneViewer(host: String, slug: String) -> Element {
     let notes = notes_menu(&p, part, note.as_deref(), linked);
     let has_notes = p.notes.as_ref().is_some_and(|n| !n.is_empty());
     let kind = m.known.as_ref().map_or(MachineKind::Server, |k| k.1);
+    let group = pg::group_name(&p, &pg::Names::of(&hub.read().hosts));
     let (a1, a2, a3) = (machine_id.clone(), more_id.clone(), notes_id.clone());
     let pr = p.clone();
     let mut v2 = v;
@@ -988,10 +1019,13 @@ fn PhoneViewer(host: String, slug: String) -> Element {
         div { class: "viewer-phone",
             header { class: "viewer-head",
                 div { class: "viewer-head-row",
-                    button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Back to Pages", onclick: back,
+                    button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "{back_label}", onclick: back,
                         Glyph { icon: Icon::ChevronLeft, size: 20 }
                     }
-                    h1 { class: "viewer-title truncate", "{p.name}" }
+                    div { class: "viewer-titles",
+                        h1 { class: "viewer-title truncate", "{p.name}" }
+                        p { class: "viewer-where mono truncate", "{group}" }
+                    }
                     button {
                         id: "{machine_id}",
                         class: "machine-chip mono press",
@@ -1033,7 +1067,7 @@ fn PhoneViewer(host: String, slug: String) -> Element {
                 if let (Some((s, k)), true) = (src, shows_frame) {
                     PageFrame { key: "{k}", src: s, title: p.name.clone(), class: "viewer-frame-full" }
                 } else {
-                    FrameState { page: p.clone(), m: m.clone(), error: v.error(&id), on_retry: move |_| v.retry(&pr), on_back: move |_| route::replace(&mut here, Route::Pages { page: None }) }
+                    FrameState { page: p.clone(), m: m.clone(), error: v.error(&id), on_retry: move |_| v.retry(&pr), on_back: move |_| go_back(), back_label }
                 }
             }
         }
@@ -1052,13 +1086,14 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
     use_drop(|| dom::slash_focuses(None));
     let list = PAGES.read();
     let h = hub.read();
-    let running = pg::running_names(&h.hosts);
+    let names = pg::Names::of(&h.hosts);
     let query = q();
-    let all = list.pages.as_deref().map(|v| grouped(v, &h, "", &running)).unwrap_or_default();
-    let groups = if query.trim().is_empty() { all.clone() } else { list.pages.as_deref().map(|v| grouped(v, &h, &query, &running)).unwrap_or_default() };
+    let all = list.pages.as_deref().map(|v| grouped(v, &h, "", &names)).unwrap_or_default();
+    let groups = if query.trim().is_empty() { all.clone() } else { list.pages.as_deref().map(|v| grouped(v, &h, &query, &names)).unwrap_or_default() };
+    let many = pg::many_machines(&all);
     let count = list.pages.as_ref().map_or(0, Vec::len);
     // nothing picked: open the page that changed last (or the first) instead of an empty pane
-    let first: Vec<PageEntry> = all.iter().flat_map(|g| g.projects.iter().flat_map(|p| p.pages.iter().cloned())).collect();
+    let first: Vec<PageEntry> = all.iter().flat_map(|g| g.pages.iter().cloned()).collect();
     let pick = first.iter().find(|p| pg::is_changed(p, &list.seen)).or(first.first()).map(|p| (p.host.clone(), p.slug.clone()));
     let none_picked = selected.is_none();
     use_effect(use_reactive!(|none_picked, count, pick| {
@@ -1103,41 +1138,31 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
                         for g in groups {
                             {
                                 let m = pg::machine_of(&h.hosts, &g.host);
+                                let closed = shut.read().contains(&g.key) && query.trim().is_empty();
+                                let key = g.key.clone();
                                 rsx! {
-                                    div { key: "{g.host}", class: "tree-machine",
-                                        MachineHeading { m: m.clone(), small: true }
-                                        for pr in g.projects {
-                                            {
-                                                let closed = shut.read().contains(&pr.key) && query.trim().is_empty();
-                                                let key = pr.key.clone();
-                                                rsx! {
-                                                    div { key: "{pr.key}",
-                                                        button {
-                                                            class: "tree-group",
-                                                            r#type: "button",
-                                                            "aria-expanded": "{!closed}",
-                                                            onclick: move |_| {
-                                                                let mut s = shut.write();
-                                                                if !s.remove(&key) {
-                                                                    s.insert(key.clone());
-                                                                }
-                                                            },
-                                                            Glyph { icon: if closed { Icon::ChevronRight } else { Icon::ChevronDown }, size: 14, class: "fg-3" }
-                                                            span { class: "truncate tree-group-name", "{pr.name}" }
-                                                            span { class: "mono fg-3 tree-group-count", "{pr.pages.len()}" }
-                                                        }
-                                                        if !closed {
-                                                            for p in pr.pages {
-                                                                TreeRow {
-                                                                    key: "{p.host}/{p.slug}",
-                                                                    active: selected.as_ref().is_some_and(|(h, s)| *h == p.host && *s == p.slug),
-                                                                    changed: pg::is_changed(&p, &seen),
-                                                                    p,
-                                                                    m: m.clone(),
-                                                                }
-                                                            }
-                                                        }
-                                                    }
+                                    div { key: "{g.key}", class: "tree-section",
+                                        button {
+                                            class: "tree-group",
+                                            r#type: "button",
+                                            "aria-expanded": "{!closed}",
+                                            onclick: move |_| {
+                                                let mut s = shut.write();
+                                                if !s.remove(&key) {
+                                                    s.insert(key.clone());
+                                                }
+                                            },
+                                            Glyph { icon: if closed { Icon::ChevronRight } else { Icon::ChevronDown }, size: 14, class: "fg-3" }
+                                            GroupHeading { name: g.name.clone(), session: g.session, m: m.clone(), machine: many, count: g.pages.len() }
+                                        }
+                                        if !closed {
+                                            for p in g.pages {
+                                                TreeRow {
+                                                    key: "{p.host}/{p.slug}",
+                                                    active: selected.as_ref().is_some_and(|(h, s)| *h == p.host && *s == p.slug),
+                                                    changed: pg::is_changed(&p, &seen),
+                                                    p,
+                                                    m: m.clone(),
                                                 }
                                             }
                                         }
@@ -1241,8 +1266,16 @@ fn DeviceSwitch(value: Device, on_change: EventHandler<Device>) -> Element {
     }
 }
 
+/// A page beside its list: on the Pages screen, or `docked` in a session's side panel, where the
+/// bar has the way back to the session's list (`on_list`) and no device sizes.
 #[component]
-fn DesktopViewer(p: PageEntry, m: PageMachine) -> Element {
+fn DesktopViewer(
+    p: PageEntry,
+    m: PageMachine,
+    #[props(default)] docked: bool,
+    #[props(default)] on_list: Option<EventHandler<()>>,
+    #[props(default)] on_close: Option<EventHandler<()>>,
+) -> Element {
     let hub = use_context::<Signal<Hub>>();
     let mut here = use_context::<Signal<Route>>();
     let mut menu_at = use_context::<Signal<Option<menu::Menu>>>();
@@ -1265,13 +1298,12 @@ fn DesktopViewer(p: PageEntry, m: PageMachine) -> Element {
     let parts = v.parts(&id);
     let part = v.part(&id);
     let note = v.note(&p);
-    let names = pg::running_names(&hub.read().hosts);
-    let group = pg::group_name(&p, &names);
+    let group = pg::group_name(&p, &pg::Names::of(&hub.read().hosts));
     let menu_items = vec![
         Item::new("Revoke links", Icon::Link2Off, Action::Page(Box::new(PageOp::Revoke(p.clone())))),
         Item::new("Copy folder path", Icon::Copy, Action::Page(Box::new(PageOp::CopyFolder(p.folder.clone())))),
         Item::new("Show folder", Icon::FolderOpen, Action::Page(Box::new(PageOp::ShowFolder(p.clone())))),
-        Item::new("Remove", Icon::Trash2, Action::Page(Box::new(PageOp::Remove { page: p.clone(), back: true }))).danger().separated(),
+        Item::new("Remove", Icon::Trash2, Action::Page(Box::new(PageOp::Remove { page: p.clone(), back: !docked }))).danger().separated(),
     ];
     let notes = notes_menu(&p, part, note.as_deref(), link.is_some());
     let has_notes = p.notes.as_ref().is_some_and(|n| !n.is_empty());
@@ -1281,56 +1313,90 @@ fn DesktopViewer(p: PageEntry, m: PageMachine) -> Element {
     let kind = m.known.as_ref().map_or(MachineKind::Server, |k| k.1);
     let (a1, a2) = (more_id.clone(), notes_id.clone());
     let browse = p.clone();
+    let note_at = note.clone();
     let retry_p = p.clone();
     let reload_p = p.clone();
     let mut vp = v;
+    // the site's parts and notes: in the bar, or on a row of their own in the narrow panel
+    let tools = rsx! {
+        if parts.len() > 1 {
+            Segmented {
+                value: if note.is_some() { String::new() } else { part.key().to_string() },
+                options: parts.iter().map(|pt| (pt.key().to_string(), pt.label().to_string())).collect::<Vec<_>>(),
+                label: "Part of the page",
+                on_change: move |k: String| vp.pick_part(Part::of(&k)),
+            }
+        }
+        if has_notes {
+            button {
+                id: "{notes_id}",
+                class: if note.is_some() { "notes-button notes-button-on press" } else { "notes-button press" },
+                r#type: "button",
+                "aria-label": if let Some(n) = &note { format!("Notes: {} open", pg::note_title(n)) } else { "Notes".to_string() },
+                onclick: move |_| menu::drop_down(&mut menu_at, &a2, notes.clone()),
+                Glyph { icon: Icon::NotebookText, size: 14 }
+                span { class: "truncate", if let Some(n) = &note { {pg::note_title(n)} } else { "Notes" } }
+                Glyph { icon: Icon::ChevronDown, size: 14, class: "fg-3" }
+            }
+        }
+    };
     let left = link.as_ref().map(|l| format!(" · link lasts {}", pg::left_text(l.until, now()))).unwrap_or_default();
     rsx! {
-        div { class: "viewer-bar",
-            nav { class: "crumbs", "aria-label": "Page location",
-                span { class: "crumb-machine",
-                    MachineGlyph { kind, size: 14, class: "fg-3" }
-                    "{m.name}"
-                }
-                span { class: "fg-3", "/" }
-                span { class: "truncate", "{group}" }
-                span { class: "fg-3", "/" }
-                b { class: "truncate crumb-page", "{p.name}" }
-            }
-            if parts.len() > 1 {
-                Segmented {
-                    value: if note.is_some() { String::new() } else { part.key().to_string() },
-                    options: parts.iter().map(|pt| (pt.key().to_string(), pt.label().to_string())).collect::<Vec<_>>(),
-                    label: "Part of the page",
-                    on_change: move |k: String| vp.pick_part(Part::of(&k)),
+        div { class: if docked { "viewer-bar viewer-bar-docked" } else { "viewer-bar" },
+            if let Some(back) = on_list {
+                button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "This session's pages", title: "This session's pages",
+                    onclick: move |_| back.call(()),
+                    Glyph { icon: Icon::ChevronLeft, size: 18 }
                 }
             }
-            if has_notes {
-                button {
-                    id: "{notes_id}",
-                    class: if note.is_some() { "notes-button notes-button-on press" } else { "notes-button press" },
-                    r#type: "button",
-                    "aria-label": if let Some(n) = &note { format!("Notes: {} open", pg::note_title(n)) } else { "Notes".to_string() },
-                    onclick: move |_| menu::drop_down(&mut menu_at, &a2, notes.clone()),
-                    Glyph { icon: Icon::NotebookText, size: 14 }
-                    span { class: "truncate", if let Some(n) = &note { {pg::note_title(n)} } else { "Notes" } }
-                    Glyph { icon: Icon::ChevronDown, size: 14, class: "fg-3" }
+            if docked {
+                div { class: "viewer-names",
+                    b { class: "truncate viewer-name", "{p.name}" }
+                    span { class: "viewer-where mono truncate",
+                        MachineGlyph { kind, size: 12, class: "fg-3" }
+                        span { class: "truncate", "{group} · {m.name}" }
+                    }
+                }
+            } else {
+                nav { class: "crumbs", "aria-label": "Page location",
+                    span { class: "crumb-machine",
+                        MachineGlyph { kind, size: 14, class: "fg-3" }
+                        "{m.name}"
+                    }
+                    span { class: "fg-3", "/" }
+                    span { class: "truncate", "{group}" }
+                    span { class: "fg-3", "/" }
+                    b { class: "truncate crumb-page", "{p.name}" }
                 }
             }
-            DeviceSwitch { value: device(), on_change: move |d| device.set(d) }
+            if !docked {
+                {tools.clone()}
+            }
+            if !docked {
+                DeviceSwitch { value: device(), on_change: move |d| device.set(d) }
+            }
             button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Reload", title: "Reload", disabled: link.is_none(),
                 onclick: move |_| v.reload(&reload_p),
                 Glyph { icon: Icon::RotateCw, size: 16 }
             }
             // a fresh 12 h link each time; the tab sits at the hub's address, which is never a sign-in page
             button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Open in new tab", title: "Open in new tab. A 12 h link; never sign in there.", disabled: link.is_none(),
-                onclick: move |_| open_in_browser(browse.clone()),
+                onclick: move |_| open_in_browser(browse.clone(), Some((part, note_at.clone()))),
                 Glyph { icon: Icon::ExternalLink, size: 16 }
             }
             button { id: "{more_id}", class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "More for {p.name}",
                 onclick: move |_| menu::drop_down(&mut menu_at, &a1, menu_items.clone()),
                 Glyph { icon: Icon::Ellipsis, size: 16 }
             }
+            if let Some(close) = on_close {
+                button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Close pages", title: "Close",
+                    onclick: move |_| close.call(()),
+                    Glyph { icon: Icon::X, size: 16 }
+                }
+            }
+        }
+        if docked && (parts.len() > 1 || has_notes) {
+            div { class: "viewer-tools", {tools} }
         }
         div {
             class: if size.is_some() { "viewer-stage-wide viewer-stage-device" } else { "viewer-stage-wide" },
@@ -1361,7 +1427,11 @@ fn DesktopViewer(p: PageEntry, m: PageMachine) -> Element {
                             m: m.clone(),
                             error: v.error(&id),
                             on_retry: move |_| v.retry(&retry_p),
-                            on_back: move |_| route::replace(&mut here, Route::Pages { page: None }),
+                            on_back: move |_| match on_list {
+                                Some(b) => b.call(()),
+                                None => route::replace(&mut here, Route::Pages { page: None }),
+                            },
+                            back_label: if on_list.is_some() { "This session's pages".to_string() } else { "Back to Pages".to_string() },
                         }
                     }
                 },
@@ -1370,7 +1440,9 @@ fn DesktopViewer(p: PageEntry, m: PageMachine) -> Element {
         div { class: "viewer-foot mono",
             Glyph { icon: Icon::ShieldCheck, size: 14 }
             span { class: "truncate", "{SANDBOX_NOTE}{left}" }
-            span { class: "viewer-size", {pg::size_note(device(), sw, sh)} }
+            if !docked {
+                span { class: "viewer-size", {pg::size_note(device(), sw, sh)} }
+            }
         }
     }
 }
@@ -1622,32 +1694,216 @@ pub fn PageCards(text: String, host: String) -> Element {
     rsx! { PageRows { pages, class: "reply-pages" } }
 }
 
-/// The session header's Pages button: the pages this session works on (see
-/// [`pg::session_pages`]), in a sheet. Nothing for a session with none.
+/// A session's side panel of pages (from tablet width up), as Claude's artifacts open beside the
+/// chat: whether it's open and which page it shows (none: the list). One per session screen.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Side {
+    pub open: Signal<bool>,
+    pub page: Signal<Option<(String, String)>>,
+}
+
+pub fn use_side() -> Side {
+    Side { open: use_signal(|| false), page: use_signal(|| None) }
+}
+
+/// Where a session is, as its screen knows it (see [`pg::SessionAt`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Here {
+    pub host: String,
+    pub tmux: Option<String>,
+    pub cwd: Option<String>,
+    pub session: Option<String>,
+}
+
+fn here_pages(here: &Here, hub: &Hub) -> pg::SessionList {
+    let at = pg::SessionAt { host: &here.host, tmux: here.tmux.as_deref(), cwd: here.cwd.as_deref(), session: here.session.as_deref() };
+    pg::session_pages(PAGES.read().pages.as_deref().unwrap_or_default(), &pg::Names::of(&hub.hosts), &at)
+}
+
+/// The labelled parts of a session's list: this conversation's pages, the tmux session's earlier
+/// ones, and those in its folder. A list of only this conversation's pages goes without a label.
+fn sections(list: pg::SessionList, tmux: Option<&str>) -> Vec<(Option<String>, Vec<PageEntry>)> {
+    let only_mine = list.earlier.is_empty() && list.nearby.is_empty();
+    let earlier = match tmux {
+        Some(t) if !list.mine.is_empty() => format!("Earlier in {t}"),
+        Some(t) => format!("In {t}"),
+        None => "Earlier in this session".into(),
+    };
+    [(Some("This conversation".to_string()), list.mine), (Some(earlier), list.earlier), (Some("In this folder".into()), list.nearby)]
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(label, v)| (label.filter(|_| !only_mine), v))
+        .collect()
+}
+
+/// The session header's Pages button: the pages this session works on (see [`pg::session_pages`]),
+/// live from the pages stream. From tablet width up it opens them beside the chat ([`SessionSide`]);
+/// on a phone in a sheet, where a page opens in the viewer and back comes here. Nothing for a session
+/// with none.
 #[component]
-pub fn SessionPages(host: String, cwd: Option<String>, session: Option<String>) -> Element {
-    let mut open = use_signal(|| false);
-    let pages = pg::session_pages(PAGES.read().pages.as_deref().unwrap_or_default(), &host, cwd.as_deref(), session.as_deref());
-    if pages.is_empty() && !open() {
+pub fn SessionPages(here: Here, side: Side) -> Element {
+    use_hook(listen);
+    let hub = use_context::<Signal<Hub>>();
+    let route_here = use_context::<Signal<Route>>();
+    let mut sheet = use_signal(|| false);
+    let list = here_pages(&here, &hub.read());
+    let seen = PAGES.read().seen.clone();
+    let wide = WIDE();
+    let (mut open, mut page) = (side.open, side.page);
+    if list.is_empty() && !sheet() && !open() {
         return rsx! {};
     }
-    let n = pages.len();
+    let n = list.len();
+    let changed = list.all().any(|p| pg::is_changed(p, &seen));
+    let only = (n == 1).then(|| list.all().next().map(|p| (p.host.clone(), p.slug.clone()))).flatten();
+    let on = wide && open();
+    let parts = sections(list, here.tmux.as_deref());
     rsx! {
-        button { class: "button button-sm button-ghost press session-pages", r#type: "button", "aria-label": "Pages: {n}", title: "This session's pages",
-            onclick: move |_| open.set(true),
+        button {
+            class: if on { "button button-sm button-ghost press session-pages session-pages-on" } else { "button button-sm button-ghost press session-pages" },
+            r#type: "button",
+            "aria-label": if changed { format!("Pages: {n}, changed") } else { format!("Pages: {n}") },
+            "aria-pressed": wide.then_some(if on { "true" } else { "false" }),
+            title: "This session's pages",
+            onclick: move |_| {
+                if !wide {
+                    sheet.set(true);
+                } else if open() {
+                    open.set(false);
+                } else {
+                    // a single page opens at once; more open on the list
+                    if only.is_some() && page.peek().is_none() {
+                        page.set(only.clone());
+                    }
+                    open.set(true);
+                }
+            },
             Glyph { icon: Icon::PanelsTopLeft, size: 14 }
             span { class: "wide-label", "Pages" }
             span { class: "mono tabular", "{n}" }
+            if changed {
+                ChangedDot {}
+            }
         }
-        Sheet { open: open(), on_close: move |_| open.set(false), title: "Pages", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
-            if pages.is_empty() {
-                p { class: "sheet-text",
-                    "Sites an agent adds with "
-                    code { class: "mono", "inyon pages add" }
-                    " in this project show up here."
+        if !wide {
+            Sheet { open: sheet(), on_close: move |_| sheet.set(false), title: "Pages", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
+                if parts.is_empty() {
+                    p { class: "sheet-text",
+                        "Sites an agent adds with "
+                        code { class: "mono", "inyon pages add" }
+                        " in this session show up here."
+                    }
+                } else {
+                    div {
+                        onclick: move |_| {
+                            *BACK_TO.write() = Some(route_here.peek().clone());
+                            sheet.set(false);
+                        },
+                        for (label , pages) in parts {
+                            if let Some(l) = label {
+                                div { class: "side-label mono", "{l}" }
+                            }
+                            PageRows { pages }
+                        }
+                    }
                 }
-            } else {
-                div { onclick: move |_| open.set(false), PageRows { pages } }
+            }
+        }
+    }
+}
+
+/// The session's pages beside its chat, from tablet width up: the list, and a page opened from it
+/// in the viewer, with the way back to the list. It follows the pages stream, so a page an agent
+/// adds or moves on shows up as it happens.
+#[component]
+pub fn SessionSide(here: Here, side: Side) -> Element {
+    use_hook(listen);
+    let hub = use_context::<Signal<Hub>>();
+    let (mut open, mut page) = (side.open, side.page);
+    if !open() || !WIDE() {
+        return rsx! {};
+    }
+    let h = hub.read();
+    let list = here_pages(&here, &h);
+    let seen = PAGES.read().seen.clone();
+    // the page picked, while it's still this session's
+    let shown = page().and_then(|(host, slug)| list.all().find(|p| p.host == host && p.slug == slug).cloned());
+    let mut close = move || open.set(false);
+    if let Some(p) = shown {
+        let m = pg::machine_of(&h.hosts, &p.host);
+        return rsx! {
+            aside { class: "session-side", "aria-label": "Pages",
+                DesktopViewer { key: "{p.host}/{p.slug}", p, m, docked: true, on_list: move |_| page.set(None), on_close: move |_| close() }
+            }
+        };
+    }
+    let tmux = here.tmux.clone();
+    let parts = sections(list, tmux.as_deref());
+    rsx! {
+        aside { class: "session-side", "aria-label": "Pages",
+            div { class: "side-head",
+                Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" }
+                h2 { class: "side-title", "Pages" }
+                if let Some(t) = &tmux {
+                    span { class: "side-tmux mono truncate", "{t}" }
+                }
+                button { class: "icon-button icon-button-lg press side-close", r#type: "button", "aria-label": "Close pages", title: "Close", onclick: move |_| close(),
+                    Glyph { icon: Icon::X, size: 16 }
+                }
+            }
+            div { class: "side-list",
+                if parts.is_empty() {
+                    p { class: "side-empty",
+                        "Sites an agent adds with "
+                        code { class: "mono", "inyon pages add" }
+                        " in this session show up here."
+                    }
+                }
+                for (label , pages) in parts {
+                    if let Some(l) = label {
+                        div { class: "side-label mono", "{l}" }
+                    }
+                    for p in pages {
+                        SideRow {
+                            key: "{p.host}/{p.slug}",
+                            changed: pg::is_changed(&p, &seen),
+                            m: pg::machine_of(&h.hosts, &p.host),
+                            on_pick: move |id| page.set(Some(id)),
+                            p,
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A page in the session's side list: it opens in the panel, and has the page menu.
+#[component]
+fn SideRow(p: PageEntry, m: PageMachine, changed: bool, on_pick: EventHandler<(String, String)>) -> Element {
+    let items = page_menu(&p, &m, true);
+    let label = pg::page_label(&p, changed, m.online, platform::clock());
+    let line = if m.online { pg::updated_line(&p, platform::clock()) } else { "offline".into() };
+    let id = (p.host.clone(), p.slug.clone());
+    let dim = if m.online { "" } else { " dim" };
+    rsx! {
+        button { class: "side-row press", r#type: "button", "aria-label": "{label}", oncontextmenu: menu::open(items),
+            onclick: move |_| on_pick.call(id.clone()),
+            Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-3" }
+            span { class: "side-row-text{dim}",
+                span { class: "side-row-name",
+                    span { class: "truncate", "{p.name}" }
+                    if changed {
+                        ChangedDot {}
+                    }
+                }
+                span { class: "side-row-line mono truncate", "{line}" }
+            }
+            if let Some(g) = &p.progress {
+                span { class: "tree-row-progress mono tabular fg-3{dim}",
+                    ProgressBar { done: g.done, total: g.total, class: "progress-sm" }
+                    "{g.done}/{g.total}"
+                }
             }
         }
     }

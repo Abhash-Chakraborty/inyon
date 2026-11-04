@@ -51,16 +51,71 @@ pub fn is_hub_machine(host: &str) -> bool {
     own == "local"
 }
 
-/// What a page's group is called: the name its session has in the app now (`running`, by
-/// `<host>/<session>`), else the name Inyon last gave that session, else its project's folder.
-pub fn group_name(p: &PageEntry, running: &HashMap<String, String>) -> String {
+/// A tmux session a page belongs to: its id (`$3`) when known, and its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxSession {
+    pub id: Option<String>,
+    pub name: String,
+}
+
+/// What the app knows now about the sessions pages belong to, read from the machines' live state:
+/// the tmux session each agent conversation runs in, and the titles running agents show, both by
+/// `<host>/<conversation id>`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Names {
+    pub tmux: HashMap<String, TmuxSession>,
+    pub titles: HashMap<String, String>,
+}
+
+impl Names {
+    pub fn of(hosts: &[HostState]) -> Names {
+        Names { tmux: live_sessions(hosts), titles: running_names(hosts) }
+    }
+}
+
+/// The tmux sessions agent conversations run in now, by `<host>/<conversation id>`. A dead pane
+/// runs nothing.
+pub fn live_sessions(hosts: &[HostState]) -> HashMap<String, TmuxSession> {
+    let mut out = HashMap::new();
+    for r in all_panes(hosts) {
+        let Some(sid) = r.pane.agent.as_ref().and_then(|a| a.session_id.as_deref()) else { continue };
+        if r.pane.dead || r.session.name.trim().is_empty() {
+            continue;
+        }
+        out.insert(page_id(&r.host.config.id, sid), TmuxSession { id: Some(r.session.id.clone()), name: r.session.name.clone() });
+    }
+    out
+}
+
+/// The tmux session a page belongs to: the one its conversation runs in now (so a renamed session
+/// takes its pages along), else the one it was made in, as the hub keeps it.
+pub fn tmux_of(p: &PageEntry, names: &Names) -> Option<TmuxSession> {
     p.session
         .as_deref()
-        .and_then(|s| running.get(&page_id(&p.host, s)))
+        .and_then(|s| names.tmux.get(&page_id(&p.host, s)))
+        .cloned()
+        .or_else(|| p.tmux.clone().filter(|n| !n.trim().is_empty()).map(|name| TmuxSession { id: p.tmux_id.clone(), name }))
+}
+
+/// What a page's group is called: its tmux session's name (see [`tmux_of`]). A page from before
+/// pages kept their tmux session goes by the name its conversation shows in the app now, else the
+/// name Inyon last gave that conversation, else its project's folder.
+pub fn group_name(p: &PageEntry, names: &Names) -> String {
+    group_of(p, names).1
+}
+
+/// A page's group: whether it's a session's (else its project's), and the group's name.
+fn group_of(p: &PageEntry, names: &Names) -> (bool, String) {
+    if let Some(t) = tmux_of(p, names) {
+        return (true, t.name);
+    }
+    p.session
+        .as_deref()
+        .and_then(|s| names.titles.get(&page_id(&p.host, s)))
         .filter(|n| !n.is_empty())
         .cloned()
         .or_else(|| p.session_name.clone().filter(|n| !n.is_empty()))
-        .unwrap_or_else(|| project_name(&p.project))
+        .map_or_else(|| (false, project_name(&p.project)), |n| (true, n))
 }
 
 /// The names running agent sessions have in the app, by `<host>/<conversation id>`. An agent that
@@ -79,19 +134,17 @@ pub fn running_names(hosts: &[HostState]) -> HashMap<String, String> {
     out
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProjectGroup {
-    pub name: String,
-    /// `<host>/s:<session>` or `<host>/p:<name>`
-    pub key: String,
-    pub pages: Vec<PageEntry>,
-}
-
-/// A machine's projects and their pages, the newest change first.
+/// One heading of the list: a session's pages, or a project's when the session isn't known, on one
+/// machine, the newest change first.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageGroup {
+    pub name: String,
     pub host: String,
-    pub projects: Vec<ProjectGroup>,
+    /// headed by a session (else by a project folder)
+    pub session: bool,
+    /// `<host>/s:<name>` or `<host>/p:<name>`
+    pub key: String,
+    pub pages: Vec<PageEntry>,
 }
 
 fn by_change(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
@@ -103,48 +156,36 @@ fn name_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b))
 }
 
-/// Machine, then session or project, then page. The hub's own machine comes first, then the others
-/// by name; groups by name (see [`group_name`]); inside a group the page that changed last is on top.
-pub fn group_pages(pages: &[&PageEntry], host_name: impl Fn(&str) -> String, running: &HashMap<String, String>) -> Vec<PageGroup> {
-    let mut hosts: Vec<String> = Vec::new();
-    let mut groups: HashMap<String, Vec<(String, String, Vec<PageEntry>)>> = HashMap::new();
+/// Session first: one heading per tmux session (by its name now, on its machine), with every site
+/// made in it below, whichever conversation made it. Pages with no known session fall back to their
+/// project's heading, after the sessions. Headings go by name, then machine; inside one the page that
+/// changed last is on top.
+pub fn group_pages(pages: &[&PageEntry], host_name: impl Fn(&str) -> String, names: &Names) -> Vec<PageGroup> {
+    let mut list: Vec<PageGroup> = Vec::new();
     for p in pages {
-        if !groups.contains_key(&p.host) {
-            hosts.push(p.host.clone());
-        }
-        let list = groups.entry(p.host.clone()).or_default();
-        let name = group_name(p, running);
-        let key = match &p.session {
-            Some(s) if name != project_name(&p.project) => format!("s:{s}"),
-            _ => format!("p:{name}"),
-        };
-        match list.iter_mut().find(|(k, _, _)| *k == key) {
-            Some((_, _, v)) => v.push((*p).clone()),
-            None => list.push((key, name, vec![(*p).clone()])),
+        let (session, name) = group_of(p, names);
+        let key = format!("{}/{}:{name}", p.host, if session { "s" } else { "p" });
+        match list.iter_mut().find(|g| g.key == key) {
+            Some(g) => g.pages.push((*p).clone()),
+            None => list.push(PageGroup { name, host: p.host.clone(), session, key, pages: vec![(*p).clone()] }),
         }
     }
-    hosts.sort_by(|a, b| is_hub_machine(b).cmp(&is_hub_machine(a)).then_with(|| name_cmp(&host_name(a), &host_name(b))));
-    hosts
-        .into_iter()
-        .map(|host| {
-            let mut list = groups.remove(&host).unwrap_or_default();
-            list.sort_by(|a, b| name_cmp(&a.1, &b.1));
-            let projects = list
-                .into_iter()
-                .map(|(key, name, mut v)| {
-                    v.sort_by(by_change);
-                    ProjectGroup { name, key: format!("{host}/{key}"), pages: v }
-                })
-                .collect();
-            PageGroup { host, projects }
-        })
-        .collect()
+    list.sort_by(|a, b| b.session.cmp(&a.session).then_with(|| name_cmp(&a.name, &b.name)).then_with(|| name_cmp(&host_name(&a.host), &host_name(&b.host))));
+    for g in &mut list {
+        g.pages.sort_by(by_change);
+    }
+    list
+}
+
+/// Whether the list spans more than one machine, so each heading names its machine.
+pub fn many_machines(groups: &[PageGroup]) -> bool {
+    groups.iter().any(|g| g.host != groups[0].host)
 }
 
 /// Whether a page matches what's typed in the filter: its name, group, project or machine.
-pub fn matches_page(p: &PageEntry, machine: &str, q: &str, running: &HashMap<String, String>) -> bool {
+pub fn matches_page(p: &PageEntry, machine: &str, q: &str, names: &Names) -> bool {
     let t = q.trim().to_lowercase();
-    t.is_empty() || [p.name.clone(), group_name(p, running), project_name(&p.project), machine.to_string()].iter().any(|s| s.to_lowercase().contains(&t))
+    t.is_empty() || [p.name.clone(), group_name(p, names), project_name(&p.project), machine.to_string()].iter().any(|s| s.to_lowercase().contains(&t))
 }
 
 // ---------- a session's pages ----------
@@ -172,28 +213,68 @@ fn within(child: &str, parent: &str) -> bool {
     child == parent || child.starts_with(&if parent.ends_with('/') { parent.to_string() } else { format!("{parent}/") })
 }
 
-/// The pages a session running in `cwd` on `host` works on, the newest change first: on the same
-/// machine, the ones its conversation (`session`) added, and those with the session inside the
-/// page's project or the page's folder under the session's. A session in a home folder or higher
+/// A session's pages, each list the newest change first: the ones its conversation made, the ones
+/// earlier conversations in the same tmux session made, and, for pages that belong to no session,
+/// the ones in its folder.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionList {
+    pub mine: Vec<PageEntry>,
+    pub earlier: Vec<PageEntry>,
+    pub nearby: Vec<PageEntry>,
+}
+
+impl SessionList {
+    pub fn len(&self) -> usize {
+        self.mine.len() + self.earlier.len() + self.nearby.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn all(&self) -> impl Iterator<Item = &PageEntry> {
+        self.mine.iter().chain(&self.earlier).chain(&self.nearby)
+    }
+}
+
+/// Where a session is, for picking its pages: its machine, the tmux session it runs in, its folder
+/// and its agent conversation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionAt<'a> {
+    pub host: &'a str,
+    pub tmux: Option<&'a str>,
+    pub cwd: Option<&'a str>,
+    pub session: Option<&'a str>,
+}
+
+/// The pages a session works on (see [`SessionList`]). A page that belongs to another tmux
+/// session stays out, even in the same folder. For a page whose tmux session isn't known (one from
+/// before 0.25 whose conversation has ended, or one added outside tmux): the session inside the
+/// page's project, or the page's folder under the session's. A session in a home folder or higher
 /// (two folders deep or less) gets no pages by folder below it, or every page on the machine would
 /// be its own.
-pub fn session_pages(pages: &[PageEntry], host: &str, cwd: Option<&str>, session: Option<&str>) -> Vec<PageEntry> {
-    let at = cwd.map(folder_key);
-    let deep = at.as_deref().is_some_and(|a| {
+pub fn session_pages(pages: &[PageEntry], names: &Names, at: &SessionAt) -> SessionList {
+    let here = at.cwd.map(folder_key);
+    let deep = here.as_deref().is_some_and(|a| {
         let rest = if drive(a) { &a[2..] } else { a };
         rest.split('/').filter(|s| !s.is_empty()).count() > 2
     });
-    let mut v: Vec<PageEntry> = pages
-        .iter()
-        .filter(|p| {
-            p.host == host
-                && (session.is_some_and(|s| p.session.as_deref() == Some(s))
-                    || at.as_deref().is_some_and(|a| within(a, &folder_key(&p.project)) || (deep && within(&folder_key(&p.folder), a))))
-        })
-        .cloned()
-        .collect();
-    v.sort_by(by_change);
-    v
+    let mut out = SessionList::default();
+    for p in pages.iter().filter(|p| p.host == at.host) {
+        if at.session.is_some() && p.session.as_deref() == at.session {
+            out.mine.push(p.clone());
+        } else if let Some(t) = tmux_of(p, names) {
+            if at.tmux == Some(t.name.as_str()) {
+                out.earlier.push(p.clone());
+            }
+        } else if here.as_deref().is_some_and(|a| within(a, &folder_key(&p.project)) || (deep && within(&folder_key(&p.folder), a))) {
+            out.nearby.push(p.clone());
+        }
+    }
+    for v in [&mut out.mine, &mut out.earlier, &mut out.nearby] {
+        v.sort_by(by_change);
+    }
+    out
 }
 
 /// `decodeURIComponent`: None where JavaScript would throw.
@@ -416,6 +497,15 @@ pub fn note_src(base: &str, url: &str, note: &str, theme: &str) -> String {
     format!("{base}{url}research/{}?as=note&theme={theme}", inyon_chat_core::js::encode_uri_component(note))
 }
 
+/// What Open in browser opens: the part or note the viewer shows, on the page's link, so the tab
+/// shows what the frame did.
+pub fn browser_path(url: &str, part: Part, note: Option<&str>) -> String {
+    match note {
+        Some(n) => format!("{url}research/{}?as=note", inyon_chat_core::js::encode_uri_component(n)),
+        None => format!("{url}{}", part.path()),
+    }
+}
+
 /// A note's name as the app shows it: the file name without `.md`.
 pub fn note_title(name: &str) -> String {
     if name.len() >= 3 && name[name.len() - 3..].eq_ignore_ascii_case(".md") {
@@ -533,7 +623,8 @@ pub fn size_note(device: Device, stage_w: f64, stage_h: f64) -> String {
             let pct = if s < 1.0 { format!(" · {}%", (s * 100.0).round()) } else { String::new() };
             format!("{name} · {w} × {h}{pct}")
         }
-        None if stage_w > 0.0 => format!("Fit · {} × {}", (stage_w - 24.0).max(0.0), (stage_h - 24.0).max(0.0)),
+        // a stage on a scaled screen measures in fractions of a pixel
+        None if stage_w > 0.0 => format!("Fit · {} × {}", (stage_w - 24.0).max(0.0).round(), (stage_h - 24.0).max(0.0).round()),
         None => String::new(),
     }
 }
@@ -628,12 +719,63 @@ mod tests {
         v.iter().map(|p| p.slug.as_str()).collect()
     }
 
-    fn none() -> HashMap<String, String> {
-        HashMap::new()
+    fn none() -> Names {
+        Names::default()
+    }
+
+    fn tmux(e: &mut PageEntry, id: &str, name: &str) {
+        e.tmux_id = Some(id.into());
+        e.tmux = Some(name.into());
+    }
+
+    fn heads(groups: &[PageGroup]) -> Vec<(&str, &str, Vec<&str>)> {
+        groups.iter().map(|g| (g.host.as_str(), g.name.as_str(), slugs(&g.pages))).collect()
     }
 
     #[test]
-    fn machine_then_project_then_page_with_the_hub_first_and_the_newest_change_on_top() {
+    fn sites_made_in_one_tmux_session_sit_under_its_name_whichever_conversation_made_them() {
+        // his laptop: two sites from the "robot" session, by two conversations
+        let pages = [
+            with("cardboard", |e| {
+                e.host = "laptop".into();
+                e.session = Some("chat-1".into());
+                e.added = 5;
+                tmux(e, "$2", "robot");
+            }),
+            with("mob", |e| {
+                e.host = "laptop".into();
+                e.session = Some("chat-2".into());
+                e.project = "/home/me/code/mob".into();
+                e.added = 9;
+                tmux(e, "$2", "robot");
+            }),
+            with("plan", |e| tmux(e, "$1", "inyon")),
+            with("loose", |e| e.project = "/srv/zeta".into()),
+        ];
+        let refs: Vec<&PageEntry> = pages.iter().collect();
+        let groups = group_pages(&refs, name_of, &none());
+        // sessions first by name, then the projects of pages with no session
+        assert_eq!(heads(&groups), [("local", "inyon", vec!["plan"]), ("laptop", "robot", vec!["mob", "cardboard"]), ("local", "zeta", vec!["loose"])]);
+        assert!(groups[0].session && groups[1].session && !groups[2].session);
+        assert!(many_machines(&groups) && !many_machines(&groups[..1]));
+    }
+
+    #[test]
+    fn the_same_session_name_on_two_machines_is_two_headings_by_machine_name() {
+        let pages = [
+            with("a", |e| tmux(e, "$1", "main")),
+            with("b", |e| {
+                e.host = "laptop".into();
+                tmux(e, "$4", "main");
+            }),
+        ];
+        let refs: Vec<&PageEntry> = pages.iter().collect();
+        // "air" before "studio"
+        assert_eq!(heads(&group_pages(&refs, name_of, &none())), [("laptop", "main", vec!["b"]), ("local", "main", vec!["a"])]);
+    }
+
+    #[test]
+    fn pages_with_no_session_group_by_project_and_the_newest_change_on_top() {
         let pages = [
             with("old", |e| e.added = 10),
             with("win", |e| {
@@ -651,38 +793,70 @@ mod tests {
             }),
         ];
         let refs: Vec<&PageEntry> = pages.iter().collect();
-        let groups = group_pages(&refs, name_of, &none());
-        assert_eq!(groups.iter().map(|g| g.host.as_str()).collect::<Vec<_>>(), ["local", "laptop"]);
-        let first: Vec<(&str, Vec<&str>)> = groups[0].projects.iter().map(|p| (p.name.as_str(), slugs(&p.pages))).collect();
-        assert_eq!(first, [("app", vec!["busy", "old"]), ("site", vec!["site"])]);
         // a Windows path names its project by its last folder too
-        assert_eq!(groups[1].projects[0].name, "demo");
+        assert_eq!(heads(&group_pages(&refs, name_of, &none())), [("local", "app", vec!["busy", "old"]), ("laptop", "demo", vec!["win"]), ("local", "site", vec!["site"])]);
     }
 
     #[test]
-    fn other_machines_follow_by_name_and_a_paired_hubs_own_machine_counts_as_a_hub_machine() {
-        let pages = [with("a", |e| e.host = "zeta".into()), with("b", |e| e.host = "hub:h1/local".into()), with("c", |e| e.host = "alpha".into())];
-        let refs: Vec<&PageEntry> = pages.iter().collect();
-        let groups = group_pages(&refs, name_of, &none());
-        assert_eq!(groups.iter().map(|g| g.host.as_str()).collect::<Vec<_>>(), ["hub:h1/local", "alpha", "zeta"]);
-    }
-
-    #[test]
-    fn the_filter_looks_at_the_name_the_project_and_the_machine() {
+    fn the_filter_looks_at_the_name_the_session_the_project_and_the_machine() {
         let p = with("plan", |e| {
             e.name = "Inyon plan".into();
             e.project = "/srv/custom-tmux".into();
+            tmux(e, "$1", "cardboard");
         });
         assert!(matches_page(&p, "studio", "inyon", &none()));
         assert!(matches_page(&p, "studio", "CUSTOM", &none()));
         assert!(matches_page(&p, "studio", "stud", &none()));
+        assert!(matches_page(&p, "studio", "cardb", &none()));
         assert!(!matches_page(&p, "studio", "handy", &none()));
         assert!(matches_page(&p, "studio", "  ", &none()));
         assert_eq!(project_name("/a/b/c/"), "c");
     }
 
+    fn laptop(panes: serde_json::Value, session: (&str, &str)) -> HostState {
+        serde_json::from_value(serde_json::json!({
+            "config": { "id": "laptop", "name": "air", "kind": "node" }, "status": "online", "integration": "installed", "tmux": "ok", "agents": [], "updatedAt": 1,
+            "sessions": [{ "id": session.0, "name": session.1, "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "claude", "active": true, "activity": 0, "panes": panes }] }]
+        }))
+        .unwrap()
+    }
+
+    fn agent_pane(id: &str, title: &str, sid: Option<&str>, dead: bool) -> serde_json::Value {
+        let mut agent = serde_json::json!({ "kind": "claude", "pid": 1, "state": "idle" });
+        if let Some(s) = sid {
+            agent["sessionId"] = s.into();
+        }
+        serde_json::json!({ "id": id, "index": 0, "active": true, "command": "claude", "cwd": "/x", "title": title, "width": 80, "height": 24, "dead": dead, "agent": agent })
+    }
+
     #[test]
-    fn a_sessions_pages_are_grouped_under_the_name_the_session_has_now() {
+    fn a_renamed_tmux_session_takes_its_pages_along_while_their_conversation_runs() {
+        let pages = [
+            with("cardboard", |e| {
+                e.host = "laptop".into();
+                e.session = Some("chat-1".into());
+                tmux(e, "$2", "robot");
+            }),
+            // its conversation ended before the rename: it keeps the name it was made under
+            with("mob", |e| {
+                e.host = "laptop".into();
+                e.session = Some("chat-0".into());
+                tmux(e, "$2", "robot");
+            }),
+        ];
+        let names = Names::of(&[laptop(serde_json::json!([agent_pane("%1", "Claude Code", Some("chat-1"), false)]), ("$2", "mobile"))]);
+        assert_eq!(names.tmux.get("laptop/chat-1"), Some(&TmuxSession { id: Some("$2".into()), name: "mobile".into() }));
+        assert_eq!(group_name(&pages[0], &names), "mobile");
+        assert_eq!(group_name(&pages[1], &names), "robot");
+        let refs: Vec<&PageEntry> = pages.iter().collect();
+        assert_eq!(heads(&group_pages(&refs, name_of, &names)), [("laptop", "mobile", vec!["cardboard"]), ("laptop", "robot", vec!["mob"])]);
+        // a dead pane runs nothing
+        let gone = Names::of(&[laptop(serde_json::json!([agent_pane("%1", "Claude Code", Some("chat-1"), true)]), ("$2", "mobile"))]);
+        assert_eq!(group_name(&pages[0], &gone), "robot");
+    }
+
+    #[test]
+    fn a_page_from_before_tmux_sessions_were_kept_goes_by_its_conversations_name_then_project() {
         let pages = [
             with("plan", |e| {
                 e.session = Some("chat-1".into());
@@ -690,22 +864,13 @@ mod tests {
             }),
             with("mock", |e| e.session = Some("chat-1".into())),
             entry("other"),
-            with("gone", |e| e.session = Some("chat-9".into())),
         ];
-        // renamed while it runs: the group follows the running session's name
-        let running = HashMap::from([(page_id("local", "chat-1"), "Legato development".to_string())]);
+        let running = Names { titles: HashMap::from([(page_id("local", "chat-1"), "Legato development".to_string())]), ..Names::default() };
         let refs: Vec<&PageEntry> = pages.iter().collect();
         let groups = group_pages(&refs, name_of, &running);
-        let got: Vec<(&str, Vec<&str>)> = groups[0]
-            .projects
-            .iter()
-            .map(|p| {
-                let mut s = slugs(&p.pages);
-                s.sort();
-                (p.name.as_str(), s)
-            })
-            .collect();
-        assert_eq!(got, [("app", vec!["gone", "other"]), ("Legato development", vec!["mock", "plan"])]);
+        let mut got = heads(&groups);
+        got.iter_mut().for_each(|g| g.2.sort());
+        assert_eq!(got, [("local", "Legato development", vec!["mock", "plan"]), ("local", "app", vec!["other"])]);
         // not running: the name Inyon last gave it, else the project folder
         assert_eq!(group_name(&pages[0], &none()), "Handy redesign");
         assert_eq!(group_name(&pages[1], &none()), "app");
@@ -752,44 +917,83 @@ mod tests {
         ]
     }
 
+    fn at<'a>(host: &'a str, cwd: Option<&'a str>, session: Option<&'a str>) -> SessionAt<'a> {
+        SessionAt { host, tmux: None, cwd, session }
+    }
+
+    fn picked(all: &[PageEntry], a: &SessionAt) -> Vec<String> {
+        session_pages(all, &none(), a).all().map(|p| p.slug.clone()).collect()
+    }
+
     #[test]
     fn a_session_gets_its_projects_pages_from_anywhere_inside_it() {
         let all = session_fixture();
-        assert_eq!(slugs(&session_pages(&all, "local", Some("/home/me/code/app"), None)), ["plan"]);
-        assert_eq!(slugs(&session_pages(&all, "local", Some("/home/me/code/app/apps/web/"), None)), ["plan"]);
+        assert_eq!(picked(&all, &at("local", Some("/home/me/code/app"), None)), ["plan"]);
+        assert_eq!(picked(&all, &at("local", Some("/home/me/code/app/apps/web/"), None)), ["plan"]);
         // not a folder that only starts the same
-        assert!(session_pages(&all, "local", Some("/home/me/code/application"), None).is_empty());
+        assert!(picked(&all, &at("local", Some("/home/me/code/application"), None)).is_empty());
     }
 
     #[test]
     fn a_session_gets_pages_in_folders_under_it_but_not_every_page_under_a_home_folder() {
         let all = session_fixture();
-        assert_eq!(slugs(&session_pages(&all, "local", Some("/home/me/code"), None)), ["site", "plan"]);
-        assert!(session_pages(&all, "local", Some("/home/me"), None).is_empty());
-        assert!(session_pages(&all, "local", Some("/"), None).is_empty());
+        assert_eq!(picked(&all, &at("local", Some("/home/me/code"), None)), ["site", "plan"]);
+        assert!(picked(&all, &at("local", Some("/home/me"), None)).is_empty());
+        assert!(picked(&all, &at("local", Some("/"), None)).is_empty());
     }
 
     #[test]
     fn a_session_gets_the_same_machines_pages_only_windows_paths_in_any_case_and_slash() {
         let all = session_fixture();
-        assert_eq!(slugs(&session_pages(&all, "laptop", Some("c:/dev/robot"), None)), ["win"]);
-        assert!(session_pages(&all, "laptop", Some("/home/me/code/app"), None).is_empty());
-        assert!(session_pages(&all, "local", None, None).is_empty());
+        assert_eq!(picked(&all, &at("laptop", Some("c:/dev/robot"), None)), ["win"]);
+        assert!(picked(&all, &at("laptop", Some("/home/me/code/app"), None)).is_empty());
+        assert!(picked(&all, &at("local", None, None)).is_empty());
         assert_eq!(folder_key("C:\\Dev\\"), "c:/dev");
         assert_eq!(folder_key("/"), "/");
     }
 
     #[test]
-    fn a_session_gets_the_pages_its_conversation_added_wherever_they_are() {
+    fn a_new_conversation_shows_its_own_pages_first_then_the_tmux_sessions_earlier_ones() {
         let mut all = session_fixture();
         all.push(with("mine", |e| {
             e.project = "/srv/elsewhere".into();
             e.folder = "/srv/elsewhere/plan".into();
-            e.session = Some("chat-1".into());
+            e.session = Some("chat-2".into());
+            tmux(e, "$1", "robot");
         }));
-        assert_eq!(slugs(&session_pages(&all, "local", Some("/home/me/code/app"), Some("chat-1"))), ["mine", "plan"]);
-        assert_eq!(slugs(&session_pages(&all, "local", None, Some("chat-1"))), ["mine"]);
-        assert_eq!(slugs(&session_pages(&all, "laptop", Some("c:/dev/robot"), Some("chat-1"))), ["win"]);
+        all.push(with("before", |e| {
+            e.session = Some("chat-1".into());
+            e.added = 50;
+            tmux(e, "$1", "robot");
+        }));
+        // made in another tmux session in the same folder: not this session's
+        all.push(with("theirs", |e| {
+            e.session = Some("chat-7".into());
+            tmux(e, "$3", "cardboard");
+        }));
+        let here = SessionAt { host: "local", tmux: Some("robot"), cwd: Some("/home/me/code/app"), session: Some("chat-2") };
+        let got = session_pages(&all, &none(), &here);
+        assert_eq!((slugs(&got.mine), slugs(&got.earlier), slugs(&got.nearby)), (vec!["mine"], vec!["before"], vec!["plan"]));
+        assert_eq!(got.len(), 3);
+        // the same conversation on another machine is someone else's
+        assert_eq!(picked(&all, &SessionAt { host: "laptop", cwd: Some("c:/dev/robot"), ..here.clone() }), ["win"]);
+        // with no conversation id, the tmux session still finds them
+        let no_id = SessionAt { session: None, cwd: None, ..here };
+        assert_eq!(slugs(&session_pages(&all, &none(), &no_id).earlier), ["mine", "before"]);
+    }
+
+    #[test]
+    fn a_page_whose_conversation_runs_in_another_tmux_session_now_is_that_ones() {
+        // added before 0.25 (no tmux kept), in this folder, by a conversation running elsewhere
+        let all = vec![with("old", |e| e.session = Some("chat-1".into()))];
+        let names = Names::of(&[laptop(serde_json::json!([agent_pane("%1", "Claude Code", Some("chat-1"), false)]), ("$2", "mobile"))]);
+        let mut p = all.clone();
+        p[0].host = "laptop".into();
+        let here = SessionAt { host: "laptop", tmux: Some("robot"), cwd: Some("/home/me/code/app"), session: Some("chat-9") };
+        assert!(session_pages(&p, &names, &here).is_empty());
+        // once that conversation ends, the folder decides again
+        assert_eq!(slugs(&session_pages(&p, &none(), &here).nearby), ["old"]);
+        assert_eq!(slugs(&session_pages(&p, &names, &SessionAt { tmux: Some("mobile"), ..here }).earlier), ["old"]);
     }
 
     #[test]
@@ -865,6 +1069,10 @@ mod tests {
         assert_eq!(frame_src("", "/v/t/", Part::Matrix, "light"), "/v/t/matrix.html?theme=light");
         assert_eq!(note_src("", "/v/t/", "Field notes.md", "dark"), "/v/t/research/Field%20notes.md?as=note&theme=dark");
         assert_eq!(note_title("Field notes.MD"), "Field notes");
+        // Open in browser opens what the frame shows
+        assert_eq!(browser_path("/v/t/", Part::Plan, None), "/v/t/");
+        assert_eq!(browser_path("/v/t/", Part::Mockups, None), "/v/t/mockups/");
+        assert_eq!(browser_path("/v/t/", Part::Matrix, Some("Field notes.md")), "/v/t/research/Field%20notes.md?as=note");
         assert_eq!(note_title("raw.txt"), "raw.txt");
     }
 
@@ -898,6 +1106,7 @@ mod tests {
         assert_eq!(size_note(Device::Desktop, 744.0, 1000.0), "Desktop · 1440 × 900 · 50%");
         assert_eq!(size_note(Device::Phone, 2000.0, 2000.0), "Phone · 390 × 844");
         assert_eq!(size_note(Device::Fit, 1124.0, 784.0), "Fit · 1100 × 760");
+        assert_eq!(size_note(Device::Fit, 539.953125, 755.4), "Fit · 516 × 731");
         assert_eq!(Part::of("matrix"), Part::Matrix);
     }
 

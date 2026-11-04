@@ -30,7 +30,11 @@ From 0.22.4 a site an agent made but never added shows up by itself. Every 5 min
 
 A page you remove stays removed: `pages.json` remembers its folder, and the hub doesn't add it again. Adding that folder yourself brings it back. A machine with an `inyon` from before 0.22.4 isn't looked through.
 
+### In a session
+
 From 0.22.3 a page also shows where you work with the agent that made it. When a reply has the page's `/pages/…` link in it, the page shows as a card under the reply; tap it to open the page. A session's side panel (the **Activity** sheet on a phone) gets a **Pages** tab when the session has pages: those in its project, and those in folders under the one it runs in, on the same machine. From 0.22.5 it also lists the pages that session added, wherever their folders are.
+
+From 0.25 a session's pages are the ones made in its tmux session, the way Claude's artifacts belong to a chat. The session's header has a **Pages** button with how many there are, and a dot when one changed since you opened it. On a desktop it opens them beside the chat: the list first, or the page itself when there's only one, and a page you pick opens right there, with the way back to the list. On a phone they open in a sheet, and a page opens full screen with **Back** returning to the session. Both follow the list live, so a page the agent adds or moves on shows up as it happens. The pages this conversation made come first, then those that earlier conversations in the same tmux session made. A page made in another tmux session stays out, even in the same folder. A page whose tmux session isn't known (one added outside tmux, or before 0.25 by a conversation that has ended) shows by its folder, as before.
 
 ## Pages on your other computers
 
@@ -40,14 +44,15 @@ The computer's own `inyon` reads the files and sends them to the hub, which chec
 
 ## On a phone
 
-**Pages** is the second tab, between **Overview** and **+**. Its badge counts pages that changed since you last opened them. The list is grouped by machine, then by project: the folder's git repository, or the repository's main folder when the site sits in a worktree. From 0.22.5 a page that a session added, or that the hub found in a session's folder, is grouped under that session's name instead, and the heading changes when you rename the session. A page whose session Inyon doesn't know keeps the project's name. The filter matches either. Each card shows the page's name, a bar with how many tasks are done out of how many, what the agent is on now and when that board was last updated. The bar, the line and the time come from the site's `progress.json`, so a page without one shows only its name and when it was added. The hub reads it only when it's a plain file of up to 1 MB, not a symlink. A page you haven't opened since it changed has a dot. From 0.22.4 a task done on a board also comes as a [notification](notifications.md#what-youre-told-about) that opens the page, so you hear "3 of 12 done" without opening the plan.
+**Pages** is the second tab, between **Overview** and **+**. Its badge counts pages that changed since you last opened them. The list is grouped by machine, then by project: the folder's git repository, or the repository's main folder when the site sits in a worktree. From 0.22.5 a page that a session added, or that the hub found in a session's folder, is grouped under that session's name instead, and the heading changes when you rename the session. A page whose session Inyon doesn't know keeps the project's name. The filter matches either. From 0.25 the list is grouped by tmux session first: the heading is the tmux session's name and changes when you rename it, and every site made in that session sits under it, whichever conversation made it. The machine is a small label next to the heading when the list spans more than one machine, or when the machine is offline. Pages with no known session group by project after the sessions. Each card shows the page's name, a bar with how many tasks are done out of how many, what the agent is on now and when that board was last updated. The bar, the line and the time come from the site's `progress.json`, so a page without one shows only its name and when it was added. The hub reads it only when it's a plain file of up to 1 MB, not a symlink. A page you haven't opened since it changed has a dot. From 0.22.4 a task done on a board also comes as a [notification](notifications.md#what-youre-told-about) that opens the page, so you hear "3 of 12 done" without opening the plan.
 
 Tap a card to open the page full screen. The bar on top has:
 
-- **Back**, which returns to the list. The phone's own back button does the same, even after you've clicked around inside the page.
+- **Back**, which returns to the list, or from 0.25 to the session you opened the page from. The phone's own back button does the same, even after you've clicked around inside the page.
+- The page's name, and from 0.25 its tmux session under it.
 - The machine's name, a menu of the other pages on that machine and a way to open the machine.
 - **Notes**, from 0.22.4, when the site has a `research` folder with Markdown files in it. See [Notes](#notes).
-- **⋯** with **Reload**, **Plan**, **Mockups** and **Matrix** when the site has them, and **Open in browser** (not for a page on a computer paired with the phone directly). **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
+- **⋯** with **Reload**, **Plan**, **Mockups** and **Matrix** when the site has them, and **Open in browser** (not for a page on a computer paired with the phone directly), which from 0.25 opens the part or note on screen. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
 
 Under the bar, a line says **Sandboxed page: never sign in here**. It stays on screen, so a page can't pass itself off as the app asking for your password.
 
@@ -71,18 +76,18 @@ A few things differ from a page behind a hub:
 
 ## On a desktop
 
-**Pages** sits in the sidebar between **Machines** and **Settings**, with the number of pages, or of changed pages when there are any. The screen has the list on the left as a tree of machines and projects, with a filter (press `/` to jump to it), and the open page on the right. Right-click a row for the same menu as on a phone. Clicking the open page's row again opens it with a new link, as **Reload** does.
+**Pages** sits in the sidebar between **Machines** and **Settings**, with the number of pages, or of changed pages when there are any. The screen has the list on the left as a tree of sessions and projects (of machines and projects before 0.25), with a filter (press `/` to jump to it), and the open page on the right. Right-click a row for the same menu as on a phone. Clicking the open page's row again opens it with a new link, as **Reload** does.
 
 Above the page:
 
 | Control | What it does |
 |---|---|
-| The path | Machine, project and page, so you know which copy you're looking at |
+| The path | Machine, tmux session (or project) and page, so you know which copy you're looking at |
 | **Plan**, **Mockups**, **Matrix** | Jump between a Blueprint site's parts, when it has more than one. A click always loads the part, also the one already selected |
 | **Notes** | From 0.22.4, when the site has notes: open one in place of the page. See [Notes](#notes) |
 | **Fit**, **Phone**, **Tablet**, **Desktop** | Show the page filling the pane, or at 390 × 844, 820 × 1180 or 1440 × 900, scaled down to fit |
 | Reload | Load the page again, with a new link |
-| Open in new tab | The page on its own in a browser tab, with a new 12-hour link |
+| Open in new tab | The page on its own in a browser tab, with a new 12-hour link. From 0.25 it opens the part or note on screen |
 | **⋯** | **Revoke links**, **Copy folder path**, **Show folder** and **Remove** |
 
 A machine's own page lists its pages too, under **Pages on this machine**.

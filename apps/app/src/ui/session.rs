@@ -119,8 +119,10 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         .or_else(|| r.map(|r| if r.pane.agent.is_some() { pane_title(r) } else { terminal_name(r).map_or_else(|| pane_title(r), str::to_string) }))
         .unwrap_or_else(|| "Session".into());
     let cwd = info.as_ref().and_then(|i| i.cwd.clone()).or(r.map(|r| r.pane.cwd.clone()));
-    let cwd_full = cwd.clone();
+    let page_here = super::pages::Here { host: host.clone(), tmux: r.map(|r| r.session.name.clone()), cwd: cwd.clone(), session: None };
     let session_id = page_session(agent_info.and_then(|a| a.session_id.as_deref()), info.as_ref().and_then(|i| i.session_id.as_deref()));
+    let page_here = super::pages::Here { session: session_id.clone(), ..page_here };
+    let side = super::pages::use_side();
     let subtitle = [
         Some(def.map_or("Terminal".to_string(), |d| d.name.clone())),
         r.map(|r| r.host.config.name.clone()),
@@ -191,7 +193,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         }
                         p { class: "session-sub mono truncate", "{subtitle}" }
                     }
-                    super::pages::SessionPages { host: host.clone(), cwd: cwd_full.clone(), session: session_id.clone() }
+                    super::pages::SessionPages { here: page_here.clone(), side }
                     if let Some(s) = shown {
                         span { class: "pill session-pill",
                             span { class: "dot dot-{s.class()}" }
@@ -218,6 +220,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                     }
                 }
             }
+            div { class: "session-body",
             if gone {
                 div { class: "chat-column",
                     div { class: "empty chat-empty",
@@ -232,6 +235,8 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                 div { key: "{CHAT_KEY}", class: "session-view fade-in", ChatView { ctx, connected, controls } }
             } else {
                 div { class: "session-view" }
+            }
+            super::pages::SessionSide { here: page_here, side }
             }
         }
     }
