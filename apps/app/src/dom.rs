@@ -40,6 +40,14 @@ mod imp {
         }
     }
 
+    /// Puts a text box's cursor after its last character.
+    pub fn caret_to_end(id: &str) {
+        if let Some(t) = el(id).and_then(|e| e.dyn_into::<web_sys::HtmlTextAreaElement>().ok()) {
+            let n = t.value().encode_utf16().count() as u32;
+            let _ = t.set_selection_range(n, n);
+        }
+    }
+
     /// A text box grows with its text up to `max_vh` of the screen, then scrolls.
     pub fn autosize(id: &str, max_vh: f64) {
         let Some(e) = el(id) else { return };
@@ -76,15 +84,53 @@ mod imp {
         web_sys::window().and_then(|w| w.match_media("(pointer: coarse)").ok().flatten()).is_some_and(|m| m.matches())
     }
 
-    pub async fn copy(text: &str) -> bool {
-        let Some(nav) = web_sys::window().map(|w| w.navigator()) else { return false };
-        wasm_bindgen_futures::JsFuture::from(nav.clipboard().write_text(text)).await.is_ok()
+    /// `navigator.clipboard`, which browsers only offer on HTTPS or localhost: the hub is often
+    /// reached over plain HTTP on a private network, where it's undefined.
+    fn clipboard() -> Option<web_sys::Clipboard> {
+        let w = web_sys::window()?;
+        if !w.is_secure_context() {
+            return None;
+        }
+        let c = js_sys::Reflect::get(&w.navigator(), &"clipboard".into()).ok()?;
+        (!c.is_undefined() && !c.is_null()).then(|| c.unchecked_into())
     }
 
-    /// The clipboard's text, when the browser lets the page read it.
-    pub async fn paste() -> Option<String> {
-        let nav = web_sys::window()?.navigator();
-        wasm_bindgen_futures::JsFuture::from(nav.clipboard().read_text()).await.ok()?.as_string()
+    /// Copies text, falling back to a hidden text box and `execCommand` where the page has no
+    /// clipboard (lib/clipboard.ts's copyText).
+    pub async fn copy(text: &str) -> bool {
+        if let Some(c) = clipboard() {
+            if wasm_bindgen_futures::JsFuture::from(c.write_text(text)).await.is_ok() {
+                return true;
+            }
+        }
+        copy_by_hand(text)
+    }
+
+    fn copy_by_hand(text: &str) -> bool {
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return false };
+        let Some(ta) = doc.create_element("textarea").ok().and_then(|e| e.dyn_into::<web_sys::HtmlTextAreaElement>().ok()) else { return false };
+        ta.set_value(text);
+        let _ = ta.set_attribute("readonly", "");
+        ta.style().set_css_text("position:fixed;top:0;left:0;opacity:0;pointer-events:none");
+        let focused = doc.active_element().and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok());
+        let Some(body) = doc.body() else { return false };
+        let _ = body.append_child(&ta);
+        ta.select();
+        let _ = ta.set_selection_range(0, text.encode_utf16().count() as u32);
+        let ok = doc.dyn_ref::<web_sys::HtmlDocument>().and_then(|d| d.exec_command("copy").ok()).unwrap_or(false);
+        ta.remove();
+        if let Some(f) = focused {
+            let _ = f.focus();
+        }
+        ok
+    }
+
+    /// The clipboard's text (empty when there's none), or Err when the page can't read it: no
+    /// clipboard over plain HTTP, or the browser said no.
+    pub async fn paste() -> Result<String, ()> {
+        let c = clipboard().ok_or(())?;
+        let v = wasm_bindgen_futures::JsFuture::from(c.read_text()).await.map_err(|_| ())?;
+        Ok(v.as_string().unwrap_or_default())
     }
 
     /// The page is on screen (not a background tab or a phone app in the background).
@@ -545,6 +591,7 @@ mod imp {
     }
     pub fn focus(_id: &str) {}
     pub fn blur(_id: &str) {}
+    pub fn caret_to_end(_id: &str) {}
     pub fn autosize(_id: &str, _max_vh: f64) {}
     pub fn viewport() -> (f64, f64) {
         (1024.0, 768.0)
@@ -561,8 +608,8 @@ mod imp {
     }
     // the terminal's paste, which only the browser build has
     #[allow(dead_code)]
-    pub async fn paste() -> Option<String> {
-        None
+    pub async fn paste() -> Result<String, ()> {
+        Err(())
     }
     pub fn visible() -> bool {
         true

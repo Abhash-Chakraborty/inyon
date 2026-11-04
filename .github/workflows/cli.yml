@@ -118,6 +118,9 @@ jobs:
       - run: bun apps/app/e2e/settings.ts
         env:
           SHOTS: ${{ runner.temp }}/shots
+      - run: bun apps/app/e2e/composer.ts
+        env:
+          SHOTS: ${{ runner.temp }}/shots
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
         with:
