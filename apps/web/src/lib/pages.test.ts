@@ -113,6 +113,9 @@ describe('pages a reply links to', () => {
     const text = 'Added it. Open it in the app at /pages/local/my-plan\nor `/pages/local/my-plan`, and https://hub.example:8080/pages/laptop/robot.'
     expect(linkedPages(text, 'local')).toEqual(['local/my-plan', 'laptop/robot'])
   })
+  test('what inyon blueprints add prints from 0.25, and what it printed before, side by side', () => {
+    expect(linkedPages('at /blueprints/local/my-plan and /pages/laptop/robot, then https://hub.example/blueprints/local/my-plan', 'local')).toEqual(['local/my-plan', 'laptop/robot'])
+  })
   test("a session through a paired hub names that hub's machines", () => {
     expect(linkedPages('at /pages/local/my-plan', 'hub:h1/laptop')).toEqual(['hub:h1/local/my-plan'])
   })

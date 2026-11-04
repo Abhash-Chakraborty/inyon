@@ -835,7 +835,7 @@ pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Optio
 
 /// Takes every entry with this slug out of `file`, and returns them.
 pub fn remove(file: &Path, slug: &str) -> Result<Vec<Value>, String> {
-    let missing = || format!("There's no page called \"{slug}\" on this machine. See them with: inyon pages ls");
+    let missing = || format!("There's no blueprint called \"{slug}\" on this machine. See them with: inyon blueprints ls");
     if !file.exists() {
         return Err(missing());
     }
@@ -973,8 +973,8 @@ pub fn find_command(dirs: &[PathBuf], by: &str) -> Outcome {
     let by = if !by.is_empty() && by.len() <= 32 && by.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') { by } else { "found" };
     let found = find(&pages_file(), &paths::home(), dirs, by, crate::state::now_ms() as u64)?;
     let message = match found.len() {
-        0 => "No new pages.".to_string(),
-        n => format!("Added {n} page{}: {}", if n == 1 { "" } else { "s" }, found.iter().map(|p| field(p, "name")).collect::<Vec<_>>().join(", ")),
+        0 => "No new blueprints.".to_string(),
+        n => format!("Added {n} blueprint{}: {}", if n == 1 { "" } else { "s" }, found.iter().map(|p| field(p, "name")).collect::<Vec<_>>().join(", ")),
     };
     Ok(json!({ "found": found, "message": message }))
 }
@@ -1000,29 +1000,39 @@ fn trouble(page: &Value, home: &str, real_home: &str) -> Option<String> {
 /// The page's path in the app. Only the hub's own machine knows it: the hub gives a machine joined
 /// to it an id of its own, which that machine never learns.
 fn app_link(slug: &str) -> String {
-    format!("/pages/{LOCAL_HOST}/{slug}")
+    format!("/blueprints/{LOCAL_HOST}/{slug}")
 }
 
 /// Where a machine without a hub of its own has its pages shown: the hub it's joined to, or (paired
 /// with the phone only, say) nowhere yet.
 fn not_hub_note(joined: bool) -> &'static str {
     if joined {
-        "This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later)."
+        "This machine doesn't run a hub. The hub it's joined to shows its blueprints (hub 0.22 or later)."
     } else {
-        "This machine doesn't run a hub and isn't joined to one, so the app can't open this page. Add it to a hub (Machines > Add a machine) to show its pages there."
+        "This machine doesn't run a hub and isn't joined to one, so the app can't open this blueprint. Add it to a hub (Machines > Add a machine) to show its blueprints there."
     }
 }
 
-/// What `add` says. Without a hub here the page opens through the hub this machine is joined to,
-/// which gives it an address of its own, so there's no app path to hand over.
-fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bool, hub: bool, joined: bool) -> Vec<String> {
+/// What `add` says: the heading the app lists the page under (see [`group`]) and its machine.
+/// Without a hub here the page opens through the hub this machine is joined to, which gives it an
+/// address of its own, so there's no app path to hand over.
+fn added_lines(name: &str, machine: &str, group: &str, slug: &str, changed: bool, hub: bool, joined: bool) -> Vec<String> {
     let again = if changed { "" } else { " (already listed)" };
     if hub {
-        vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), format!("Open it in the app at {}", app_link(slug))]
+        vec![format!("\"{name}\" is in Inyon: Blueprints > {group} on {machine}{again}"), format!("Open it in the app at {}", app_link(slug))]
     } else if joined {
-        vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), not_hub_note(true).into()]
+        vec![format!("\"{name}\" is in Inyon: Blueprints > {group} on {machine}{again}"), not_hub_note(true).into()]
     } else {
-        vec![format!("\"{name}\" is listed on {machine}, under {project}{again}."), not_hub_note(false).into()]
+        vec![format!("\"{name}\" is listed on {machine}, under {group}{again}."), not_hub_note(false).into()]
+    }
+}
+
+/// The heading the app lists a page under: the tmux session it was added from, else its project's
+/// folder.
+pub fn group(page: &Value) -> String {
+    match page.get("tmux").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+        Some(t) => t.to_string(),
+        None => paths::basename(field(page, "project").trim_end_matches(['/', '\\'])).to_string(),
     }
 }
 
@@ -1036,10 +1046,10 @@ pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcom
     let a = add(&pages_file(), &paths::home(), dir, name, slug, by, &owner, now)?;
     let machine = inyon_engine::hostname();
     let slug = field(&a.page, "slug").to_string();
-    let project = paths::basename(field(&a.page, "project").trim_end_matches(['/', '\\'])).to_string();
+    let group = group(&a.page);
     let hub = crate::engine::hub_here();
     let joined = !hub && crate::commands::joined();
-    let lines = added_lines(field(&a.page, "name"), &machine, &project, &slug, a.changed, hub, joined);
+    let lines = added_lines(field(&a.page, "name"), &machine, &group, &slug, a.changed, hub, joined);
     let mut out = json!({
         "page": a.page,
         "host": LOCAL_HOST,
@@ -1101,9 +1111,9 @@ pub fn list_command() -> Outcome {
     let machine = inyon_engine::hostname();
     let mut lines = Vec::new();
     if pages.is_empty() {
-        lines.push("No pages on this machine yet. Add a site's folder with: inyon pages add <folder>".to_string());
+        lines.push("No blueprints on this machine yet. Add a site's folder with: inyon blueprints add <folder>".to_string());
     } else {
-        lines.push(format!("Pages on {machine}:"));
+        lines.push(format!("Blueprints on {machine}:"));
         let w_slug = pages.iter().map(|p| field(p, "slug").chars().count()).max().unwrap_or(0);
         let w_name = pages.iter().map(|p| field(p, "name").chars().count()).max().unwrap_or(0).min(40);
         for p in &pages {
@@ -1114,7 +1124,7 @@ pub fn list_command() -> Outcome {
             }
             lines.push(line);
         }
-        lines.push(if hub { format!("Open one in the app under Pages, or at {}", app_link("<slug>")) } else { format!("Open one in the app under Pages > {machine}") });
+        lines.push(if hub { format!("Open one in the app under Blueprints, or at {}", app_link("<slug>")) } else { format!("Open one in the app under Blueprints, on {machine}") });
     }
     if skipped > 0 {
         lines.push(format!(
@@ -1524,6 +1534,16 @@ mod tests {
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
+    }
+
+    #[test]
+    fn add_names_the_heading_the_app_lists_the_page_under() {
+        let page = json!({ "slug": "robot", "project": "/home/me/code/robot/", "tmux": "cardboard" });
+        assert_eq!(group(&page), "cardboard");
+        assert_eq!(group(&json!({ "project": "C:\\Dev\\Robot" })), "Robot");
+        assert_eq!(group(&json!({ "project": "/srv/x", "tmux": " " })), "x");
+        let said = added_lines("Robot plan", "laptop", "cardboard", "robot", true, true, false);
+        assert_eq!(said, ["\"Robot plan\" is in Inyon: Blueprints > cardboard on laptop", "Open it in the app at /blueprints/local/robot"]);
     }
 
     #[test]

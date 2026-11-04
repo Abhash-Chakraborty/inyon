@@ -734,7 +734,7 @@ impl Desk {
             "pageAdd" => {
                 let v = crate::pages::add_command(Path::new(&text("path")), None, None)?;
                 let name = v.get("page").and_then(|p| p.get("name")).and_then(Value::as_str).unwrap_or("The page");
-                Ok(json!(format!("\"{name}\" is in Pages.")))
+                Ok(json!(format!("\"{name}\" is in Blueprints.")))
             }
             "pageRemove" => crate::pages::remove_command(&text("slug")).map(|v| v.get("message").cloned().unwrap_or_default()),
             "temp" => Ok(serde_json::to_value(crate::temp::list(crate::state::now_ms())).unwrap_or_default()),

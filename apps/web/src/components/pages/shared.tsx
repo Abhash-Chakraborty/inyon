@@ -22,10 +22,10 @@ import { useOpened } from '../../lib/useOpened.ts'
 import { publicFile } from '../../lib/base.ts'
 import { bridgeFrame, virtualSrc } from '../../lib/pageBridge.ts'
 
-/** The docs page about Pages, for "How pages work". */
+/** The docs page about Blueprints, for "How blueprints work". */
 export const PAGES_DOCS = 'https://inyon.tech/docs/pages/'
 /** The one command an agent runs to add a page, as the empty states show it. */
-export const ADD_COMMAND = 'inyon pages add ./private/plans/my-plan --name "My plan"'
+export const ADD_COMMAND = 'inyon blueprints add ./private/plans/my-plan --name "My plan"'
 
 // ---------- machines ----------
 
@@ -270,7 +270,7 @@ export async function openInBrowser(p: Page) {
 export async function revokeLinks(p: Page) {
   const ok = await confirmAction({
     title: `Revoke links to “${p.name}”?`,
-    body: 'Every link to this page stops working: tabs on other devices, links you copied, and the one in an open viewer, which gets a new one right away.',
+    body: 'Every link to this blueprint stops working: tabs on other devices, links you copied, and the one in an open viewer, which gets a new one right away.',
     yes: 'Revoke links',
     danger: true,
   })
@@ -341,11 +341,11 @@ export function PageSheets() {
 function FolderSheet({ page: p, open, onClose }: { page: Page; open: boolean; onClose: () => void }) {
   const machine = useMachines()(p.host)
   const rows: [string, React.ReactNode, boolean?][] = [
-    ['Page', p.name],
+    ['Blueprint', p.name],
     ['Folder', p.folder, true],
     ['Machine', machine.online ? machine.name : `${machine.name} · offline`],
     ['Project', projectName(p.project)],
-    ['Added by', `${p.by === 'cli' ? 'inyon pages add' : p.by === 'app' ? 'the app' : p.by} · ${new Date(p.added).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`],
+    ['Added by', `${p.by === 'cli' ? 'inyon blueprints add' : p.by === 'app' ? 'the app' : p.by} · ${new Date(p.added).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`],
   ]
   return (
     <Sheet
@@ -372,7 +372,7 @@ function FolderSheet({ page: p, open, onClose }: { page: Page; open: boolean; on
           </div>
         ))}
       </dl>
-      <p className="mt-3 text-[13px] text-fg-3">Remove takes the page out of Inyon. The folder and its files stay.</p>
+      <p className="mt-3 text-[13px] text-fg-3">Remove takes the blueprint out of Inyon. The folder and its files stay.</p>
     </Sheet>
   )
 }
@@ -434,7 +434,7 @@ function AddFolderSheet({ open, onClose }: { open: boolean; onClose: () => void 
         </Field>
         {error && <p role="alert" className="text-[13px] text-danger">{error}</p>}
         <p className="text-[13px] text-fg-3">
-          Agents do this for you with <span className="font-mono text-[12px]">inyon pages add</span>.
+          Agents do this for you with <span className="font-mono text-[12px]">inyon blueprints add</span>.
         </p>
       </form>
     </Sheet>
@@ -480,14 +480,14 @@ export function PageRows({ pages, where, className }: { pages: Page[]; where?: b
   )
 }
 
-/** "Pages on this machine", on a machine's page; nothing when it has none. */
+/** "Blueprints on this machine", on a machine's page; nothing when it has none. */
 export function MachinePages({ host }: { host: string }) {
   const all = usePages((s) => s.pages)
   const pages = useMemo(() => (all ?? []).filter((p) => p.host === host).sort((a, b) => changedAt(b) - changedAt(a)), [all, host])
   if (!pages.length) return null
   return (
     <section className="mt-8">
-      <SectionLabel>Pages on this machine</SectionLabel>
+      <SectionLabel>Blueprints on this machine</SectionLabel>
       <PageRows pages={pages} />
     </section>
   )

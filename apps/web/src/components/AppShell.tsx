@@ -172,7 +172,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
           )}
         </NavLink>
         <NavLink to="/pages" className={({ isActive }) => item(isActive)}>
-          <PanelsTopLeft className="size-4" /> Pages
+          <PanelsTopLeft className="size-4" /> Blueprints
           {changed > 0 ? (
             <span className="tabular animate-pop ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-fg px-1.5 font-mono text-[12px] leading-none font-semibold text-bg" title={`${changed} changed since you last opened ${changed === 1 ? 'it' : 'them'}`}>
               {changed}
@@ -211,7 +211,7 @@ function TabBar({ onNew }: { onNew: () => void }) {
             </span>
           )}
         </span>
-        Pages
+        Blueprints
       </NavLink>
       <button type="button" onClick={onNew} aria-label="New session" className="flex justify-center">
         <span className="press flex h-10 w-14 items-center justify-center rounded-full bg-fg text-bg">
@@ -234,7 +234,7 @@ function TabBar({ onNew }: { onNew: () => void }) {
  * Which page is showing, for the page-in animation. Sessions share one key: moving between them, or
  * between a session's chat and terminal, keeps the page mounted (and its scroll and state).
  */
-export const pageKey = (path: string) => (path.startsWith('/m/') ? 'session' : /^\/pages(\/|$)/.test(path) ? 'pages' : path.replace(/\/+$/, '') || '/')
+export const pageKey = (path: string) => (path.startsWith('/m/') ? 'session' : /^\/(pages|blueprints)(\/|$)/.test(path) ? 'pages' : path.replace(/\/+$/, '') || '/')
 
 /** Pages that changed since they were last opened, for the badges. */
 const changedCount = (s: ReturnType<typeof usePages.getState>) => s.pages?.filter((p) => isChanged(p, s.seen)).length ?? 0

@@ -171,20 +171,20 @@ From 0.23.1, while no app on screen has the hub open, it checks its machines eve
 
 The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash, machines, paired phones, settings, drafts, and the last state of each offline machine. [Configuration](configuration.md) lists every setting.
 
-## Pages
+## Blueprints
 
-From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else. [Security](security.md#pages) says how a page is kept away from your sign-in.
+From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else. [Security](security.md#blueprints) says how a page is kept away from your sign-in.
 
 ## The new app at /next
 
-From 0.24 the hub also serves an early copy of Inyon's next app, written in Rust, at `/next` on its own address (for example `https://hub.example/next`). It uses the same password and sign-in as the web app, and so far has the sign-in, the Overview, a session's chat and terminal, the Machines screen and, from 0.25, Pages, Settings and Temp files:
+From 0.24 the hub also serves an early copy of Inyon's next app, written in Rust, at `/next` on its own address (for example `https://hub.example/next`). It uses the same password and sign-in as the web app, and so far has the sign-in, the Overview, a session's chat and terminal, the Machines screen and, from 0.25, Blueprints, Settings and Temp files:
 
 - the conversation, with replies, tool calls and code blocks you can copy, and **Earlier messages** as you scroll up
 - the message box: Enter sends, a message sent while the agent works waits in its queue, and Esc in an empty box stops the agent
 - an agent's question or approval as a card you answer by tapping a choice or pressing its number, with the model, effort and mode line back once it's answered
 - the terminal, under **Chat · Terminal** in the session header, as the web app has it (see [The terminal](terminal.md)): the key bar, text size, typing in any language through your keyboard's input method, and a right-click menu (a long press on a phone) with **Copy**, **Paste** and **Select all**. A plain shell, or an agent Inyon doesn't read as chat, opens on its terminal.
 - **Machines** and each machine's page, as [Machines](machines.md) describes them: adding a machine with a pairing command or over SSH, **New session**, the **Sessions**, **Setup**, **Config**, **Uploads** and **Integration** tabs, signing an agent in and OpenCode's providers, updating a machine's `inyon`, renaming and removing, **Phone** for the code your phone scans, and [Can't connect?](troubleshooting.md#cant-connect) for a machine that isn't connected or for the hub itself (click **Reconnecting**). Right-click a machine or a session, or press and hold on a phone, for its menu.
-- **Pages**, as [Pages](pages.md) describes them: the list by machine and project with its badge, the filter, live progress, the sandboxed viewer with **Plan**, **Mockups**, **Matrix**, **Notes** and the device sizes, **Add a folder**, **Show folder**, **Revoke links** and **Remove** with **Undo**. A machine's page lists its pages under **Pages on this machine**, a reply that names a page shows it as a card under the message, and a session with pages of its own has a **Pages** button in its header. The list follows the hub as pages change, without a refresh. The pages on a phone's own computers are only in the Android app.
+- **Blueprints** (called Pages before 0.25), as [Blueprints](pages.md) describes them: the list by tmux session with its badge, the filter, live progress, the sandboxed viewer with **Plan**, **Mockups**, **Matrix**, **Notes** and the device sizes, **Add a folder**, **Show folder**, **Revoke links** and **Remove** with **Undo**. A machine's page lists its pages under **Blueprints on this machine**, a reply that names a page shows it as a card under the message, and a session with pages of its own has a **Blueprints** button in its header. The list follows the hub as pages change, without a refresh. The pages on a phone's own computers are only in the Android app.
 
 - **Settings**, as [Settings](settings.md) describes it for the web app on a computer, with the same sections and the side list from desktop width: the theme and the rest of **Appearance** (kept in the browser with the web app's, so the two agree), the agents with your own **custom agents**, the [companion agent](companion-agent.md), **Live numbers**, uploads, notifications, machines, your other devices, paired phones and [companion apps](companions.md) with their pairing code, the password, **Sign out**, the hub's **Update** and **About**. Right-click a custom agent, a paired phone or a companion app, or press and hold on a phone, for its menu.
 - **Temp files**, as [Temp files](temp-files.md) describes them, at `/next/temp` and in a machine's **Temp files** tab.
@@ -196,6 +196,6 @@ A few things are still only in the web app: pinning and parking sessions, and in
 
 ## The hub in Rust
 
-From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Pages carry over both ways. It runs on Linux and macOS.
+From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Blueprints carry over both ways. It runs on Linux and macOS.
 
 A hub set up by 0.20 or earlier moves to it with its next `inyon update` or `inyon hub restart`. Up to 0.22, `INYON_HUB_IMPL=bun` put a hub back on the Bun hub; 0.23 removed it, so the line in `hub.env` is no longer read and `inyon` says so (see [The Bun engine, removed in 0.23](install.md#the-bun-engine-removed-in-0-23)). A hub can't run from source on Bun either from 0.23; build `inyon` instead (see [From source](#from-source)).

@@ -93,7 +93,7 @@
     openUrl: () => null,
     openPath: () => null,
     pickFolder: () => 'C:\\Users\\sam\\work\\plans\\pricing',
-    pageAdd: (a) => { S.pages.push({ slug: 'pricing', name: 'Pricing', path: a.path, project: 'plans', url: '' }); return '"Pricing" is in Pages.'; },
+    pageAdd: (a) => { S.pages.push({ slug: 'pricing', name: 'Pricing', path: a.path, project: 'plans', url: '' }); return '"Pricing" is in Blueprints.'; },
     pageRemove: (a) => { S.pages = S.pages.filter((p) => p.slug !== a.slug); return null; },
     temp: () => new Promise((r) => setTimeout(() => r(JSON.parse(JSON.stringify(temp))), 300)),
     tempFiles: () => files,

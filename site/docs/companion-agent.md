@@ -34,7 +34,7 @@ It works through the `inyon` command, the same one you have:
 | `inyon read <machine>/<session>` | the latest messages of a session's conversation |
 | `inyon send <machine>/<session> "text"` | a message for that agent, held until it's free |
 | `inyon answer <machine>/<session> <choice>` | answers the question an agent is asking, by number or by words from the choice |
-| `inyon pages --hub` | the pages your agents published |
+| `inyon blueprints --hub` | the sites your agents published |
 
 [The CLI page](cli.md#sessions-and-messages) has the details of each.
 
@@ -49,7 +49,7 @@ Inyon rewrites both files each time it starts the companion, as long as their fi
 
 ## What asks first
 
-For Claude Code, Inyon writes `~/.inyon/companion/.claude/settings.json` when it isn't there yet. It lets the commands that only read run without asking (`inyon sessions`, `inyon read`, `inyon hub machines`, `inyon pages`, `inyon docs`). `inyon send` and `inyon answer` still ask, so each one shows as a question in the app and on Legato's island, and nothing goes out until you allow it. A `settings.json` you wrote yourself is left as it is, so if it allows `inyon send` or `inyon answer`, those run without asking.
+For Claude Code, Inyon writes `~/.inyon/companion/.claude/settings.json` when it isn't there yet. It lets the commands that only read run without asking (`inyon sessions`, `inyon read`, `inyon hub machines`, `inyon blueprints` and `inyon pages`, `inyon docs`). `inyon send` and `inyon answer` still ask, so each one shows as a question in the app and on Legato's island, and nothing goes out until you allow it. A `settings.json` you wrote yourself is left as it is, so if it allows `inyon send` or `inyon answer`, those run without asking.
 
 Codex starts with `--sandbox workspace-write` and network access turned on, so the `inyon` command can reach the hub on the same computer. Inyon writes a rule to `~/.inyon/companion/.codex/rules/companion.rules` that makes `inyon send` and `inyon answer` ask first. Codex reads a folder's rules only once the folder is trusted, so Inyon also adds the folder to `~/.codex/config.toml` as trusted. If that file already names the folder and doesn't trust it, Inyon leaves it alone and starts Codex with `--ask-for-approval untrusted`, so it asks before every command that isn't known to be safe, reading ones included.
 

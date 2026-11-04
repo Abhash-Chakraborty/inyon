@@ -174,7 +174,7 @@ export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: {
             { v: 'changes', label: 'Changes' },
             { v: 'files', label: 'Files' },
             { v: 'preview', label: 'Preview' },
-            ...(pages.length || tab === 'pages' ? [{ v: 'pages' as const, label: 'Pages' }] : []),
+            ...(pages.length || tab === 'pages' ? [{ v: 'pages' as const, label: 'Blueprints' }] : []),
           ]} />
       </div>
       <div key={tab} className="animate-fade-in -mx-5 flex min-h-[50dvh] flex-col">

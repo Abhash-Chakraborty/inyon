@@ -42,7 +42,7 @@ From 0.22. The `inyon` skill teaches a coding agent how your setup fits together
 
 - find out what the computer is with `inyon status --json`: a hub, a machine joined to one, paired with the phone, or not set up;
 - read the page that covers the task with [`inyon docs <topic>`](cli.md#docs) before acting;
-- show you a site with `inyon pages add` and hand over where it sits in the app, not a URL;
+- show you a site with `inyon pages add` (`inyon blueprints add` from 0.25) and hand over where it sits in the app, not a URL;
 - see the hub's sessions with `inyon sessions`, and message an agent on another machine with [`inyon send`](cli.md#sessions-and-messages) rather than typing into its tmux pane;
 - leave tokens to you: a machine is added with the command from the hub's **Machines → Add a machine**, run by you;
 - ask before anything that cuts you off, such as `inyon stop`, `disconnect` or `hub stop`, and never print what's in `~/.inyon`.
@@ -67,7 +67,7 @@ The skill starts from a working sample site for a made-up grocery app, then repl
 | Script | What it does |
 |---|---|
 | `new-site.mjs <dir> --name "App"` | Copies the template into a new folder and marks it with `.inyon-page.json`. From 0.22 `--no-mockups` leaves out the screens and every link to them, for a plan with no UI. Inside a git repository the folder can be left out: it's then `private/plans/<slug>` in the repository's main folder, also from a worktree |
-| `publish.mjs <dir> --name "Plan"` | Puts the site under [Pages](pages.md) on a computer with Inyon set up but no `inyon` command on the path. When an agent's sandbox can't write to `~/.inyon`, it prints a line for you to run in your own terminal: the `inyon` command by its full path, or the same `publish.mjs` line when the command isn't installed |
+| `publish.mjs <dir> --name "Plan"` | Puts the site under [Blueprints](pages.md) on a computer with Inyon set up but no `inyon` command on the path. When an agent's sandbox can't write to `~/.inyon`, it prints a line for you to run in your own terminal: the `inyon` command by its full path, or the same `publish.mjs` line when the command isn't installed |
 | `serve.mjs <dir> --host <ip> --port 8790` | Serves the site with the same sandbox Inyon puts around a page, so a site that works here works in the app. Use a private address, such as a VPN or home network IP, to open it on your phone |
 | `stills.mjs <dir> --audit` | Saves gallery pictures of every screen and reports errors and dead buttons |
 | `shoot.mjs <url> <out.png> <w> <h> <light\|dark>` | One screenshot, with optional clicks before it. From 0.22 `FULL=1` takes the whole page, with lazy images loaded first |
@@ -75,6 +75,6 @@ The skill starts from a working sample site for a made-up grocery app, then repl
 
 The scripts need Node 18 or newer and Playwright with Chromium (`bun add -d playwright`, then `bunx playwright install chromium`). From 0.22, without Playwright's Chromium they use Edge or Chrome where it's usually installed. With [sharp](https://sharp.pixelplumbing.com) installed, the pictures are WebP. Without it, they're PNG.
 
-From 0.20 the skill publishes a finished site to Inyon with `inyon pages add`, or `publish.mjs` without the `inyon` command, so it opens in the app under [Pages](pages.md) with no server to run. `serve.mjs` is for a computer without Inyon, and for one with Inyon but no hub of its own. From 0.22 a computer joined to a hub needs no server: the hub shows its pages, and the skill hands over where the page sits in the app (it serves the site too when the hub is older than 0.22). A computer that has no hub and isn't joined to one still gets its page listed, and the skill serves the site and hands over that address. Every file a site uses sits in its own folder and is linked with a relative path, because a page in Inyon can't load anything from the internet.
+From 0.20 the skill publishes a finished site to Inyon with `inyon pages add`, or `publish.mjs` without the `inyon` command, so it opens in the app under [Blueprints](pages.md) with no server to run. `serve.mjs` is for a computer without Inyon, and for one with Inyon but no hub of its own. From 0.22 a computer joined to a hub needs no server: the hub shows its pages, and the skill hands over where the page sits in the app (it serves the site too when the hub is older than 0.22). A computer that has no hub and isn't joined to one still gets its page listed, and the skill serves the site and hands over that address. Every file a site uses sits in its own folder and is linked with a relative path, because a page in Inyon can't load anything from the internet.
 
 > **Note:** A plan page often describes unreleased work. Serve it on a private address rather than the open internet, and keep the folder out of public repositories.

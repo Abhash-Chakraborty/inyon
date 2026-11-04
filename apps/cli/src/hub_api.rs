@@ -230,19 +230,10 @@ pub fn pages_command() -> Outcome {
         }
     };
     let lines = if pages.is_empty() {
-        vec!["No pages on the hub's machines yet.".to_string()]
+        vec!["No blueprints on the hub's machines yet.".to_string()]
     } else {
-        let rows: Vec<Vec<String>> = pages
-            .iter()
-            .map(|p| {
-                vec![
-                    s(p, "name").into(),
-                    machine(s(p, "host")),
-                    paths::basename(s(p, "project").trim_end_matches(['/', '\\'])).into(),
-                    format!("/pages/{}/{}", s(p, "host"), s(p, "slug")),
-                ]
-            })
-            .collect();
+        let rows: Vec<Vec<String>> =
+            pages.iter().map(|p| vec![s(p, "name").into(), machine(s(p, "host")), crate::pages::group(p), format!("/blueprints/{}/{}", s(p, "host"), s(p, "slug"))]).collect();
         columns(&rows)
     };
     Ok(json!({ "hub": a.url, "pages": pages, "message": lines.join("\n") }))

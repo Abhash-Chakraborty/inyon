@@ -127,10 +127,10 @@ function FrameState({ page, machine, error, onRetry, onBack }: { page: Page; mac
   if (!error) return <Waiting shape="panel" count={2} label={`Opening “${page.name}”`} className="w-full max-w-[560px] self-start p-5" />
   const gone = error instanceof ApiError && error.status === 404
   return (
-    <StateCard icon={gone ? <FolderOpen className="size-5" /> : <CloudOff className="size-5" />} title={gone ? 'This page is gone' : `Couldn't open “${page.name}”`}>
+    <StateCard icon={gone ? <FolderOpen className="size-5" /> : <CloudOff className="size-5" />} title={gone ? 'This blueprint is gone' : `Couldn't open “${page.name}”`}>
       {gone ? `It was taken off the list on ${machine.name}.` : error.message}
       <div className="mt-4 flex flex-wrap gap-2">
-        {gone ? onBack && <Button size="sm" onClick={onBack}><ChevronLeft className="size-3.5" /> Back to Pages</Button> : <Button size="sm" onClick={onRetry}><RotateCw className="size-3.5" /> Try again</Button>}
+        {gone ? onBack && <Button size="sm" onClick={onBack}><ChevronLeft className="size-3.5" /> Back to Blueprints</Button> : <Button size="sm" onClick={onRetry}><RotateCw className="size-3.5" /> Try again</Button>}
       </div>
     </StateCard>
   )
@@ -202,7 +202,7 @@ function NoPages({ wide }: { wide?: boolean }) {
   return (
     <div className={clsx('animate-fade-in', wide ? 'max-w-[460px] p-7' : 'rounded-3xl border border-line bg-elev p-5 shadow-card')}>
       {wide && <span className="mb-3 flex size-10 items-center justify-center rounded-xl border border-line bg-elev text-fg-2"><PanelsTopLeft className="size-[18px]" /></span>}
-      <h2 className="text-[19px] font-semibold tracking-[-0.02em]">No pages yet</h2>
+      <h2 className="text-[19px] font-semibold tracking-[-0.02em]">No blueprints yet</h2>
       <p className="mt-1.5 mb-4 text-[14px] leading-relaxed text-fg-2">When an agent builds a plan or mockups, it runs one command and the page shows up here{wide ? ', under its machine and project' : ''}.</p>
       <AddCommand />
       <div className="mt-4 flex flex-wrap gap-2">
@@ -224,7 +224,7 @@ function ListHeader({ right }: { right?: React.ReactNode }) {
     <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg">
       <div className="flex h-[52px] items-center gap-1 pr-1.5 pl-3 lg:px-7">
         <span className="md:hidden"><Logo /></span>
-        <h1 className="min-w-0 flex-1 truncate px-1 text-[15px] font-semibold tracking-tight">Pages</h1>
+        <h1 className="min-w-0 flex-1 truncate px-1 text-[15px] font-semibold tracking-tight">Blueprints</h1>
         {right}
       </div>
     </header>
@@ -248,18 +248,18 @@ function PhoneList() {
         right={
           !!pages?.length && (
             <>
-              <IconButton label="Filter pages" active={filtering} className="size-11" onClick={() => (setFiltering(!filtering), setQ(''))}><Search className="size-[18px]" /></IconButton>
+              <IconButton label="Filter blueprints" active={filtering} className="size-11" onClick={() => (setFiltering(!filtering), setQ(''))}><Search className="size-[18px]" /></IconButton>
               <IconButton label="Add a folder" className="size-11" onClick={() => openPageSheet({ kind: 'add' })}><FolderPlus className="size-[18px]" /></IconButton>
             </>
           )
         }
       />
       <div className="mx-auto w-full max-w-[720px] px-3 pt-2 pb-8">
-        {filtering && <FilterInput value={q} onChange={setQ} placeholder="Filter pages" className="my-1.5 h-11" />}
+        {filtering && <FilterInput value={q} onChange={setQ} placeholder="Filter blueprints" className="my-1.5 h-11" />}
         {error && <p role="alert" className="mx-1 my-2 text-[13px] text-danger">{error}</p>}
         <NoticeLines className="mx-1 my-2" />
         {pages === null ? (
-          <Waiting shape="cards" count={2} label="Loading pages" className="pt-3" />
+          <Waiting shape="cards" count={2} label="Loading blueprints" className="pt-3" />
         ) : !pages.length ? (
           <div className="pt-2"><NoPages /></div>
         ) : !groups.length ? (
@@ -304,7 +304,7 @@ function MachineHeading({ m, small }: { m: PageMachine; small?: boolean }) {
 function PageCard({ p, m, changed }: { p: Page; m: PageMachine; changed: boolean }) {
   const nav = useNavigate()
   const items = () => pageMenu(p, m, nav)
-  const open = () => (m.online ? nav(pageHref(p.host, p.slug)) : toast({ title: `${m.name} is offline`, body: 'This page opens when it’s back.', tone: 'warn' }))
+  const open = () => (m.online ? nav(pageHref(p.host, p.slug)) : toast({ title: `${m.name} is offline`, body: 'This blueprint opens when it’s back.', tone: 'warn' }))
   return (
     <div
       role="link"
@@ -372,7 +372,7 @@ function PhoneViewer({ id }: { id: string }) {
     <div className="animate-page flex min-h-0 flex-1 flex-col bg-bg">
       <header className="pt-safe shrink-0 border-b border-line bg-bg">
         <div className="flex h-11 items-center gap-0.5 px-0.5">
-          <IconButton label="Back to Pages" className="size-11 rounded-xl" onClick={back}><ChevronLeft className="size-5" /></IconButton>
+          <IconButton label="Back to Blueprints" className="size-11 rounded-xl" onClick={back}><ChevronLeft className="size-5" /></IconButton>
           <h1 className="min-w-0 flex-1 truncate pl-0.5 text-[15px] font-semibold tracking-[-0.01em]">{page?.name ?? ''}</h1>
           {m && (
             <Menu
@@ -418,7 +418,7 @@ function PhoneViewer({ id }: { id: string }) {
           forgot ? (
             <StateCard icon={<Link2Off className="size-5" />} title={`${hubName(hubIdOf(id))} forgot this phone`}>
               Pair it again from the hub to open its pages here.
-              <div className="mt-4"><Button size="sm" onClick={back}><ChevronLeft className="size-3.5" /> Back to Pages</Button></div>
+              <div className="mt-4"><Button size="sm" onClick={back}><ChevronLeft className="size-3.5" /> Back to Blueprints</Button></div>
             </StateCard>
           ) : unreached ? (
             <StateCard icon={<CloudOff className="size-5 text-danger" />} title="The hub is out of reach">
@@ -426,9 +426,9 @@ function PhoneViewer({ id }: { id: string }) {
               <div className="mt-4"><Button size="sm" onClick={() => void loadPages()}><RotateCw className="size-3.5" /> Try again</Button></div>
             </StateCard>
           ) : loaded ? (
-            <StateCard icon={<FolderOpen className="size-5" />} title="This page is gone">
+            <StateCard icon={<FolderOpen className="size-5" />} title="This blueprint is gone">
               It isn't on the list any more.
-              <div className="mt-4"><Button size="sm" onClick={back}><ChevronLeft className="size-3.5" /> Back to Pages</Button></div>
+              <div className="mt-4"><Button size="sm" onClick={back}><ChevronLeft className="size-3.5" /> Back to Blueprints</Button></div>
             </StateCard>
           ) : (
             <Waiting shape="panel" count={2} label="Opening" className="p-5" />
@@ -483,9 +483,9 @@ function PagesDesktop({ selected }: { selected?: string }) {
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[280px_minmax(0,1fr)]">
-      <section aria-label="Pages" className="pt-safe flex min-h-0 flex-col border-r border-line bg-bg">
+      <section aria-label="Blueprints" className="pt-safe flex min-h-0 flex-col border-r border-line bg-bg">
         <div className="flex h-[52px] shrink-0 items-center gap-0.5 pr-2 pl-4">
-          <h1 className="flex-1 text-[18px] font-semibold tracking-[-0.03em]">Pages</h1>
+          <h1 className="flex-1 text-[18px] font-semibold tracking-[-0.03em]">Blueprints</h1>
           <IconButton label="Add a folder" onClick={() => openPageSheet({ kind: 'add' })}><FolderPlus className="size-4" /></IconButton>
         </div>
         {!!pages?.length && (
@@ -497,7 +497,7 @@ function PagesDesktop({ selected }: { selected?: string }) {
           {error && <p role="alert" className="px-2 py-2 text-[13px] text-danger">{error}</p>}
           <NoticeLines className="px-2 py-2" />
           {pages === null ? (
-            <Waiting shape="rows" label="Loading pages" className="px-1" />
+            <Waiting shape="rows" label="Loading blueprints" className="px-1" />
           ) : !pages.length ? (
             <div className="px-3 py-4 text-[13px] text-fg-3">Nothing here yet.</div>
           ) : !groups.length ? (
@@ -532,7 +532,7 @@ function PagesDesktop({ selected }: { selected?: string }) {
         {/* the empty viewer shows the whole command already */}
         {!!pages?.length && (
           <div className="shrink-0 border-t border-line px-4 py-2.5 text-[12px] text-fg-3">
-            Agents add pages with <code className="font-mono text-[12px] text-fg-2">inyon pages add</code>
+            Agents add blueprints with <code className="font-mono text-[12px] text-fg-2">inyon blueprints add</code>
           </div>
         )}
       </section>
@@ -544,7 +544,7 @@ function PagesDesktop({ selected }: { selected?: string }) {
         ) : page ? (
           <DesktopViewer key={page.id} page={page} m={machine(page.host)} />
         ) : pages && selected ? (
-          <div className="flex flex-1 items-center justify-center"><Empty icon={<FolderOpen className="size-5" />} title="This page is gone">It isn't on the list any more. Pick another on the left.</Empty></div>
+          <div className="flex flex-1 items-center justify-center"><Empty icon={<FolderOpen className="size-5" />} title="This blueprint is gone">It isn't on the list any more. Pick another on the left.</Empty></div>
         ) : (
           <div className="flex-1" />
         )}
@@ -630,7 +630,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
           <span className="text-fg-3">/</span>
           <b className="truncate font-semibold text-fg">{page.name}</b>
         </nav>
-        {v.parts.length > 1 && <Segmented size="sm" label="Part of the page" value={v.note ? ('' as Part) : v.part} onChange={v.setPart} options={v.parts.map((p) => ({ v: p, label: PART_LABEL[p] }))} />}
+        {v.parts.length > 1 && <Segmented size="sm" label="Part of the blueprint" value={v.note ? ('' as Part) : v.part} onChange={v.setPart} options={v.parts.map((p) => ({ v: p, label: PART_LABEL[p] }))} />}
         {!!page.notes?.length && (
           <Menu
             align="end"

@@ -138,9 +138,9 @@ fn a_joined_machine_lists_the_hubs_sessions_machines_and_pages_with_its_own_toke
     let (code, out, err) = h.run(&["hub", "machines"], None);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.starts_with("abhash-arm  online  1 session, 1 agent, 1 working\nlaptop"), "{out}");
-    let (code, out, err) = h.run(&["pages", "--hub"], None);
+    let (code, out, err) = h.run(&["blueprints", "--hub"], None);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(out, "Cardboard robot  laptop  robot  /pages/laptop/robot\n");
+    assert_eq!(out, "Cardboard robot  laptop  robot  /blueprints/laptop/robot\n");
     let (code, out, _) = h.run(&["sessions", "--json"], None);
     assert_eq!(code, 0);
     let v: Value = serde_json::from_str(&out).unwrap();

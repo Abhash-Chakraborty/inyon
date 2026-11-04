@@ -256,7 +256,7 @@ impl Notifier {
                     return None;
                 }
                 let tag = format!("page:{host}/{slug}");
-                let href = format!("/pages/{}/{slug}", encode_uri_component(host));
+                let href = format!("/blueprints/{}/{slug}", encode_uri_component(host));
                 self.shade.post(&Notice { title: title.clone(), body: body.clone(), href, tag, kind: "page".into(), host: None, pane: None, options: vec![] });
                 None
             }

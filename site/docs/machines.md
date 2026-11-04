@@ -79,7 +79,7 @@ When a new version of Inyon changes these scripts, it updates them on the machin
 
 ## From a machine's terminal
 
-From 0.22, on a joined machine, `inyon hub machines`, `inyon sessions` and `inyon pages --hub` show what the hub sees, and `inyon send` gives an agent on another machine a message once it's free, if the hub allows that. See [Sessions and messages](cli.md#sessions-and-messages).
+From 0.22, on a joined machine, `inyon hub machines`, `inyon sessions` and `inyon blueprints --hub` show what the hub sees, and `inyon send` gives an agent on another machine a message once it's free, if the hub allows that. See [Sessions and messages](cli.md#sessions-and-messages).
 
 ## When a machine goes offline
 

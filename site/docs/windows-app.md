@@ -1,10 +1,10 @@
 ---
 title: The Inyon app on Windows
 nav: Windows app
-description: The Inyon window and tray icon on Windows: how phones reach the computer, pairing, a hub's machines and sessions, Pages, temp files, logs and settings.
+description: The Inyon window and tray icon on Windows: how phones reach the computer, pairing, a hub's machines and sessions, Blueprints, temp files, logs and settings.
 ---
 
-On Windows, Inyon is an app with a window and an icon in the notification area. From 0.21 the window covers everything the computer does for Inyon: the phone link and how phones reach it, the phones you paired, a hub and its machines, your Pages, the files agents leave behind, the logs and the settings. Nothing in it opens a terminal.
+On Windows, Inyon is an app with a window and an icon in the notification area. From 0.21 the window covers everything the computer does for Inyon: the phone link and how phones reach it, the phones you paired, a hub and its machines, your Blueprints, the files agents leave behind, the logs and the settings. Nothing in it opens a terminal.
 
 The window is drawn by Microsoft Edge WebView2, which is part of Windows 11 and comes with Edge on Windows 10. If it's missing, Inyon says so and opens Microsoft's download page; the phone link and the hub connection keep running without the window.
 
@@ -55,7 +55,7 @@ LAN and VPN need a Windows Firewall rule for the link's port; turning either on 
 
 ## Hub
 
-The Hub page shows a hub's own web app inside the window, signed in like any browser, so you see every machine on it, their sessions and its Pages. The bar above it has Back, Reload, Open in your browser, and a menu to switch between hubs.
+The Hub page shows a hub's own web app inside the window, signed in like any browser, so you see every machine on it, their sessions and its Blueprints. The bar above it has Back, Reload, Open in your browser, and a menu to switch between hubs.
 
 | Button | Does |
 |---|---|
@@ -65,9 +65,9 @@ The Hub page shows a hub's own web app inside the window, signed in like any bro
 
 A hub you joined with its certificate's SHA-256 (a hub on the LAN with a certificate of its own) opens without a warning when it shows that same certificate, and only then. Links that leave the hub open in your browser.
 
-## Pages
+## Blueprints
 
-The sites you added with [`inyon pages add`](pages.md) on this computer, each opened inside the window. **Add a folder** picks a folder with an `index.html`. Right-click a page to open it, show its folder, or remove it from Pages (the folder stays). Pages on other machines show in their hub's web app.
+The sites you added with [`inyon blueprints add`](pages.md) on this computer, each opened inside the window (the page was called Pages before 0.25). **Add a folder** picks a folder with an `index.html`. Right-click a site to open it, show its folder, or remove it from Blueprints (the folder stays). Those on other machines show in their hub's web app.
 
 ## Temp files
 

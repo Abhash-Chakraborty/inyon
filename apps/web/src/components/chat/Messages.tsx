@@ -224,7 +224,7 @@ export function AgentMark({ active }: { active?: boolean }) {
 }
 
 /**
- * The pages a finished reply links to (what `inyon pages add` prints), as cards that open them.
+ * The pages a finished reply links to (what `inyon blueprints add` prints), as cards that open them.
  * Only pages the list has, so a link to one that's gone or on a hub this app doesn't reach shows
  * nothing.
  */
@@ -260,7 +260,7 @@ export const AssistantTurn = memo(function AssistantTurn({ row, live }: { row: E
             <PartView key={p.key} part={p} live={live && row.open} />
           ))}
         </TurnSettled.Provider>
-        {!row.open && text.includes('/pages/') && <PageCards text={text} />}
+        {!row.open && (text.includes('/pages/') || text.includes('/blueprints/')) && <PageCards text={text} />}
         {!row.open && (
           <div className="mt-1 flex h-7 items-center gap-1 text-[12px] text-fg-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 max-sm:opacity-100">
             {text && <CopyButton text={text} className="-ml-1.5" />}

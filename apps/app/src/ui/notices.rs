@@ -240,7 +240,7 @@ mod tests {
     fn notices_compare_the_route_without_the_base_path() {
         assert_eq!(route_path(&Route::Overview), "/");
         assert_eq!(route_path(&Route::Session { host: "box".into(), pane: "%3".into(), view: Some(PaneView::Terminal) }), "/m/box/p/3");
-        assert_eq!(route_path(&Route::Pages { page: Some(("local".into(), "plan".into())) }), "/pages/local/plan");
+        assert_eq!(route_path(&Route::Pages { page: Some(("local".into(), "plan".into())) }), "/blueprints/local/plan");
     }
 
     fn done(pane: &str) -> ServerMsg {

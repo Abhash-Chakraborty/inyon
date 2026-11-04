@@ -183,7 +183,7 @@ fn a_page_moving_on_is_posted_unless_turned_off() {
     assert!(tray.posted.borrow().is_empty());
     n.heard(&page, false, ALL);
     let p = tray.posted.borrow()[0].clone();
-    assert_eq!((p.kind.as_str(), p.tag.as_str(), p.href.as_str()), ("page", "page:box/plan", "/pages/box/plan"));
+    assert_eq!((p.kind.as_str(), p.tag.as_str(), p.href.as_str()), ("page", "page:box/plan", "/blueprints/box/plan"));
 }
 
 #[test]

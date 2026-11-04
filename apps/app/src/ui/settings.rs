@@ -889,8 +889,8 @@ fn Notifications() -> Element {
             Row { label: "When an agent finishes", hint: "A notice when a session goes from working to idle. Needs-you alerts are always on.",
                 Toggle { on: p.notify_done, label: "Finished notices", on_change: move |v| set_prefs(|s| s.notify_done = v) }
             }
-            Row { label: "When a page moves on", hint: "A notice when a task on a page's progress board is done.",
-                Toggle { on: p.notify_pages, label: "Page notices", on_change: move |v| set_prefs(|s| s.notify_pages = v) }
+            Row { label: "When a blueprint moves on", hint: "A notice when a task on a blueprint's progress board is done.",
+                Toggle { on: p.notify_pages, label: "Blueprint notices", on_change: move |v| set_prefs(|s| s.notify_pages = v) }
             }
             Row { label: "System notifications", icon: Icon::Bell, hint: st::notices_hint(secure, pm, push, dom::home_screen_hint()),
                 if secure && pm == Permission::Default {
@@ -921,7 +921,7 @@ fn Machines(hosts: Vec<HostState>) -> Element {
                 MachineLink { key: "{h.config.id}", line: st::machine_line(h, &hosts), h: h.clone() }
             }
             if let Some(s) = s {
-                Row { label: "Machines can message agents", hint: "An agent on a joined machine can use inyon send to type into agents on your other machines, each once it's free. Reading sessions and pages needs no switch.",
+                Row { label: "Machines can message agents", hint: "An agent on a joined machine can use inyon send to type into agents on your other machines, each once it's free. Reading sessions and blueprints needs no switch.",
                     Toggle { on: s.machines_send.unwrap_or(false), label: "Machines can message agents", on_change: move |v| save_hub(|h| h.machines_send = Some(v)) }
                 }
             }

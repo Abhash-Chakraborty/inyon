@@ -132,9 +132,9 @@ The list is the hub's, for every machine, with at most 24 agents. A hub on Bun (
 
 Hooks come with it when it reads the same settings files as the agent it works like. One with hooks of its own can tell Inyon when a turn starts and ends the same way the integration does: from inside tmux, pipe the event's JSON to `~/.inyon/hook.sh <agent> <event>`, where `<agent>` is the agent it works like (`copilot`, `gemini` or `antigravity`) and `<event>` that agent's event name. For one that works like Claude Code, run `~/.inyon/hook.sh` with no arguments and Claude Code's hook JSON.
 
-## Pages an agent makes
+## Blueprints an agent makes
 
-From 0.20 any of them can put a site it built, such as a plan or mockups, in the app with `inyon pages add <folder>`. The [Blueprint](skills.md#blueprint) skill does it on its own. The page records who added it: `claude`, `codex`, `gemini` or `opencode` when one of those ran the command, `cli` for anything else. See [Pages](pages.md).
+From 0.20 any of them can put a site it built, such as a plan or mockups, in the app with `inyon blueprints add <folder>` (`inyon pages add` before 0.25). The [Blueprint](skills.md#blueprint) skill does it on its own. The page records who added it: `claude`, `codex`, `gemini` or `opencode` when one of those ran the command, `cli` for anything else. See [Blueprints](pages.md).
 
 ## Installing and signing in
 

@@ -505,7 +505,7 @@ pub fn plain(s: &Status) -> String {
 pub fn hints(s: &Status) -> Vec<String> {
     let mut out = Vec::new();
     if s.role == "joined" {
-        out.push("Sessions and pages on this machine show in the hub's app. Share a folder of pages with `inyon pages add <folder>` (hub 0.22 or later).".to_string());
+        out.push("Sessions and blueprints on this machine show in the hub's app. Share a site's folder with `inyon blueprints add <folder>` (hub 0.22 or later).".to_string());
     }
     out.push(format!("Docs: {} or `inyon docs <topic>`", crate::docs::DOCS_URL));
     out
@@ -640,7 +640,7 @@ mod tests {
         assert!(plain(&s).ends_with("Docs: https://inyon.tech/docs/ or `inyon docs <topic>`"), "{}", plain(&s));
         assert!(!plain(&s).contains("pages add"));
         let joined = Status { role: "joined".into(), hub: Some("http://100.64.0.1:4747".into()), ..status() };
-        assert!(plain(&joined).contains("`inyon pages add <folder>`"), "{}", plain(&joined));
+        assert!(plain(&joined).contains("`inyon blueprints add <folder>`"), "{}", plain(&joined));
         let v = json(&joined);
         assert_eq!(v["docs"], "https://inyon.tech/docs/");
         assert_eq!(v["hints"].as_array().unwrap().len(), 2);

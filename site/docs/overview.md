@@ -82,9 +82,9 @@ Tap **+** (or press `Alt N`, `⌥ N` on a Mac) for a new session:
 
 **Start** opens the new session. If no machine is online, **+** offers to add one instead.
 
-## Pages
+## Blueprints
 
-Plans and mockups your agents build open under **Pages**, the second tab on a phone and a sidebar item on a desktop. Its badge counts the pages that changed since you last opened them. See [Pages](pages.md).
+Plans and mockups your agents build open under **Blueprints** (**Pages** before 0.25), the second tab on a phone and a sidebar item on a desktop. Its badge counts the ones that changed since you last opened them. See [Blueprints](pages.md).
 
 ## Refreshing
 

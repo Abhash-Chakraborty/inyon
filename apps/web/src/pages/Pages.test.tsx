@@ -113,8 +113,8 @@ describe('the list on a phone', () => {
   test('no pages yet: the command an agent runs, and a way to add a folder', async () => {
     usePages.setState({ pages: [] })
     await at('/pages')
-    expect(screen.getByText('No pages yet')).toBeTruthy()
-    expect(screen.getByText(/^inyon pages add /)).toBeTruthy()
+    expect(screen.getByText('No blueprints yet')).toBeTruthy()
+    expect(screen.getByText(/^inyon blueprints add /)).toBeTruthy()
     expect(screen.getByRole('button', { name: /Add a folder/ })).toBeTruthy()
   })
 
@@ -122,7 +122,7 @@ describe('the list on a phone', () => {
     usePages.setState({ pages: [], outdated: ['laptop'] })
     await at('/pages')
     expect(screen.getByText('Update inyon on abhash-laptop to open its pages here.')).toBeTruthy()
-    expect(screen.getByText('No pages yet')).toBeTruthy()
+    expect(screen.getByText('No blueprints yet')).toBeTruthy()
   })
 })
 
@@ -525,11 +525,11 @@ describe('the viewer', () => {
     await act(async () => usePages.setState({ unreachable: ['h1'] }))
     expect(container.querySelector('iframe')).toBeTruthy()
     expect(screen.getByRole('status').textContent).toContain("Can't reach")
-    expect(screen.queryByText('This page is gone')).toBeNull()
+    expect(screen.queryByText('This blueprint is gone')).toBeNull()
     // opened while its hub is out of reach and not in the list: out of reach, not gone
     await act(async () => usePages.setState({ pages: [] }))
     expect(screen.getByText('The hub is out of reach')).toBeTruthy()
-    expect(screen.queryByText('This page is gone')).toBeNull()
+    expect(screen.queryByText('This blueprint is gone')).toBeNull()
   })
 
   test('a hub that forgot this phone says so in the list and over its page, which is not called gone', async () => {
@@ -543,7 +543,7 @@ describe('the viewer', () => {
       await act(() => loadPages())
       expect(usePages.getState()).toMatchObject({ pages: [], forgotten: ['h1'], unreachable: [] })
       expect(screen.getByText('arm forgot this phone')).toBeTruthy()
-      expect(screen.queryByText('This page is gone')).toBeNull()
+      expect(screen.queryByText('This blueprint is gone')).toBeNull()
       expect(screen.queryByText('The hub is out of reach')).toBeNull()
       viewer.unmount()
       const list = await at('/pages')
@@ -581,7 +581,7 @@ describe('the shell', () => {
     )
     await flush()
     const bar = screen.getAllByRole('navigation').find((n) => n.className.includes('grid-cols-5'))!
-    expect(within(bar).getAllByRole('link').map((a) => a.textContent)).toEqual(['Overview', '1Pages', 'Machines', 'Settings'])
+    expect(within(bar).getAllByRole('link').map((a) => a.textContent)).toEqual(['Overview', '1Blueprints', 'Machines', 'Settings'])
     expect(within(bar).getByLabelText('1 changed')).toBeTruthy()
   })
 

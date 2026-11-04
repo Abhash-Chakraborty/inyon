@@ -34,7 +34,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon doctor` | Check that everything is in place |
 | `inyon update` | Update to the newest release |
 | `inyon skill list`, `add`, `remove` | Install the agent skills that come with each release |
-| `inyon pages add`, `ls`, `rm` | Show a site's folder in the app under Pages |
+| `inyon blueprints add`, `ls`, `rm` | Show a site's folder in the app under Blueprints (`inyon pages` works too) |
 | `inyon temp`, `files`, `show`, `rm`, `clean` | List, look at and delete the temp files agents leave here |
 | `inyon docs [topic]` | Read these docs in the terminal |
 | `inyon uninstall` | Remove Inyon |
@@ -188,7 +188,7 @@ Given a phone's pairing link instead of a hub's address, `join` says from 0.20.3
 ```sh
 inyon hub machines                         # the hub's machines and what runs on them
 inyon sessions                             # every tmux session and the agent in it
-inyon pages --hub                          # the pages on all the hub's machines
+inyon blueprints --hub                     # the blueprints on all the hub's machines
 inyon send laptop/experiment "The report is in ~/inyon-reports"
 inyon send abhash-arm/main:1.0 - < notes.md
 ```
@@ -303,23 +303,25 @@ inyon skill remove blueprint
 
 From 0.17.7. `add` downloads the skill from the newest release, checks it against the signed SHA256SUMS, and installs it for each coding agent on the computer. `--to` picks one folder instead, and `--force` replaces a skill of the same name that Inyon didn't install. See [Agent skills](skills.md).
 
-## Pages
+## Blueprints
 
 ```sh
-inyon pages add ~/development/handy-redesign
-inyon pages add ./private/plans/ghostex --name "Inyon plan" --slug ghostex
-inyon pages                  # the pages on this computer; the same as inyon pages ls
-inyon pages rm ghostex
+inyon blueprints add ~/development/handy-redesign
+inyon blueprints add ./private/plans/ghostex --name "Inyon plan" --slug ghostex
+inyon blueprints             # the blueprints on this computer; the same as inyon blueprints ls
+inyon blueprints rm ghostex
 ```
 
-From 0.20. `add` lists a site's folder in `~/.inyon/pages.json`, so the app shows it under Pages. The folder needs an `index.html`. It can't be `/`, your home folder, or anything under `~/.ssh` or `~/.inyon`, judged by the path and by where its symlinks lead. On Windows a mapped network drive works like any other drive letter, and the share's top folder counts as too wide. No hub has to be running: the hub reads the file again when it changes. From 0.22.5, run inside a Claude Code or Codex session, `add` also records that session's conversation, so the app groups the page under the session's name. From 0.25, run in a tmux pane, it also records that pane's tmux session (`tmux` and `tmuxId` in `pages.json`), so the page belongs to the session it was made in.
+From 0.20, as `inyon pages`, which from 0.25 is another name for `inyon blueprints` and works the same, so scripts and agents that use it keep working. `add` lists a site's folder in `~/.inyon/pages.json`, so the app shows it under Blueprints. The folder needs an `index.html`. It can't be `/`, your home folder, or anything under `~/.ssh` or `~/.inyon`, judged by the path and by where its symlinks lead. On Windows a mapped network drive works like any other drive letter, and the share's top folder counts as too wide. No hub has to be running: the hub reads the file again when it changes. From 0.22.5, run inside a Claude Code or Codex session, `add` also records that session's conversation, so the app groups the page under the session's name. From 0.25, run in a tmux pane, it also records that pane's tmux session (`tmux` and `tmuxId` in `pages.json`), so the page belongs to the session it was made in.
 
 ```
-"Inyon plan" is in Inyon: Pages > abhash-arm > custom-tmux
-Open it in the app at /pages/local/ghostex
+"Inyon plan" is in Inyon: Blueprints > custom-tmux on abhash-arm
+Open it in the app at /blueprints/local/ghostex
 ```
 
-The second line is where the page is in the app, not a link to share. A link that opens the page directly is made by the app each time you open it, and lasts 12 hours (see [Security](security.md#pages)).
+The first line names the heading the page sits under: the tmux session it was added from, or the project's folder outside tmux. Before 0.25 it read `Pages > <machine> > <project>`, and the address started with `/pages/`, which the app still opens.
+
+The second line is where the page is in the app, not a link to share. A link that opens the page directly is made by the app each time you open it, and lasts 12 hours (see [Security](security.md#blueprints)).
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -331,20 +333,20 @@ The second line is where the page is in the app, not a link to share. A link tha
 - **Who added it** is saved too: `claude`, `codex`, `gemini` or `opencode` when one of those agents ran the command, `cli` otherwise.
 - **Adding a folder again** is safe. It keeps its slug and its place, and changes only the name or slug you pass.
 
-`ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is; from 0.22.4 the folder is remembered, so the hub doesn't [find](pages.md#pages-the-hub-finds) it again until you `add` it. On the hub's own computer `--json` gives each page's place in the app as `app`. From 0.22 a computer joined to a hub leaves `app` out and names the computer to look under instead, since only the hub knows the computer's place in the app.
+`ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is; from 0.22.4 the folder is remembered, so the hub doesn't [find](pages.md#blueprints-the-hub-finds) it again until you `add` it. On the hub's own computer `--json` gives each page's place in the app as `app`. From 0.22 a computer joined to a hub leaves `app` out and names the computer to look under instead, since only the hub knows the computer's place in the app.
 
 On a computer joined to a hub, the hub shows its pages too, from 0.22 (both the hub and that computer need 0.22). `add` there says so instead of giving a place in the app:
 
 ```
-"Inyon plan" is in Inyon: Pages > laptop > custom-tmux
-This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).
+"Inyon plan" is in Inyon: Blueprints > custom-tmux on laptop
+This machine doesn't run a hub. The hub it's joined to shows its blueprints (hub 0.22 or later).
 ```
 
 A computer with no hub that isn't joined to one either, such as one paired only with the phone, has nothing to show its pages. From 0.22 `add` says so there, and `--json` carries `"joined": false`:
 
 ```
 "Inyon plan" is listed on laptop, under custom-tmux.
-This machine doesn't run a hub and isn't joined to one, so the app can't open this page. Add it to a hub (Machines > Add a machine) to show its pages there.
+This machine doesn't run a hub and isn't joined to one, so the app can't open this blueprint. Add it to a hub (Machines > Add a machine) to show its blueprints there.
 ```
 
 If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the same line in your own terminal.

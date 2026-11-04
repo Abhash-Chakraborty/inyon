@@ -387,8 +387,8 @@ export function useSessionPages(s: SessionModel): Page[] {
 export function PagesTab({ pages }: { pages: Page[] }) {
   if (!pages.length) {
     return (
-      <Empty icon={<PanelsTopLeft className="size-5" />} title="No pages here">
-        Sites an agent adds with <code className="font-mono text-[12.5px]">inyon pages add</code> in this project show up here.
+      <Empty icon={<PanelsTopLeft className="size-5" />} title="No blueprints here">
+        Sites an agent adds with <code className="font-mono text-[12.5px]">inyon blueprints add</code> in this project show up here.
       </Empty>
     )
   }
@@ -445,7 +445,7 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
     { id: 'activity', label: 'Activity', badge: running || undefined },
     { id: 'preview', label: 'Preview' },
     // only for a session that has pages, or while it's the tab on screen
-    ...(pages.length || tab === 'pages' ? [{ id: 'pages' as const, label: 'Pages', badge: pages.length || undefined }] : []),
+    ...(pages.length || tab === 'pages' ? [{ id: 'pages' as const, label: 'Blueprints', badge: pages.length || undefined }] : []),
     { id: 'usage', label: 'Usage' },
   ]
   const underline = useTabUnderline(strip, tabs.findIndex((t) => t.id === tab))
