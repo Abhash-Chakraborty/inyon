@@ -112,6 +112,66 @@ pub fn live_tmux(host: &str, session: &str) -> Option<(String, String)> {
     tmux_of(&state, session)
 }
 
+/// The longest wait between two polls of a machine for a tmux session that kept its id and changed
+/// its name to count as renamed. Past it (the machine was away) the same id may be a new session of
+/// a tmux server that started again.
+pub const RENAME_GAP_MS: u64 = 120_000;
+/// The most renames kept in memory.
+const RENAMES_MAX: usize = 512;
+
+thread_local! {
+    /// `<host>\n<id>\n<old name>` to the new name, oldest first.
+    static RENAMES: RefCell<indexmap::IndexMap<String, String>> = RefCell::new(indexmap::IndexMap::new());
+}
+
+fn rename_key(host: &str, id: &str, name: &str) -> String {
+    format!("{host}\n{id}\n{name}")
+}
+
+/// Notes the tmux sessions a machine renamed between two polls in a row: the same id under a new
+/// name. Pages kept under the old name follow it (see [`renamed`]), including those whose
+/// conversation has ended, which [`tmux_of`] can't find any more.
+pub fn note_renames(host: &str, prev: &inyon_protocol::HostState, next: &inyon_protocol::HostState) {
+    if prev.status != HostStatus::Online || next.updated_at.saturating_sub(prev.updated_at) > RENAME_GAP_MS {
+        return;
+    }
+    for s in &next.sessions {
+        let Some(old) = prev.sessions.iter().find(|o| o.id == s.id) else { continue };
+        if old.name == s.name || old.name.is_empty() || !is_tmux_name(&s.name) {
+            continue;
+        }
+        RENAMES.with(|r| {
+            let mut r = r.borrow_mut();
+            r.shift_remove(&rename_key(host, &s.id, &s.name));
+            r.insert(rename_key(host, &s.id, &old.name), s.name.clone());
+            while r.len() > RENAMES_MAX {
+                r.shift_remove_index(0);
+            }
+        });
+    }
+}
+
+/// The name a tmux session a page kept as (`id`, `name`) goes by now, when this hub saw it renamed
+/// (once or more) and it still runs under that id. None when it wasn't renamed, or the id is
+/// another session's by now.
+pub fn renamed_in(state: &inyon_protocol::HostState, host: &str, id: &str, name: &str) -> Option<String> {
+    let mut now = name.to_string();
+    for _ in 0..16 {
+        match RENAMES.with(|r| r.borrow().get(&rename_key(host, id, &now)).cloned()) {
+            Some(next) if next != name => now = next,
+            _ => break,
+        }
+    }
+    (now != name && state.sessions.iter().any(|s| s.id == id && s.name == now)).then_some(now)
+}
+
+/// [`renamed_in`] for a connected machine.
+pub fn renamed(host: &str, id: &str, name: &str) -> Option<String> {
+    let rt = registry().get(host)?;
+    let state = rt.borrow().state.clone();
+    renamed_in(&state, host, id, name)
+}
+
 /// A conversation id as pages.json keeps it: letters, digits and `._:-`, at most 128 of them.
 pub fn is_session(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))

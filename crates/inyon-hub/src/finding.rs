@@ -245,6 +245,44 @@ mod tests {
     }
 
     #[test]
+    fn a_session_renamed_between_two_polls_in_a_row_is_followed_by_its_old_name() {
+        use inyon_core::features::pages_remote::{note_renames, renamed_in, RENAME_GAP_MS};
+        let mut prev = two_sessions();
+        prev.status = inyon_protocol::HostStatus::Online;
+        prev.updated_at = 10_000;
+        let mut next = prev.clone();
+        next.updated_at = 12_000;
+        next.sessions[0].name = "robots".into();
+        note_renames("box-r", &prev, &next);
+        assert_eq!(renamed_in(&next, "box-r", "$2", "cardboard").as_deref(), Some("robots"));
+        // and again: the newest name, through each rename
+        let mut third = next.clone();
+        third.updated_at = 14_000;
+        third.sessions[0].name = "mob".into();
+        note_renames("box-r", &next, &third);
+        assert_eq!(renamed_in(&third, "box-r", "$2", "cardboard").as_deref(), Some("mob"));
+        assert_eq!(renamed_in(&third, "box-r", "$2", "robots").as_deref(), Some("mob"));
+        // not renamed, another machine, or the id is another session's by now
+        assert_eq!(renamed_in(&third, "box-r", "$2", "mob"), None);
+        assert_eq!(renamed_in(&third, "box-other", "$2", "cardboard"), None);
+        let mut reused = third.clone();
+        reused.sessions[0].name = "cardboard".into();
+        assert_eq!(renamed_in(&reused, "box-r", "$2", "cardboard"), None);
+        // the machine was away (or its last state an error): a new name under the same id is a new session
+        let mut back = third.clone();
+        back.updated_at = third.updated_at + RENAME_GAP_MS + 1;
+        back.sessions[1].name = "fresh".into();
+        note_renames("box-r", &third, &back);
+        assert_eq!(renamed_in(&back, "box-r", "$5", "notes"), None);
+        let mut offline = third.clone();
+        offline.status = inyon_protocol::HostStatus::Error;
+        let mut after = third.clone();
+        after.sessions[1].name = "fresh".into();
+        note_renames("box-r", &offline, &after);
+        assert_eq!(renamed_in(&after, "box-r", "$5", "notes"), None);
+    }
+
+    #[test]
     fn a_found_page_belongs_to_the_session_working_in_its_folder() {
         let conv = |c: &str| Owner { session: Some(c.into()), ..Owner::default() };
         let dirs: BTreeMap<String, Owner> =

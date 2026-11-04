@@ -1981,6 +1981,14 @@ fn a_page_lists_under_the_tmux_session_it_belongs_to_by_its_name_now() {
         crate::pages::pages().remote.forget("laptop");
         let entries = list().await;
         assert_eq!(tmux(&entries), [pair("robot", Some("cardboard")), pair("mob", Some("robots")), ("old".into(), None, None)]);
+        // the hub saw the rename happen, between two polls: the page with no conversation follows too
+        let mut prev = rt.borrow().state.clone();
+        prev.status = inyon_protocol::HostStatus::Online;
+        prev.sessions = running("robots", false);
+        let next = rt.borrow().state.clone();
+        inyon_core::features::pages_remote::note_renames("laptop", &prev, &next);
+        crate::pages::pages().remote.forget("laptop");
+        assert_eq!(tmux(&list().await)[1], pair("mob", Some("cardboard")));
         // the conversation is kept with it (the agent's session id), with its tmux session
         assert_eq!(entries[0]["session"], "chat-9");
         // the agent stops: the name it had last stays

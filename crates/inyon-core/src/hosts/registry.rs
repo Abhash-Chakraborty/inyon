@@ -949,6 +949,7 @@ impl Registry {
                 },
             }
         };
+        crate::features::pages_remote::note_renames(&config.id, &prev, &next);
         {
             let mut r = rt.borrow_mut();
             r.state = next;

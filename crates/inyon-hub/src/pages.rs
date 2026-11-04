@@ -77,7 +77,8 @@ fn record_json(r: &Record) -> Value {
 /// Whose a page is: the conversation that added it, or the one it was found under (kept by the
 /// hub, since a machine's older inyon can't write it), with the name Inyon last gave it; and the
 /// tmux session that conversation runs in now, else the one the hub last saw it in, else the one
-/// it was added from. A name seen now is kept, so it stays once the agent has stopped.
+/// it was added from, under the name that session has now if the hub saw it renamed. A name seen
+/// now is kept, so it stays once the agent has stopped.
 fn with_owner(v: &mut Value, host: &str, r: &Record) {
     let kept = crate::finding::owner_of(host, &r.slug);
     let session = r.session.clone().or_else(|| kept.session.clone());
@@ -89,8 +90,17 @@ fn with_owner(v: &mut Value, host: &str, r: &Record) {
             }
             (Some(id), Some(name))
         }
-        None if kept.tmux.is_some() => (kept.tmux_id, kept.tmux),
-        None => (r.tmux_id.clone(), r.tmux.clone()),
+        None => {
+            let (id, name) = if kept.tmux.is_some() { (kept.tmux_id, kept.tmux) } else { (r.tmux_id.clone(), r.tmux.clone()) };
+            // renamed since, with its conversation over: the page follows the session's new name
+            match id.as_deref().zip(name.as_deref()).and_then(|(i, n)| pages_remote::renamed(host, i, n)) {
+                Some(now) => {
+                    crate::finding::remember(host, &r.slug, &crate::finding::Owner { session: session.clone(), tmux: Some(now.clone()), tmux_id: id.clone() });
+                    (id, Some(now))
+                }
+                None => (id, name),
+            }
+        }
     };
     if let Some(s) = session {
         if let Some(name) = inyon_core::hosts::names::last_name(host, &s) {
