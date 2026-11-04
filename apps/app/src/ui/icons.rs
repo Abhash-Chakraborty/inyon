@@ -80,6 +80,7 @@ pub enum Icon {
     ShieldCheck,
     Server,
     FolderOpen,
+    Folder,
     CircleArrowUp,
     Ellipsis,
     // the session's ⋯ menu
@@ -467,6 +468,9 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     rect { width: "20", height: "8", x: "2", y: "2", rx: "2", ry: "2" }
                     rect { width: "20", height: "8", x: "2", y: "14", rx: "2", ry: "2" }
                     path { d: "M6 6h.01M6 18h.01" }
+                },
+                Icon::Folder => rsx! {
+                    path { d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" }
                 },
                 Icon::FolderOpen => rsx! {
                     path { d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" }
