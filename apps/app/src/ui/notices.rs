@@ -52,7 +52,8 @@ pub fn set_prefs(change: impl FnOnce(&mut Settings)) {
     }
 }
 
-/// Two short pulses for a confirmed outcome, a longer pair for a warning, when haptics are on.
+/// Two short pulses for a confirmed outcome, a longer pair for a warning, one tick for a choice,
+/// when haptics are on.
 pub fn haptic(kind: Haptic) {
     if !PREFS.peek().haptics {
         return;
@@ -60,6 +61,7 @@ pub fn haptic(kind: Haptic) {
     dom::vibrate(match kind {
         Haptic::Success => &[10, 40, 14],
         Haptic::Warning => &[18, 60, 18],
+        Haptic::Select => &[8],
     });
 }
 

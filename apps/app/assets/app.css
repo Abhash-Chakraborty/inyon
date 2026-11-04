@@ -804,6 +804,7 @@ input:focus-visible { outline: none; }
 .prompt-links { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 8px; }
 .prompt-link { border-radius: 16px; border: 1px solid var(--line); background: var(--bg); padding: 10px; }
 .prompt-link-url { margin-bottom: 8px; word-break: break-all; font-size: 12px; line-height: 1.6; color: var(--fg-2); }
+.prompt-link-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .prompt-options { display: flex; min-height: 0; flex-direction: column; gap: 6px; overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 8px; }
 .option { display: flex; width: 100%; align-items: flex-start; gap: 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--bg); padding: 12px 14px; text-align: left; }
 .option:hover:not(:disabled) { background: var(--hover); }
@@ -826,7 +827,6 @@ input:focus-visible { outline: none; }
 .prompt-free { min-height: 52px; flex: 1; resize: none; border-radius: 16px; border: 1px solid var(--field); background: var(--bg); padding: 10px 14px; font-size: 15px; outline: none; transition: border-color var(--dur-small) var(--ease-out-soft); }
 .prompt-free:focus { border-color: var(--fg); }
 .prompt-input { min-width: 0; flex: 1; }
-.prompt-error { padding: 0 16px 8px; font-size: 13px; color: var(--danger); }
 .prompt-foot { display: flex; flex-shrink: 0; align-items: center; gap: 4px; border-top: 1px solid var(--line); padding: 6px 8px; }
 .prompt-foot-end { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 
