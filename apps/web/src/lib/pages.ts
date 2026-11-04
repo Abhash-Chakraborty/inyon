@@ -20,7 +20,8 @@ export interface Page extends PageEntry {
 }
 
 export const pageId = (host: string, slug: string) => `${host}/${slug}`
-export const pageHref = (host: string, slug: string) => `/pages/${encodeURIComponent(host)}/${slug}`
+/** A page's viewer in the app (`/pages/…` before 0.25, which still opens it). */
+export const pageHref = (host: string, slug: string) => `/blueprints/${encodeURIComponent(host)}/${slug}`
 
 /** The last folder of a project path, as the list names it. */
 export const projectName = (project: string) => project.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || project
@@ -34,61 +35,114 @@ export function changedAt(p: PageEntry): number {
 /** A hub's own machine: "local" here, or "hub:<id>/local" for a paired hub's. */
 export const isHubMachine = (host: string) => (isHubHost(host) ? host.slice(host.indexOf('/') + 1) : host) === 'local'
 
-/**
- * What a page's group is called: the name its session has in the app now (`running`, by
- * `<host>/<session>`), else the name Inyon last gave that session, else its project's folder. So a
- * session renamed after it added the page renames the group too.
- */
-export function groupName(p: Page, running?: ReadonlyMap<string, string>) {
-  return (p.session && running?.get(pageId(p.host, p.session))) || p.sessionName || projectName(p.project)
+/** A tmux session a page belongs to: its id (`$3`) when known, and its name. */
+export interface TmuxSession {
+  id?: string
+  name: string
 }
 
 /**
- * The names running agent sessions have in the app, by `<host>/<conversation id>`, for groupName.
+ * What the app knows now about the sessions pages belong to, read from the machines' live state:
+ * the tmux session each agent conversation runs in, and the titles running agents show, both by
+ * `<host>/<conversation id>`.
+ */
+export interface Names {
+  tmux: ReadonlyMap<string, TmuxSession>
+  titles: ReadonlyMap<string, string>
+}
+
+export const namesOf = (hosts: HostState[]): Names => ({ tmux: liveSessions(hosts), titles: runningNames(hosts) })
+
+/** The tmux sessions agent conversations run in now, by `<host>/<conversation id>`. A dead pane runs nothing. */
+export function liveSessions(hosts: HostState[]): Map<string, TmuxSession> {
+  const out = new Map<string, TmuxSession>()
+  for (const r of allPanes(hosts)) {
+    const sid = r.pane.agent?.sessionId
+    if (!sid || r.pane.dead || !r.session.name.trim()) continue
+    out.set(pageId(r.host.config.id, sid), { id: r.session.id, name: r.session.name })
+  }
+  return out
+}
+
+/**
+ * The tmux session a page belongs to: the one its conversation runs in now (so a renamed session
+ * takes its pages along), else the one it was made in, as the hub keeps it.
+ */
+export function tmuxOf(p: PageEntry, names?: Names): TmuxSession | undefined {
+  const live = p.session ? names?.tmux.get(pageId(p.host, p.session)) : undefined
+  if (live) return live
+  return p.tmux?.trim() ? { id: p.tmuxId, name: p.tmux } : undefined
+}
+
+/** A page's group: whether it's a session's (else its project's), and the group's name. */
+function groupOf(p: PageEntry, names?: Names): { session: boolean; name: string } {
+  const t = tmuxOf(p, names)
+  if (t) return { session: true, name: t.name }
+  const named = (p.session && names?.titles.get(pageId(p.host, p.session))) || p.sessionName
+  return named ? { session: true, name: named } : { session: false, name: projectName(p.project) }
+}
+
+/**
+ * What a page's group is called: its tmux session's name (see tmuxOf). A page from before pages
+ * kept their tmux session goes by the name its conversation shows in the app now, else the name
+ * Inyon last gave that conversation, else its project's folder.
+ */
+export const groupName = (p: PageEntry, names?: Names) => groupOf(p, names).name
+
+/**
+ * The names running agent sessions have in the app, by `<host>/<conversation id>`.
  * An agent that shows no title of its own ("Claude Code") gives no name.
  */
 export function runningNames(hosts: HostState[]): Map<string, string> {
   const out = new Map<string, string>()
   for (const r of allPanes(hosts)) {
     const a = r.pane.agent
-    if (!a?.sessionId) continue
+    // an agent that ended keeps the title it had, which says nothing now
+    if (!a?.sessionId || r.pane.dead) continue
     const name = paneTitle(r)
     if (name && name !== (a.custom ?? agentDef(a.kind)?.name) && name !== r.pane.command) out.set(pageId(r.host.config.id, a.sessionId), name)
   }
   return out
 }
 
-/** A machine's projects and their pages, the newest change first. */
+/** One heading of the list: a session's pages, or a project's when the session isn't known, on one machine, the newest change first. */
 export interface PageGroup {
+  name: string
   host: string
-  projects: { name: string; key: string; pages: Page[] }[]
+  /** headed by a session (else by a project folder) */
+  session: boolean
+  /** `<host>/s:<name>` or `<host>/p:<name>` */
+  key: string
+  pages: Page[]
 }
 
 /**
- * Machine, then session or project, then page. The hub's own machine comes first, then the others
- * by name; groups by name (see groupName); inside a group the page that changed last is on top.
+ * Session first: one heading per tmux session (by its name now, on its machine), with every site
+ * made in it below, whichever conversation made it. Pages with no known session fall back to their
+ * project's heading, after the sessions. Headings go by name, then machine; inside one the page that
+ * changed last is on top.
  */
-export function groupPages(pages: Page[], hostName: (host: string) => string, running?: ReadonlyMap<string, string>): PageGroup[] {
-  const byHost = new Map<string, Map<string, { name: string; list: Page[] }>>()
+export function groupPages(pages: Page[], hostName: (host: string) => string, names?: Names): PageGroup[] {
+  const byKey = new Map<string, PageGroup>()
   for (const p of pages) {
-    const groups = byHost.get(p.host) ?? byHost.set(p.host, new Map()).get(p.host)!
-    const name = groupName(p, running)
-    const key = p.session && name !== projectName(p.project) ? `s:${p.session}` : `p:${name}`
-    ;(groups.get(key) ?? groups.set(key, { name, list: [] }).get(key)!).list.push(p)
+    const { session, name } = groupOf(p, names)
+    const key = `${p.host}/${session ? 's' : 'p'}:${name}`
+    const g = byKey.get(key) ?? byKey.set(key, { name, host: p.host, session, key, pages: [] }).get(key)!
+    g.pages.push(p)
   }
-  const hosts = [...byHost.keys()].sort((a, b) => Number(isHubMachine(b)) - Number(isHubMachine(a)) || hostName(a).localeCompare(hostName(b)))
-  return hosts.map((host) => ({
-    host,
-    projects: [...byHost.get(host)!.entries()]
-      .sort(([, a], [, b]) => a.name.localeCompare(b.name))
-      .map(([key, { name, list }]) => ({ name, key: `${host}/${key}`, pages: [...list].sort((a, b) => changedAt(b) - changedAt(a)) })),
-  }))
+  const cmp = (a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b)
+  return [...byKey.values()]
+    .sort((a, b) => Number(b.session) - Number(a.session) || cmp(a.name, b.name) || cmp(hostName(a.host), hostName(b.host)))
+    .map((g) => ({ ...g, pages: [...g.pages].sort((a, b) => changedAt(b) - changedAt(a)) }))
 }
 
+/** Whether the list spans more than one machine, so each heading names its machine. */
+export const manyMachines = (groups: PageGroup[]) => groups.some((g) => g.host !== groups[0]?.host)
+
 /** Whether a page matches what's typed in the filter: its name, group, project or machine. */
-export function matchesPage(p: Page, machine: string, q: string, running?: ReadonlyMap<string, string>) {
+export function matchesPage(p: Page, machine: string, q: string, names?: Names) {
   const t = q.trim().toLowerCase()
-  return !t || [p.name, groupName(p, running), projectName(p.project), machine].some((s) => s.toLowerCase().includes(t))
+  return !t || [p.name, groupName(p, names), projectName(p.project), machine].some((s) => s.toLowerCase().includes(t))
 }
 
 // ---------- a session's pages ----------
@@ -102,24 +156,54 @@ export function folderKey(p: string) {
 const within = (child: string, parent: string) => child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
 
 /**
- * The pages a session running in `cwd` on `host` works on, the newest change first: on the same
- * machine, the ones its conversation (`session`) added, and those with the session inside the
- * page's project or the page's folder under the session's. A session in a home folder or higher
- * (two folders deep or less) gets no pages by folder below it, or every page on the machine would
- * be its own.
+ * A session's pages, each list the newest change first: the ones its conversation made, the ones
+ * earlier conversations in the same tmux session made, and, for pages that belong to no session,
+ * the ones in its folder.
  */
-export function sessionPages(pages: Page[], host: string, cwd: string | undefined, session?: string): Page[] {
-  const at = cwd ? folderKey(cwd) : undefined
-  const deep = !!at && at.replace(/^[a-z]:/, '').split('/').filter(Boolean).length > 2
-  return pages
-    .filter((p) => p.host === host && ((!!session && p.session === session) || (!!at && (within(at, folderKey(p.project)) || (deep && within(folderKey(p.folder), at))))))
-    .sort((a, b) => changedAt(b) - changedAt(a))
+export interface SessionList {
+  mine: Page[]
+  earlier: Page[]
+  nearby: Page[]
+}
+
+export const sessionCount = (l: SessionList) => l.mine.length + l.earlier.length + l.nearby.length
+
+/** Where a session is, for picking its pages: its machine, the tmux session it runs in, its folder and its agent conversation. */
+export interface SessionAt {
+  host: string
+  tmux?: string
+  cwd?: string
+  session?: string
+}
+
+/**
+ * The pages a session works on (see SessionList). A page that belongs to another tmux session
+ * stays out, even in the same folder. For a page whose tmux session isn't known (one from before
+ * 0.25 whose conversation has ended, or one added outside tmux): the session inside the page's
+ * project, or the page's folder under the session's. A session in a home folder or higher (two
+ * folders deep or less) gets no pages by folder below it, or every page on the machine would be
+ * its own.
+ */
+export function sessionPages(pages: Page[], names: Names | undefined, at: SessionAt): SessionList {
+  const here = at.cwd ? folderKey(at.cwd) : undefined
+  const deep = !!here && here.replace(/^[a-z]:/, '').split('/').filter(Boolean).length > 2
+  const out: SessionList = { mine: [], earlier: [], nearby: [] }
+  for (const p of pages) {
+    if (p.host !== at.host) continue
+    const t = tmuxOf(p, names)
+    if (at.session && p.session === at.session) out.mine.push(p)
+    else if (t) {
+      if (at.tmux === t.name) out.earlier.push(p)
+    } else if (here && (within(here, folderKey(p.project)) || (deep && within(folderKey(p.folder), here)))) out.nearby.push(p)
+  }
+  for (const l of [out.mine, out.earlier, out.nearby]) l.sort((a, b) => changedAt(b) - changedAt(a))
+  return out
 }
 
 /**
  * The pages a reply links to, as `/blueprints/<host>/<slug>` (what `inyon blueprints add` prints)
- * or `/pages/<host>/<slug>` (before 0.25), each once and in order, with the host as this app names it: a session that came through a paired hub
- * names that hub's machines.
+ * or `/pages/<host>/<slug>` (before 0.25), each once and in order, with the host as this app names
+ * it: a session that came through a paired hub names that hub's machines.
  */
 export function linkedPages(text: string, sessionHost: string): string[] {
   const hub = isHubHost(sessionHost) ? sessionHost.slice(0, sessionHost.indexOf('/') + 1) : ''
@@ -204,6 +288,9 @@ export const frameSrc = (base: string, url: string, part: Part, theme: 'light' |
  * A note in the site's `research/` folder, which the hub shows as a page to read (`?as=note`)
  * inside the same sandbox as the site.
  */
+/** What Open in browser opens after the page's link: the part or note the viewer shows, so the tab shows what the frame did. */
+export const browserPath = (part: Part, note?: string) => (note ? `research/${encodeURIComponent(note)}?as=note` : PART_PATH[part])
+
 export const noteSrc = (base: string, url: string, note: string, theme: 'light' | 'dark') => `${base}${url}research/${encodeURIComponent(note)}?as=note&theme=${theme}`
 
 /** A note's name as the app shows it: the file name without `.md`. */

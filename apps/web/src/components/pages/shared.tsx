@@ -12,7 +12,7 @@ import { FrameRefused } from '../FrameRefused.tsx'
 import { splitHostId } from '../../lib/hubs.ts'
 import {
   PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, hubUnreachable, isBridged, isChanged, isHubMachine, loadPages, localDeadline, openLink, pageBase, pageHosts, pageHref, projectName,
-  RENEW_RETRY_MS, nextRetry, renewIn, runningNames, shouldRenew, usePages, type Page, type PageLink, type Part,
+  RENEW_RETRY_MS, nextRetry, renewIn, namesOf, shouldRenew, usePages, type Page, type PageLink, type Part,
 } from '../../lib/pages.ts'
 import { Button, Field, SectionLabel, Sheet, inputClass, type MenuItem } from '../ui/primitives.tsx'
 import { contextMenu } from '../ui/ContextMenu.tsx'
@@ -50,10 +50,10 @@ export function machineOf(hosts: HostState[], host: string, unreachable: string[
   return { name: h.config.name, online: reached && h.status === 'online', hub: h.config.kind === 'local' || hub, host: h }
 }
 
-/** The names running sessions have now, for naming page groups (see runningNames). */
-export function useRunningNames() {
+/** What the machines say now about the sessions pages belong to, for naming page groups (see namesOf). */
+export function useNames() {
   const hosts = useStore((s) => s.hosts)
-  return useMemo(() => runningNames(hosts), [hosts])
+  return useMemo(() => namesOf(hosts), [hosts])
 }
 
 /** A function from host id to its machine, for the current list of hosts. */
@@ -252,12 +252,12 @@ export function PageFrame({ src, bridge, title, className, style }: { src: strin
  * window opened after a wait, so one is opened first and sent to the link once it is minted; the
  * Android app hands the link to the browser.
  */
-export async function openInBrowser(p: Page) {
+export async function openInBrowser(p: Page, path = '') {
   const pending = !isNative() ? window.open('', '_blank') : null
   if (pending) pending.opener = null
   try {
     const l = await openLink(p)
-    const url = absoluteLink(p.host, l.url)
+    const url = absoluteLink(p.host, l.url) + path
     if (pending) pending.location.href = url
     else window.open(url, '_blank', 'noopener')
   } catch (e) {
@@ -445,7 +445,7 @@ function AddFolderSheet({ open, onClose }: { open: boolean; onClose: () => void 
  * Pages as rows in one card, each a link to its viewer with the page menu: on a machine's page, in
  * a session's Pages tab and under a reply that links to them. `where` adds the machine's name.
  */
-export function PageRows({ pages, where, className }: { pages: Page[]; where?: boolean; className?: string }) {
+export function PageRows({ pages, where, from, onPick, className }: { pages: Page[]; where?: boolean; from?: string; onPick?: (p: Page) => void; className?: string }) {
   const seen = usePages((s) => s.seen)
   const nav = useNavigate()
   const machineOf = useMachines()
@@ -454,7 +454,13 @@ export function PageRows({ pages, where, className }: { pages: Page[]; where?: b
       {pages.map((p) => {
         const machine = machineOf(p.host)
         return (
-          <Link key={p.id} to={pageHref(p.host, p.slug)} {...contextMenu(() => pageMenu(p, machine, nav), { touch: true, header: p.name })} className="flex min-h-[52px] items-center gap-3 px-4 py-2.5 hover:bg-hover/60 active:bg-hover">
+          <Link
+            key={p.id}
+            to={pageHref(p.host, p.slug)}
+            // opened from a session: the viewer's back returns there
+            state={from ? { from } : undefined}
+            onClick={onPick && ((e) => (e.preventDefault(), onPick(p)))}
+            {...contextMenu(() => pageMenu(p, machine, nav), { touch: true, header: p.name })} className="flex min-h-[52px] items-center gap-3 px-4 py-2.5 hover:bg-hover/60 active:bg-hover">
             <PanelsTopLeft className="size-4 shrink-0 text-fg-3" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">

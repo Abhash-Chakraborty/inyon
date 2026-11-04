@@ -34,6 +34,8 @@ const at = (path: string) =>
       <Routes>
         <Route path="pages" element={<PagesPage />} />
         <Route path="pages/:host/:slug" element={<PagesPage />} />
+        <Route path="blueprints" element={<PagesPage />} />
+        <Route path="blueprints/:host/:slug" element={<PagesPage />} />
         <Route path="*" element={null} />
       </Routes>
       <Where />
@@ -56,11 +58,12 @@ afterEach(() => viewport(1024, 768))
 describe('the list on a phone', () => {
   beforeEach(() => viewport(390, 844))
 
-  test('grouped by machine, then project; each card has its bar, its now line and when it last moved', async () => {
-    await at('/pages')
-    const headings = screen.getAllByText(/^abhash-(arm|laptop)$/).map((e) => e.textContent)
-    expect(headings).toEqual(['abhash-arm', 'abhash-laptop'])
-    expect(screen.getByText('hub')).toBeTruthy()
+  test('grouped by session, else project, with the machine as a label; each card has its bar, its now line and when it last moved', async () => {
+    await at('/blueprints')
+    // no session known for these: their projects, by name; the list spans two machines, so each heading names its own
+    expect([...document.querySelectorAll('.group-heading-name')].map((e) => e.textContent)).toEqual(['custom-tmux', 'demo', 'Handy'])
+    expect(screen.getAllByText(/^abhash-arm$/).length).toBe(2)
+    expect(screen.getByText('abhash-laptop · offline')).toBeTruthy()
     // a screen reader hears what the card shows: changed, progress, the now line, when it last moved
     const card = screen.getByRole('link', { name: 'Inyon plan, changed, 41 of 68 done, R2 step 2c: the HTTP layer, updated 3 min ago' })
     expect(within(card).getByRole('progressbar', { name: '41 of 68 done' })).toBeTruthy()
@@ -73,9 +76,6 @@ describe('the list on a phone', () => {
     expect(within(screen.getByRole('link', { name: 'Handy redesign, added 1 h ago' })).queryByLabelText('changed')).toBeNull()
     // the laptop is offline: its card says so
     expect(within(screen.getByRole('link', { name: 'Windows path test, changed, 5 of 9 done, machine offline' })).getByText('Machine offline')).toBeTruthy()
-    // projects by their folder's name
-    expect(screen.getByText('custom-tmux')).toBeTruthy()
-    expect(screen.getByText('demo')).toBeTruthy()
   })
 
   test("'updated' is when the board last moved, not when the folder was added", () => {
@@ -88,17 +88,17 @@ describe('the list on a phone', () => {
 
   test('one menu on a card: open, open in browser with a 12 h link, revoke, show folder, remove', async () => {
     const user = userEvent.setup()
-    await at('/pages')
+    await at('/blueprints')
     await user.click(screen.getByRole('button', { name: 'More for Inyon plan' }))
     const items = screen.getAllByRole('menuitem').map((m) => m.textContent)
     expect(items).toEqual(['Open', 'Open in browserA 12 h link. Never sign in there', 'Revoke links', 'Show folder', 'Remove'])
     await user.click(screen.getByRole('menuitem', { name: /Open$/ }))
-    expect(screen.getByTestId('where').textContent).toBe('/pages/local/ghostex')
+    expect(screen.getByTestId('where').textContent).toBe('/blueprints/local/ghostex')
   })
 
   test('Remove takes it off the list at once and Undo adds the same folder back', async () => {
     const user = userEvent.setup()
-    await at('/pages')
+    await at('/blueprints')
     await user.click(screen.getByRole('button', { name: 'More for Inyon plan' }))
     await user.click(screen.getByRole('menuitem', { name: 'Remove' }))
     await flush()
@@ -112,7 +112,7 @@ describe('the list on a phone', () => {
 
   test('no pages yet: the command an agent runs, and a way to add a folder', async () => {
     usePages.setState({ pages: [] })
-    await at('/pages')
+    await at('/blueprints')
     expect(screen.getByText('No blueprints yet')).toBeTruthy()
     expect(screen.getByText(/^inyon blueprints add /)).toBeTruthy()
     expect(screen.getByRole('button', { name: /Add a folder/ })).toBeTruthy()
@@ -120,7 +120,7 @@ describe('the list on a phone', () => {
 
   test('a computer whose inyon is too old to serve its pages is named, with what to do', async () => {
     usePages.setState({ pages: [], outdated: ['laptop'] })
-    await at('/pages')
+    await at('/blueprints')
     expect(screen.getByText('Update inyon on abhash-laptop to open its pages here.')).toBeTruthy()
     expect(screen.getByText('No blueprints yet')).toBeTruthy()
   })
@@ -135,7 +135,7 @@ describe('the viewer', () => {
   test('the frame is sandboxed like the hub serves it, without same-origin rights, and starts in the app theme', async () => {
     viewport(390, 844)
     useStore.setState({ resolvedTheme: 'dark' })
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     const frame = container.querySelector('iframe')!
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-popups allow-downloads')
@@ -150,7 +150,7 @@ describe('the viewer', () => {
 
   test('a link with less than an hour left is renewed when the app comes back into view, not before', async () => {
     api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 11 * 3_600_000 } as never)
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     expect(api.openPage).toHaveBeenCalledTimes(1)
     await act(async () => void window.dispatchEvent(new Event('focus')))
@@ -170,7 +170,7 @@ describe('the viewer', () => {
   })
 
   test("the app answers only its frame's messages, and only the kinds it knows", async () => {
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     // frames don't load here, so the frame's window is a stand-in
     const post = mock(() => {})
@@ -203,7 +203,7 @@ describe('the viewer', () => {
       viewport(390, 844)
       useStore.setState({ hosts: [host('laptop', { config: { id: 'laptop', kind: 'link', name: 'abhash-laptop' }, status: 'online' })] })
       api.openPage.mockResolvedValue({ url: '/v/v1.phone.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
-      const { container } = await at('/pages/laptop/win-paths')
+      const { container } = await at('/blueprints/laptop/win-paths')
       await flush()
       const frame = container.querySelector('iframe')!
       expect(frame.getAttribute('src')).toBe('/pageview.html')
@@ -221,19 +221,19 @@ describe('the viewer', () => {
 
   test('on a phone, back closes the viewer instead of walking back through the frame', async () => {
     viewport(390, 844)
-    await at('/pages/local/ghostex')
+    await at('/blueprints/local/ghostex')
     await flush()
     let handled = false
     await act(async () => void (handled = backHandled()))
     expect(handled).toBe(true)
-    expect(screen.getByTestId('where').textContent).toBe('/pages')
+    expect(screen.getByTestId('where').textContent).toBe('/blueprints')
   })
 
   test('the phone menu offers Plan, Mockups and Matrix only when the site has them', async () => {
     viewport(390, 844)
     globalThis.fetch = mock(async (url: string) => new Response(null, { status: String(url).endsWith('mockups/') ? 200 : 404 })) as any
     const user = userEvent.setup()
-    await at('/pages/local/ghostex')
+    await at('/blueprints/local/ghostex')
     await flush()
     await flush()
     await user.click(screen.getByRole('button', { name: 'More' }))
@@ -246,7 +246,7 @@ describe('the viewer', () => {
     viewport(390, 844)
     usePages.setState({ pages: [{ ...PLAN, notes: ['ghostex features.md', 'plan.md'] }, HANDY, LAPTOP] })
     const user = userEvent.setup()
-    const first = await at('/pages/local/ghostex')
+    const first = await at('/blueprints/local/ghostex')
     await flush()
     await user.click(screen.getByRole('button', { name: 'Notes' }))
     expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['ghostex features', 'plan'])
@@ -257,7 +257,7 @@ describe('the viewer', () => {
     expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/?theme=light')
     // a page without notes has no Notes button
     first.unmount()
-    await at('/pages/local/handy')
+    await at('/blueprints/local/handy')
     await flush()
     expect(screen.queryByRole('button', { name: 'Notes' })).toBeNull()
   })
@@ -266,7 +266,7 @@ describe('the viewer', () => {
     globalThis.fetch = mock(async (url: string) => new Response(null, { status: String(url).endsWith('mockups/') ? 200 : 404 })) as any
     usePages.setState({ pages: [{ ...PLAN, notes: ['plan.md'] }, HANDY, LAPTOP] })
     const user = userEvent.setup()
-    await at('/pages/local/ghostex')
+    await at('/blueprints/local/ghostex')
     await flush()
     await flush()
     await user.click(screen.getByRole('button', { name: 'Notes' }))
@@ -284,10 +284,10 @@ describe('the viewer', () => {
 
   test('on a desktop, the list and the viewer sit side by side, with device sizes', async () => {
     const user = userEvent.setup()
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     expect(screen.getByRole('navigation', { name: 'Page location' }).textContent).toBe('abhash-arm/custom-tmux/Inyon plan')
-    expect(screen.getByRole('link', { name: /^Handy redesign/ }).getAttribute('href')).toBe('/pages/local/handy')
+    expect(screen.getByRole('link', { name: /^Handy redesign/ }).getAttribute('href')).toBe('/blueprints/local/handy')
     await user.click(screen.getByRole('radio', { name: 'Phone 390 × 844' }))
     const box = container.querySelector('iframe')!.parentElement as HTMLElement
     expect([box.style.width, box.style.height]).toEqual(['390px', '844px'])
@@ -296,7 +296,7 @@ describe('the viewer', () => {
 
   test("a page shows its sandbox on the phone too, so it can't pass itself off as the app asking for a password", async () => {
     viewport(390, 844)
-    await at('/pages/local/ghostex')
+    await at('/blueprints/local/ghostex')
     await flush()
     expect(screen.getByRole('banner').textContent).toContain('Sandboxed page: never sign in here')
   })
@@ -307,7 +307,7 @@ describe('the viewer', () => {
     api.openPage.mockImplementationOnce((() => new Promise((r) => (answerFirst = r))) as never)
     api.openPage.mockImplementationOnce((async () => ({ url: '/v/v1.handy.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 })) as never)
     const user = userEvent.setup()
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     await user.click(screen.getByRole('button', { name: 'Machine: abhash-arm' }))
     await user.click(screen.getByRole('menuitem', { name: 'Handy redesign' }))
@@ -316,7 +316,7 @@ describe('the viewer', () => {
     // the first page's link arrives late: it's dropped
     await act(async () => answerFirst({ url: '/v/v1.plan.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 }))
     await flush()
-    expect(screen.getByTestId('where').textContent).toBe('/pages/local/handy')
+    expect(screen.getByTestId('where').textContent).toBe('/blueprints/local/handy')
     expect(container.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.handy.sig/?theme=light')
   })
 
@@ -327,7 +327,7 @@ describe('the viewer', () => {
     globalThis.setTimeout = ((fn: () => void, ms?: number, ...a: unknown[]) => ((ms ?? 0) > 60_000 ? (timers.push({ fn, ms: ms! }), 0) : realSet(fn, ms, ...a))) as typeof setTimeout
     try {
       api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
-      const { container } = await at('/pages/local/ghostex')
+      const { container } = await at('/blueprints/local/ghostex')
       await flush()
       const renew = timers.find((t) => Math.abs(t.ms - 11 * 3_600_000) < 60_000)
       expect(renew).toBeTruthy()
@@ -355,7 +355,7 @@ describe('the viewer', () => {
     }
     try {
       api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
-      const { container } = await at('/pages/local/ghostex')
+      const { container } = await at('/blueprints/local/ghostex')
       await flush()
       api.openPage.mockRejectedValue(new Error("Couldn't reach the hub") as never)
       await fire(11 * 3_600_000)
@@ -400,7 +400,7 @@ describe('the viewer', () => {
     }
     try {
       api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
-      const { container } = await at('/pages/local/ghostex')
+      const { container } = await at('/blueprints/local/ghostex')
       await flush()
       timers = []
       // back after 11 h 10 min (the timer slept with the device), and the hub doesn't answer
@@ -428,7 +428,7 @@ describe('the viewer', () => {
   test("renewal goes by how long the hub says the link lasts, not by the hub's clock", async () => {
     // the hub's clock is two hours ahead of this device's
     api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 14 * 3_600_000, ttl: 12 * 3_600_000 } as never)
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     api.openPage.mockResolvedValue({ url: '/v/v1.new.sig/', expires: Date.now() + 14 * 3_600_000, ttl: 12 * 3_600_000 } as never)
     const realNow = Date.now
@@ -447,7 +447,7 @@ describe('the viewer', () => {
   test('Reload asks for a new link every time, so a link revoked from another device comes back', async () => {
     viewport(390, 844)
     const user = userEvent.setup()
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     api.openPage.mockResolvedValue({ url: '/v/v1.new.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
     await user.click(screen.getByRole('button', { name: 'More' }))
@@ -459,7 +459,7 @@ describe('the viewer', () => {
 
   test('on a desktop, clicking the open page in the list again opens it with a new link', async () => {
     const user = userEvent.setup()
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     api.openPage.mockResolvedValue({ url: '/v/v1.new.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
     await user.click(screen.getByRole('link', { name: /^Inyon plan/ }))
@@ -475,7 +475,7 @@ describe('the viewer', () => {
     try {
       viewport(390, 844)
       const user = userEvent.setup()
-      await at('/pages/local/ghostex')
+      await at('/blueprints/local/ghostex')
       await flush()
       api.openPage.mockResolvedValue({ url: '/v/v1.fresh.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
       await user.click(screen.getByRole('button', { name: 'More' }))
@@ -502,7 +502,7 @@ describe('the viewer', () => {
   test('the Plan control loads the plan again after the page moved on by its own links', async () => {
     globalThis.fetch = mock(async (url: string) => new Response(null, { status: String(url).endsWith('mockups/') ? 200 : 404 })) as any
     const user = userEvent.setup()
-    const { container } = await at('/pages/local/ghostex')
+    const { container } = await at('/blueprints/local/ghostex')
     await flush()
     await flush()
     // the frame went to the mockups by a link inside it; the app still says Plan
@@ -519,7 +519,7 @@ describe('the viewer', () => {
     localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h1', name: 'arm', url: 'http://arm:4777', token: 't1', pairedAt: 1 }]))
     const far = entry('far', { host: 'hub:h1/local', name: 'Far plan' })
     usePages.setState({ pages: [far], unreachable: [] })
-    const { container } = await at('/pages/hub%3Ah1%2Flocal/far')
+    const { container } = await at('/blueprints/hub%3Ah1%2Flocal/far')
     await flush()
     expect(container.querySelector('iframe')!.getAttribute('src')).toBe('http://arm:4777/v/v1.tok.sig/?theme=light')
     await act(async () => usePages.setState({ unreachable: ['h1'] }))
@@ -539,19 +539,19 @@ describe('the viewer', () => {
     api.hubPages.mockRejectedValue(new ApiError(401, 'Unauthorized') as never)
     usePages.setState({ pages: [entry('far', { host: 'hub:h1/local', name: 'Far plan' })] })
     try {
-      const viewer = await at('/pages/hub%3Ah1%2Flocal/far')
+      const viewer = await at('/blueprints/hub%3Ah1%2Flocal/far')
       await act(() => loadPages())
       expect(usePages.getState()).toMatchObject({ pages: [], forgotten: ['h1'], unreachable: [] })
       expect(screen.getByText('arm forgot this phone')).toBeTruthy()
       expect(screen.queryByText('This blueprint is gone')).toBeNull()
       expect(screen.queryByText('The hub is out of reach')).toBeNull()
       viewer.unmount()
-      const list = await at('/pages')
+      const list = await at('/blueprints')
       await flush()
       expect(screen.getByRole('status').textContent).toBe('arm forgot this phone. Pair it again from the hub to see its pages here.')
       list.unmount()
       viewport(1280, 800)
-      await at('/pages/hub%3Ah1%2Flocal/far')
+      await at('/blueprints/hub%3Ah1%2Flocal/far')
       await flush()
       expect(screen.getByText('arm forgot this phone')).toBeTruthy()
     } finally {
@@ -560,9 +560,9 @@ describe('the viewer', () => {
   })
 
   test('on a desktop, /pages opens the page that changed last', async () => {
-    await at('/pages')
+    await at('/blueprints')
     await flush()
-    expect(screen.getByTestId('where').textContent).toBe('/pages/local/ghostex')
+    expect(screen.getByTestId('where').textContent).toBe('/blueprints/local/ghostex')
   })
 })
 

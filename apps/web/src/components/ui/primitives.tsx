@@ -132,7 +132,7 @@ export function Segmented<T extends string>({
   const r = pill ? pill.height / 2 : 0
   const part = clsx('absolute inset-y-0 left-0 border-y border-line bg-elev shadow-card', moved.current && 'transition-transform duration-(--dur-move) ease-out-soft')
   return (
-    <div ref={box} role="radiogroup" aria-label={label} className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
+    <div ref={box} role="radiogroup" aria-label={label} className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'no-scrollbar w-full overflow-x-auto' : 'w-max')}>
       <span aria-hidden className={clsx('pointer-events-none absolute inset-x-0 top-0.5 bottom-0.5', !pill && 'hidden')}>
         {pill && (
           <>
@@ -154,8 +154,9 @@ export function Segmented<T extends string>({
           onClick={() => onChange(o.v)}
           className={clsx(
             'press relative flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium after:absolute after:-inset-y-1.5 after:inset-x-0',
-            size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
-            full && 'flex-1',
+            // a strip across the width shares it out, so its options need less room of their own
+            size === 'sm' ? 'h-7 text-[12px]' : 'h-8 text-[13px]',
+            full ? 'flex-1 px-2' : size === 'sm' ? 'px-2.5' : 'px-3',
             value === o.v ? 'text-fg' : 'text-fg-3 hover:text-fg-2',
             value === o.v && !pill && 'bg-elev shadow-soft',
           )}

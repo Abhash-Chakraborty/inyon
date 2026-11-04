@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleArrowUp, CloudOff, Copy, Ellipsis, ExternalLink, FileText, FolderOpen, FolderPlus, LayoutTemplate, Link2Off, PanelsTopLeft,
-  NotebookText, RotateCw, Search, ShieldCheck, Smartphone, Table2, Tablet, Monitor, Trash2,
+  BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleArrowUp, CloudOff, Copy, Ellipsis, ExternalLink, FileText, Folder, FolderOpen, FolderPlus, Link2Off, PanelsTopLeft,
+  NotebookText, RotateCw, Search, ShieldCheck, Smartphone, SquareTerminal, Tablet, Monitor, Trash2,
 } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { ApiError } from '../lib/api.ts'
@@ -12,8 +12,8 @@ import { toast } from '../lib/store.ts'
 import { useBackCloses } from '../lib/back.ts'
 import { listHubs } from '../lib/hubs.ts'
 import {
-  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, noteSrc, noteTitle, groupName, groupPages, hubForgot, hubIdOf, hubUnreachable, isBridged, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId,
-  usePages, type Device, type Page, type Part,
+  DEVICES, PART_LABEL, browserPath, fitScale, noteTitle, groupName, groupPages, hubForgot, hubIdOf, hubUnreachable, isChanged, leftText, loadPages, manyMachines, matchesPage, pageHref, pageId,
+  usePages, type Device, type Page, type PageGroup, type Part,
 } from '../lib/pages.ts'
 import { Logo } from '../components/AppShell.tsx'
 import { Button, Empty, IconButton, Menu, Segmented, Waiting, type MenuItem } from '../components/ui/primitives.tsx'
@@ -23,8 +23,9 @@ import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 import {
   ADD_COMMAND, BROWSER_HINT, ChangedDot, PAGES_DOCS, PageFrame, ProgressBar, SANDBOX_NOTE, copyFolder, openInBrowser, openPageSheet, pageLabel, pageMenu, removePage, renewLink,
-  revokeLinks, updatedLine, useMachines, usePageLink, useRunningNames, useSiteParts, type PageMachine,
+  revokeLinks, updatedLine, useMachines, useNames, type PageMachine,
 } from '../components/pages/shared.tsx'
+import { PART_ICON, notesMenu, useViewer } from '../components/pages/viewer.tsx'
 
 /** Two panes from this width up; below it, the list and a full-screen viewer. */
 const WIDE = '(min-width: 768px)'
@@ -39,7 +40,7 @@ function useWide() {
   return wide
 }
 
-/** `/pages` and `/pages/:host/:slug`. */
+/** `/blueprints` and `/blueprints/:host/:slug`, or the same under `/pages` (their address before 0.25). */
 export function PagesPage() {
   const params = useParams()
   const host = params.host ? decodeURIComponent(params.host) : undefined
@@ -51,66 +52,6 @@ export function PagesPage() {
 }
 
 // ---------- shared by the phone and desktop viewers ----------
-
-function useViewer(page: Page | undefined) {
-  const { link, error, retry } = usePageLink(page)
-  const parts = useSiteParts(page, link)
-  const [want, setPart] = useState<Part>('plan')
-  // a note from the site's research folder shown instead of a part, while it's still listed
-  const [wantNote, setNote] = useState<string>()
-  useEffect(() => {
-    setPart('plan')
-    setNote(undefined)
-  }, [page?.id])
-  const part = parts.includes(want) ? want : 'plan'
-  const note = wantNote && page?.notes?.includes(wantNote) ? wantNote : undefined
-  const [n, setN] = useState(0)
-  const theme = useStore((s) => s.resolvedTheme)
-  const themeNow = useRef(theme)
-  themeNow.current = theme
-  // the theme isn't part of the address's identity: a theme change is a message, not a reload
-  const src = useMemo(
-    () => (page && link ? (note ? noteSrc(pageBase(page.host), link.url, note, themeNow.current) : frameSrc(pageBase(page.host), link.url, part, themeNow.current)) : undefined),
-    [page?.host, link?.url, part, note],
-  )
-  // a new link every time: the one on screen may have been revoked from another device. The new
-  // address reloads the frame; when no link comes (the hub is out of reach) the old one is tried again
-  const reload = () => void retry().then((renewed) => renewed || setN((x) => x + 1))
-  // picking a part always loads it, also the one the control shows when the page moved on by its own links
-  const pickPart = (p: Part) => {
-    setPart(p)
-    setNote(undefined)
-    setN((x) => x + 1)
-  }
-  const pickNote = (name: string) => {
-    setNote(name)
-    setN((x) => x + 1)
-  }
-  // looking at a page clears its changed mark, also when it changes while it's open
-  const changed = page ? changedAt(page) : 0
-  useEffect(() => {
-    if (page) markSeen(page)
-  }, [page?.id, changed])
-  // the page's hub didn't answer the last poll: a frame already showing stays, marked out of date
-  const stale = usePages((s) => !!page && hubUnreachable(page.host, s.unreachable))
-  // a page on a computer paired with the phone: the app's viewer renders it from the link's files,
-  // and there is no address to open outside the app
-  const bridged = !!page && isBridged(page.host)
-  const bridge = bridged && link ? link.url : undefined
-  return { link, error, retry, parts, part, setPart: pickPart, note, setNote: pickNote, src, frameKey: `${src}#${n}`, reload, stale, bridged, bridge }
-}
-
-type Viewer = ReturnType<typeof useViewer>
-
-/** The site's research notes, and the way back to the page while one is open. */
-function notesMenu(page: Page, v: Viewer): MenuItem[] {
-  return [
-    ...(v.note ? [{ key: 'back', label: `Back to ${PART_LABEL[v.part]}`, icon: PART_ICON[v.part], onSelect: () => v.setPart(v.part) }] : []),
-    ...(page.notes ?? []).map((name, i) => ({ key: `note:${name}`, label: noteTitle(name), icon: <FileText className="size-4" />, selected: v.note === name, separated: !!v.note && i === 0, disabled: !v.link, onSelect: () => v.setNote(name) })),
-  ]
-}
-
-const PART_ICON: Record<Part, React.ReactNode> = { plan: <FileText className="size-4" />, mockups: <LayoutTemplate className="size-4" />, matrix: <Table2 className="size-4" /> }
 
 /** What the stage shows while there's no frame: opening, gone, or out of reach. */
 function FrameState({ page, machine, error, onRetry, onBack }: { page: Page; machine: PageMachine; error?: Error; onRetry: () => void; onBack?: () => void }) {
@@ -240,8 +181,9 @@ function PhoneList() {
   const machine = useMachines()
   const [filtering, setFiltering] = useState(false)
   const [q, setQ] = useState('')
-  const names = useRunningNames()
+  const names = useNames()
   const groups = useMemo(() => groupPages((pages ?? []).filter((p) => matchesPage(p, machine(p.host).name, q, names)), (h) => machine(h).name, names), [pages, q, machine, names])
+  const many = manyMachines(groups)
   return (
     <PullRefresh onRefresh={loadPages} className="min-h-0 flex-1 overflow-y-auto">
       <ListHeader
@@ -271,16 +213,11 @@ function PhoneList() {
           groups.map((g) => {
             const m = machine(g.host)
             return (
-              <section key={g.host} className="mt-4 first:mt-1.5">
-                <MachineHeading m={m} />
-                {g.projects.map((pr) => (
-                  <div key={pr.key}>
-                    <div className="mx-1 mt-3 mb-2 font-mono text-[12px] text-fg-3">{pr.name}</div>
-                    <div className="space-y-2">
-                      {pr.pages.map((p) => <PageCard key={p.id} p={p} m={m} changed={isChanged(p, seen)} />)}
-                    </div>
-                  </div>
-                ))}
+              <section key={g.key} className="mt-5 first:mt-1.5">
+                <GroupHeading g={g} m={m} many={many} />
+                <div className="mt-2 space-y-2">
+                  {g.pages.map((p) => <PageCard key={p.id} p={p} m={m} changed={isChanged(p, seen)} />)}
+                </div>
               </section>
             )
           })
@@ -290,13 +227,24 @@ function PhoneList() {
   )
 }
 
-function MachineHeading({ m, small }: { m: PageMachine; small?: boolean }) {
+/** The machine a group is on, as a small label: shown when the list spans machines, or the machine is offline. */
+function MachineLabel({ m }: { m: PageMachine }) {
   return (
-    <div className={clsx('flex items-center gap-2 font-semibold', small ? 'h-8 px-2 text-[13px]' : 'mx-1 text-[15px] tracking-[-0.01em]')}>
-      <MachineIcon kind={m.host ? machineKindOf(m.host) : 'server'} size={small ? 14 : 16} className="shrink-0 text-fg-2" />
-      <span className="min-w-0 truncate">{m.name}</span>
-      {m.hub && <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-line bg-white/45 px-2 font-mono text-[12px] font-normal text-fg-2 dark:bg-white/[0.03]">hub</span>}
-      {!m.online && <span className="ml-auto inline-flex shrink-0 items-center gap-1 font-mono text-[12px] font-normal text-danger"><CloudOff className="size-3.5" /> offline</span>}
+    <span className={clsx('inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-full border border-line bg-white/45 px-2 font-mono text-[12px] font-normal dark:bg-white/[0.03]', m.online ? 'text-fg-2' : 'text-danger')}>
+      {m.online ? <MachineIcon kind={m.host ? machineKindOf(m.host) : 'server'} size={12} className="shrink-0" /> : <CloudOff className="size-3 shrink-0" />}
+      <span className="truncate">{m.online ? m.name : `${m.name} · offline`}</span>
+    </span>
+  )
+}
+
+/** A group's heading: its tmux session's name (or its project's, when the session isn't known), and its machine when that helps. */
+function GroupHeading({ g, m, many, small }: { g: PageGroup; m: PageMachine; many: boolean; small?: boolean }) {
+  const Icon = g.session ? SquareTerminal : Folder
+  return (
+    <div className={clsx('group-heading flex min-w-0 flex-1 items-center gap-2 font-semibold', small ? 'text-[13px]' : 'mx-1 text-[15px] tracking-[-0.01em]')}>
+      <Icon className={clsx('shrink-0 text-fg-3', small ? 'size-3.5' : 'size-4')} aria-label={g.session ? 'tmux session' : 'project folder'} />
+      <span className="group-heading-name min-w-0 truncate">{g.name}</span>
+      {(many || !m.online) && <MachineLabel m={m} />}
     </div>
   )
 }
@@ -349,8 +297,11 @@ function PhoneViewer({ id }: { id: string }) {
   const all = usePages((s) => s.pages)
   const machine = useMachines()
   const nav = useNavigate()
+  const names = useNames()
+  // opened from a session: back returns there, else to the list
+  const from = (useLocation().state as { from?: string } | null)?.from
   // back closes the viewer; it never walks back through the pages opened inside the frame
-  const back = () => nav('/pages', { replace: true })
+  const back = () => nav(from ?? '/blueprints', { replace: true })
   useBackCloses(true, back)
   const v = useViewer(page)
   const m = page ? machine(page.host) : undefined
@@ -359,12 +310,12 @@ function PhoneViewer({ id }: { id: string }) {
     ? [
         { key: 'reload', label: 'Reload', icon: <RotateCw className="size-4" />, disabled: !v.link, onSelect: v.reload },
         ...(v.parts.length > 1 ? v.parts.map((pt, i) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: !v.note && v.part === pt, separated: i === 0, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
-        ...(v.bridged ? [] : [{ key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page) }]),
+        ...(v.bridged ? [] : [{ key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page, browserPath(v.part, v.note)) }]),
       ]
     : []
   const machineItems: MenuItem[] = page && m
     ? [
-        ...siblings.map((p) => ({ key: p.id, label: p.name, icon: <FileText className="size-4" />, selected: p.id === page.id, onSelect: () => nav(pageHref(p.host, p.slug), { replace: true }) })),
+        ...siblings.map((p) => ({ key: p.id, label: p.name, icon: <FileText className="size-4" />, selected: p.id === page.id, onSelect: () => nav(pageHref(p.host, p.slug), { replace: true, state: from ? { from } : undefined }) })),
         ...(m.host ? [{ key: 'machine', label: `Open ${m.name}`, icon: <MachineIcon kind={machineKindOf(m.host)} size={16} />, separated: true, onSelect: () => nav(`/machines/${encodeURIComponent(m.host!.config.id)}`) }] : []),
       ]
     : []
@@ -372,8 +323,12 @@ function PhoneViewer({ id }: { id: string }) {
     <div className="animate-page flex min-h-0 flex-1 flex-col bg-bg">
       <header className="pt-safe shrink-0 border-b border-line bg-bg">
         <div className="flex h-11 items-center gap-0.5 px-0.5">
-          <IconButton label="Back to Blueprints" className="size-11 rounded-xl" onClick={back}><ChevronLeft className="size-5" /></IconButton>
-          <h1 className="min-w-0 flex-1 truncate pl-0.5 text-[15px] font-semibold tracking-[-0.01em]">{page?.name ?? ''}</h1>
+          <IconButton label={from ? 'Back to the session' : 'Back to Blueprints'} className="size-11 rounded-xl" onClick={back}><ChevronLeft className="size-5" /></IconButton>
+          {/* which blueprint this is, and the session it belongs to */}
+          <div className="min-w-0 flex-1 pl-0.5 leading-tight">
+            <h1 className="truncate text-[15px] font-semibold tracking-[-0.01em]">{page?.name ?? ''}</h1>
+            {page && <div className="viewer-where truncate font-mono text-[12px] text-fg-3">{groupName(page, names)}</div>}
+          </div>
           {m && (
             <Menu
               align="end"
@@ -456,14 +411,14 @@ function PagesDesktop({ selected }: { selected?: string }) {
   const [shut, setShut] = useState<ReadonlySet<string>>(() => new Set())
   const filter = useRef<HTMLDivElement>(null)
   const page = pages?.find((p) => p.id === selected)
-  const names = useRunningNames()
+  const names = useNames()
   const all = useMemo(() => groupPages(pages ?? [], (h) => machine(h).name, names), [pages, machine, names])
   const groups = useMemo(() => (q ? groupPages((pages ?? []).filter((p) => matchesPage(p, machine(p.host).name, q, names)), (h) => machine(h).name, names) : all), [all, pages, q, machine, names])
 
   // nothing picked: open the page that changed last (or the first) instead of an empty pane
   useEffect(() => {
     if (selected || !pages?.length) return
-    const first = all.flatMap((g) => g.projects.flatMap((p) => p.pages))
+    const first = all.flatMap((g) => g.pages)
     const pick = first.find((p) => isChanged(p, seen)) ?? first[0]
     if (pick) nav(pageHref(pick.host, pick.slug), { replace: true })
   }, [selected, pages?.length])
@@ -479,6 +434,7 @@ function PagesDesktop({ selected }: { selected?: string }) {
     return () => window.removeEventListener('keydown', on)
   }, [])
 
+  const many = manyMachines(all)
   const toggle = (key: string) => setShut((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n })
 
   return (
@@ -508,22 +464,15 @@ function PagesDesktop({ selected }: { selected?: string }) {
           ) : (
             groups.map((g) => {
               const m = machine(g.host)
+              const closed = shut.has(g.key) && !q
               return (
-                <div key={g.host} className="mt-1.5 first:mt-0">
-                  <MachineHeading m={m} small />
-                  {g.projects.map((pr) => {
-                    const closed = shut.has(pr.key) && !q
-                    return (
-                      <div key={pr.key}>
-                        <button type="button" aria-expanded={!closed} onClick={() => toggle(pr.key)} className="flex h-[30px] w-full items-center gap-1.5 rounded-xl pr-2 pl-3 text-left text-[13px] text-fg-2 hover:bg-hover">
-                          {closed ? <ChevronRight className="size-3.5 text-fg-3" /> : <ChevronDown className="size-3.5 text-fg-3" />}
-                          <span className="min-w-0 flex-1 truncate">{pr.name}</span>
-                          <span className="font-mono text-[12px] text-fg-3">{pr.pages.length}</span>
-                        </button>
-                        {!closed && pr.pages.map((p) => <TreeRow key={p.id} p={p} m={m} active={p.id === selected} changed={isChanged(p, seen)} />)}
-                      </div>
-                    )
-                  })}
+                <div key={g.key} className="tree-group mt-1 first:mt-0">
+                  <button type="button" aria-expanded={!closed} onClick={() => toggle(g.key)} className="flex h-8 w-full items-center gap-1.5 rounded-xl pr-2 pl-2 text-left hover:bg-hover">
+                    {closed ? <ChevronRight className="size-3.5 shrink-0 text-fg-3" /> : <ChevronDown className="size-3.5 shrink-0 text-fg-3" />}
+                    <GroupHeading g={g} m={m} many={many} small />
+                    <span className="shrink-0 font-mono text-[12px] text-fg-3">{g.pages.length}</span>
+                  </button>
+                  {!closed && g.pages.map((p) => <TreeRow key={p.id} p={p} m={m} active={p.id === selected} changed={isChanged(p, seen)} />)}
                 </div>
               )
             })
@@ -589,7 +538,7 @@ const DEVICE_OPTIONS: { v: Device; label: React.ReactNode; name: string }[] = [
 ]
 
 function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
-  const names = useRunningNames()
+  const names = useNames()
   const nav = useNavigate()
   const v = useViewer(page)
   const [device, setDevice] = useState<Device>('fit')
@@ -615,7 +564,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
     { key: 'revoke', label: 'Revoke links', icon: <Link2Off className="size-4" />, onSelect: () => void revokeLinks(page) },
     { key: 'copy', label: 'Copy folder path', icon: <Copy className="size-4" />, onSelect: () => void copyFolder(page) },
     { key: 'folder', label: 'Show folder', icon: <FolderOpen className="size-4" />, onSelect: () => openPageSheet({ kind: 'folder', page }) },
-    { key: 'remove', label: 'Remove', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void removePage(page, m.name, () => nav('/pages', { replace: true })) },
+    { key: 'remove', label: 'Remove', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void removePage(page, m.name, () => nav('/blueprints', { replace: true })) },
   ]
   return (
     <>
@@ -626,7 +575,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
             {m.name}
           </span>
           <span className="text-fg-3">/</span>
-          <span className="truncate">{groupName(page, names)}</span>
+          <span className="crumb-group truncate">{groupName(page, names)}</span>
           <span className="text-fg-3">/</span>
           <b className="truncate font-semibold text-fg">{page.name}</b>
         </nav>
@@ -655,7 +604,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
         <IconButton label="Reload" disabled={!v.link} onClick={v.reload}><RotateCw className="size-4" /></IconButton>
         {/* a fresh 12 h link each time; the tab sits at the hub's address, which is never a sign-in page */}
         {!v.bridged && (
-          <IconButton label="Open in new tab" title="Open in new tab. A 12 h link; never sign in there." disabled={!v.link} onClick={() => void openInBrowser(page)}>
+          <IconButton label="Open in new tab" title="Open in new tab. A 12 h link; never sign in there." disabled={!v.link} onClick={() => void openInBrowser(page, browserPath(v.part, v.note))}>
             <ExternalLink className="size-4" />
           </IconButton>
         )}
@@ -676,7 +625,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
           )
         ) : (
           <div className="flex size-full items-center justify-center">
-            <FrameState page={page} machine={m} error={v.error} onRetry={() => void v.retry()} onBack={() => nav('/pages', { replace: true })} />
+            <FrameState page={page} machine={m} error={v.error} onRetry={() => void v.retry()} onBack={() => nav('/blueprints', { replace: true })} />
           </div>
         )}
       </div>

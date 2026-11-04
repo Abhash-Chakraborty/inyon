@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 import { CircleX, Copy, GitFork, History, Link2, LogOut, Plug, Shrink, RadioTower, RotateCcw, RotateCw, Gauge, Target, Trash2 } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { openMenu, Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
@@ -165,7 +165,8 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
 export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: { s: SessionModel; items: ChatItem[]; open: boolean; onClose: () => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
   const [tab, setTab] = useState<'activity' | 'changes' | 'files' | 'preview' | 'pages'>('activity')
   const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
-  const pages = useSessionPages(s)
+  const pages = useSessionPages(s).count
+  const here = useLocation()
   return (
     <Sheet open={open} onClose={onClose} wide title="Activity">
       <div className="-mx-1 mb-3">
@@ -174,7 +175,7 @@ export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: {
             { v: 'changes', label: 'Changes' },
             { v: 'files', label: 'Files' },
             { v: 'preview', label: 'Preview' },
-            ...(pages.length || tab === 'pages' ? [{ v: 'pages' as const, label: 'Blueprints' }] : []),
+            ...(pages || tab === 'pages' ? [{ v: 'pages' as const, label: 'Blueprints' }] : []),
           ]} />
       </div>
       <div key={tab} className="animate-fade-in -mx-5 flex min-h-[50dvh] flex-col">
@@ -182,7 +183,7 @@ export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: {
         {tab === 'changes' && <ChangesTab items={items} p={p} onComposed={onClose} />}
         {tab === 'files' && p && <FilesTab p={p} onComposed={onClose} />}
         {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={[]} />}
-        {tab === 'pages' && <PagesTab pages={pages} />}
+        {tab === 'pages' && <PagesTab s={s} from={here.pathname + here.search} />}
       </div>
     </Sheet>
   )
