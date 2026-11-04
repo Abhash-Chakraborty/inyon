@@ -862,7 +862,7 @@ input:focus-visible { outline: none; }
 /* ---------- right-click menus ---------- */
 
 .menu-backdrop { position: fixed; inset: 0; z-index: 90; }
-.menu { position: fixed; z-index: 91; min-width: 200px; max-width: 260px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); padding: 6px; box-shadow: var(--shadow-lg); transform-origin: top left; animation: pop-in var(--dur-small) var(--ease-out-soft); }
+.menu { position: fixed; z-index: 91; min-width: 200px; max-width: 260px; max-height: calc(100dvh - 16px); overflow-y: auto; overscroll-behavior: contain; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); padding: 6px; box-shadow: var(--shadow-lg); transform-origin: top left; animation: pop-in var(--dur-small) var(--ease-out-soft); }
 .menu-item { display: flex; width: 100%; height: 40px; align-items: center; gap: 10px; border-radius: 10px; padding: 0 10px; text-align: left; font-size: 13.5px; color: var(--fg); }
 .menu-item .icon { color: var(--fg-3); }
 .menu-item:hover, .menu-item:focus-visible { background: var(--hover); outline: none; }

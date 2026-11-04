@@ -243,6 +243,10 @@ pub fn wakes_at_here(at: u64, clock: Clock) -> String {
     wakes_at(at, clock, platform::tz_at(at))
 }
 
+/// One organize change at a time: each is planned from the marks the one before left, so two
+/// quick tag changes to a session don't each send a tag list without the other's tag.
+static SENDING: std::sync::LazyLock<futures_util::lock::Mutex<()>> = std::sync::LazyLock::new(|| futures_util::lock::Mutex::new(()));
+
 /// Sends each session its change; the sessions the hub refused, and the last reason.
 async fn send_all(list: Vec<(Key, Value)>) -> (Vec<Key>, Option<String>) {
     let mut failed = vec![];
@@ -283,14 +287,15 @@ pub fn run(op: OrgOp, hub: Signal<Hub>) {
         OrgOp::ClearSelection => SELECTION.write().clear(),
         // not tied to the screen that asked: the toast whose Undo this is goes away at once
         OrgOp::Restore(undo) => {
-            let org = ORG.peek().org.clone();
-            let full = undo.full(&org);
-            if let (false, Some((_, t, _))) = (full.is_empty(), &undo.tag) {
-                let why = if full.len() == 1 { format!("That session has {MAX_TAGS} tags already.") } else { format!("{} sessions have {MAX_TAGS} tags already.", full.len()) };
-                toast::toast(format!("Could not put “{t}” back"), Some(why), ToastTone::Error);
-            }
-            let list = undo.changes(&org);
             dioxus::core::spawn_forever(async move {
+                let _turn = SENDING.lock().await;
+                let org = ORG.peek().org.clone();
+                let full = undo.full(&org);
+                if let (false, Some((_, t, _))) = (full.is_empty(), &undo.tag) {
+                    let why = if full.len() == 1 { format!("That session has {MAX_TAGS} tags already.") } else { format!("{} sessions have {MAX_TAGS} tags already.", full.len()) };
+                    toast::toast(format!("Could not put “{t}” back"), Some(why), ToastTone::Error);
+                }
+                let list = undo.changes(&org);
                 let n = list.len();
                 let (failed, why) = send_all(list).await;
                 // the pins go back where they were once they're all pinned again
@@ -305,21 +310,22 @@ pub fn run(op: OrgOp, hub: Signal<Hub>) {
             });
         }
         op => {
-            let keys = keys_of(&op);
-            let org = ORG.peek().org.clone();
-            let clock = platform::clock();
-            let Plan { changes, undo, over_limit } = plan(&op, &org, clock.now as u64, &|p| wake(p, clock));
-            if over_limit {
-                toast::toast(format!("A session can have at most {MAX_TAGS} tags"), None, ToastTone::Error);
-            }
-            if changes.is_empty() {
-                return;
-            }
-            // the one that changed, when only one of the selected did
-            let name = changes.first().map(|(k, _)| name_of(&hub.peek().hosts, &org, k)).unwrap_or_default();
-            let said = told(&op, changes.len(), &name, clock);
-            let many = keys.len() > 1;
+            let many = keys_of(&op).len() > 1;
             dioxus::core::spawn_forever(async move {
+                // planned once the change before it is in, from the marks it left
+                let _turn = SENDING.lock().await;
+                let org = ORG.peek().org.clone();
+                let clock = platform::clock();
+                let Plan { changes, undo, over_limit } = plan(&op, &org, clock.now as u64, &|p| wake(p, clock));
+                if over_limit {
+                    toast::toast(format!("A session can have at most {MAX_TAGS} tags"), None, ToastTone::Error);
+                }
+                if changes.is_empty() {
+                    return;
+                }
+                // the one that changed, when only one of the selected did
+                let name = changes.first().map(|(k, _)| name_of(&hub.peek().hosts, &org, k)).unwrap_or_default();
+                let said = told(&op, changes.len(), &name, clock);
                 let n = changes.len();
                 let (failed, why) = send_all(changes).await;
                 let f = failed.len();
@@ -371,7 +377,7 @@ fn tag_items(keys: &[Key], org: &Organize, mine: &[String], toggle: bool) -> Vec
             let on = mine.contains(&t);
             let item = Item::new(format!("#{t}"), Icon::Tag, Action::Org(OrgOp::Tag(keys.to_vec(), t.clone(), !(toggle && on))));
             if toggle {
-                item.checked(on)
+                item.toggled(on)
             } else {
                 item
             }
@@ -440,7 +446,7 @@ pub fn session_items(r: &PaneRef, org: &Org, clock: Clock, tabs: bool) -> Vec<It
             Icon::Ellipsis,
             vec![
                 Item::new(if noted { "Edit note…" } else { "Note…" }, Icon::StickyNote, Action::Org(OrgOp::Sheet(OrgSheet::Note(k.clone())))),
-                Item::new("Close when done", Icon::CircleCheck, Action::Org(OrgOp::CloseWhenDone(k.clone(), !closes))).checked(closes),
+                Item::new("Close when done", Icon::CircleCheck, Action::Org(OrgOp::CloseWhenDone(k.clone(), !closes))).toggled(closes),
             ],
         ));
         v.push(Item::new("Select", Icon::ListChecks, Action::Org(OrgOp::Select(k))).separated());

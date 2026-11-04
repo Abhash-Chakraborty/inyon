@@ -128,7 +128,13 @@ impl Selection {
                     }
                 }
             }
-            _ => self.toggle(k),
+            // nothing to run from: this row joins (a selected one stays) and anchors the next
+            _ => {
+                if !self.keys.contains(&k) {
+                    self.keys.push(k.clone());
+                }
+                self.anchor = Some(k);
+            }
         }
     }
 
@@ -278,8 +284,11 @@ mod tests {
         // an anchor that left the list: a Shift-click starts over from the row
         assert!(s.keep_only(&[k("%1"), k("%2")]));
         assert_eq!(s.anchor, None);
+        // Shift-click on a row already picked keeps it, and the next range runs from it
+        s.extend(k("%2"), &order);
+        assert_eq!((s.keys.clone(), s.anchor.clone()), (vec![k("%2"), k("%1")], Some(k("%2"))));
         s.extend(k("%4"), &order);
-        assert_eq!(s.keys, [k("%2"), k("%1"), k("%4")]);
+        assert_eq!(s.keys, [k("%2"), k("%1"), k("%3"), k("%4")]);
         s.clear();
         assert!(s.is_empty());
     }

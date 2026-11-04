@@ -29,6 +29,8 @@ const state = {
   org: { v: 2, sessions: [] as Mark[], projects: [], groups: [], spaces: [] },
   calls: [] as { method: string; path: string; body?: any }[],
   marks: 0,
+  /** ms the hub takes to answer a change */
+  slow: 0,
 }
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
@@ -81,7 +83,12 @@ const server = Bun.serve({
     const pane = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(organize|name)$/.exec(p)
     if (pane) {
       const [host, id] = [decodeURIComponent(pane[1]!), `%${pane[2]}`]
-      if (pane[3] === 'organize' && req.method === 'PATCH') return json(organize(host, id, body))
+      if (pane[3] === 'organize' && req.method === 'PATCH') {
+        // the change is made at once; only the answer is late
+        const done = organize(host, id, body)
+        if (state.slow) await Bun.sleep(state.slow)
+        return json(done)
+      }
       if (pane[3] === 'name' && req.method === 'PUT') {
         for (const h of state.hosts) for (const s of h.sessions) for (const w of s.windows) for (const x of w.panes) if (h.config.id === host && x.id === id) x.label = body.name || undefined
         setTimeout(() => publish('overview'), 30)
@@ -271,7 +278,7 @@ try {
       // the tag is offered, ticked, next time
       await row('Migrate auth to passkeys').locator('.side-link').click({ button: 'right' })
       await page.locator('.menu .menu-item', { hasText: 'Tag as' }).click()
-      check((await page.locator('.menu-sub [role=menuitemradio][aria-checked=true]').textContent())?.includes('#review'), `${label}: its tag is ticked`)
+      check((await page.locator('.menu-sub [role=menuitemcheckbox][aria-checked=true]').textContent())?.includes('#review'), `${label}: its tag is ticked`)
       await closeMenu(page)
 
       // a note from More
@@ -336,6 +343,21 @@ try {
       check(await until(async () => (await page.locator('.select-count').textContent()) === '3 selected'), `${label}: Shift-click picks the cards between (${await page.locator('.select-count').textContent()})`)
       await page.keyboard.press('Escape')
       check(await until(async () => (await page.locator('.select-bar').count()) === 0), `${label}: Esc lets go`)
+
+      // two quick tags on one session while the hub is slow to answer: the second waits for the
+      // first, so neither is lost
+      organize('local', '%11', { tags: ['alpha', 'beta'] })
+      organize('build-box', '%14', { pinned: false, parked: false, snoozedUntil: null, tags: null })
+      await page.waitForTimeout(150)
+      state.slow = 500
+      for (const t of ['#alpha', '#beta']) {
+        await row('Tidy the billing API types').locator('.side-link').click({ button: 'right' })
+        await page.locator('.menu .menu-item', { hasText: 'Tag as' }).click()
+        await page.locator('.menu-sub .menu-item', { hasText: t }).click()
+      }
+      const tags = () => state.org.sessions.find((m) => m.host === 'build-box' && m.pane === '%14')?.tags?.join(',')
+      check(await until(() => tags() === 'alpha,beta'), `${label}: both tags stay (${tags()})`)
+      state.slow = 0
     }
     await ctx.close()
   }

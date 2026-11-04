@@ -72,6 +72,8 @@ pub struct Item {
     pub hint: Option<String>,
     /// one of a few to pick from (a part of a page, a note), and whether it's the one picked
     pub checked: Option<bool>,
+    /// an on/off of its own (`menuitemcheckbox`) rather than one choice of several
+    pub toggle: bool,
     pub disabled: bool,
     /// opens these instead of doing something: beside the menu on a wide screen, in its place on a
     /// phone
@@ -82,7 +84,7 @@ pub struct Item {
 
 impl Item {
     pub fn new(label: impl Into<String>, icon: Icon, action: Action) -> Item {
-        Item { label: label.into(), icon, action, danger: false, separated: false, hint: None, checked: None, disabled: false, sub: None, header: false }
+        Item { label: label.into(), icon, action, danger: false, separated: false, hint: None, checked: None, toggle: false, disabled: false, sub: None, header: false }
     }
 
     /// An item that opens a submenu.
@@ -101,6 +103,13 @@ impl Item {
 
     pub fn hint(mut self, h: impl Into<String>) -> Item {
         self.hint = Some(h.into());
+        self
+    }
+
+    /// A tick for an on/off of its own, such as a tag: read out as a checkbox, not a choice.
+    pub fn toggled(mut self, on: bool) -> Item {
+        self.checked = Some(on);
+        self.toggle = true;
         self
     }
 
@@ -356,6 +365,17 @@ pub fn place_sub(item: (f64, f64, f64), n: usize, w: f64, h: f64) -> (f64, f64) 
     (x, y)
 }
 
+/// Where a submenu of `n` rows that takes the menu's place (a phone) starts: at the menu's top, or
+/// moved up so its last rows stay on the screen. Past the screen's height it scrolls.
+pub fn sub_top(top: f64, n: usize, h: f64) -> f64 {
+    let height = 12.0 + 40.0 * n as f64;
+    if top + height + 8.0 > h {
+        (h - 8.0 - height).max(8.0)
+    } else {
+        top
+    }
+}
+
 /// Below this width a submenu takes the menu's place instead of opening beside it.
 const SIDE_BY_SIDE: f64 = 640.0;
 
@@ -511,7 +531,7 @@ pub fn MenuLayer() -> Element {
             {
                 let n = rows(&items);
                 let (sx, sy) = if narrow {
-                    (left, top)
+                    (left, sub_top(top, n, h))
                 } else {
                     let r = dom::rect(&format!("menu-item-{parent}"))
                         .map_or((left, row_top(&all_items, parent, top), left + 220.0), |(l, t, r, _)| (l, t, r));
@@ -581,7 +601,11 @@ fn MenuRow(id: String, item: Item, first: bool, expanded: bool, on_hover: EventH
         button {
             id: "{id}",
             class: if expanded { format!("{class} menu-open") } else { class.to_string() },
-            role: if item.checked.is_some() { "menuitemradio" } else { "menuitem" },
+            role: match (item.checked, item.toggle) {
+                (Some(_), true) => "menuitemcheckbox",
+                (Some(_), false) => "menuitemradio",
+                _ => "menuitem",
+            },
             "aria-checked": item.checked.map(|on| if on { "true" } else { "false" }),
             "aria-haspopup": opens.then_some("menu"),
             "aria-expanded": opens.then_some(if expanded { "true" } else { "false" }),
@@ -696,6 +720,15 @@ mod tests {
         assert_eq!(place_sub((1200.0, 200.0, 1420.0), 3, 1440.0, 900.0), (984.0, 194.0));
         // near the bottom: moved up
         assert_eq!(place_sub((100.0, 860.0, 320.0), 4, 1440.0, 900.0), (316.0, 720.0));
+    }
+
+    #[test]
+    fn a_submenu_in_the_menus_place_moves_up_to_fit() {
+        // a 14-row tag list from a menu low on a phone moves up; a short one stays put
+        assert_eq!(sub_top(500.0, 14, 844.0), 844.0 - 8.0 - 572.0);
+        assert_eq!(sub_top(100.0, 3, 844.0), 100.0);
+        // taller than the screen: from the top, and the list scrolls
+        assert_eq!(sub_top(300.0, 14, 500.0), 8.0);
     }
 
     #[test]
