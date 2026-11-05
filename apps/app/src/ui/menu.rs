@@ -58,6 +58,8 @@ pub enum Action {
     Org(super::organize::OrgOp),
     /// Quick access's own: a tab, a saved prompt sent, starred or removed (from 1.1)
     Quick(super::quick::QuickOp),
+    /// the session side panel's: a mention, a file or folder to show, a diff to show
+    Panel(super::panel::PanelOp),
     /// nothing: a heading, or an item that opens a submenu
     None,
 }
@@ -693,6 +695,7 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
         }
         Action::Page(op) => super::pages::run(*op, here, hub),
         Action::Temp(op) => super::temp::run(op),
+        Action::Panel(op) => super::panel::run(op),
         Action::Settings(op) => super::settings::run(op),
         Action::Session(act) => super::session_menu::run(act, here),
         Action::EndSession { host, pane } => {

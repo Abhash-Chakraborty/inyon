@@ -12,6 +12,7 @@ mod android;
 mod api;
 mod asks;
 mod attach;
+mod changes;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod connect;
 mod diff;

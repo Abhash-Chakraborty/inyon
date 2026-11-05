@@ -12,6 +12,7 @@ use inyon_protocol::{chat_key, AgentDef, AgentKind, ClientMsg2, ReplyFont, SkinT
 use super::chat::ChatView;
 use super::icons::{AgentMark, Glyph, Icon};
 use super::outbox;
+use super::panel::{self, ActivitySheet, PanelSheets, SidePanel, Tab};
 use super::rows::Ctx;
 use super::terminal::TerminalView;
 use super::toast::{self, confirm, Ask, ToastTone};
@@ -128,6 +129,10 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let session_id = page_session(agent_info.and_then(|a| a.session_id.as_deref()), info.as_ref().and_then(|i| i.session_id.as_deref()));
     let page_here = super::pages::Here { session: session_id.clone(), ..page_here };
     let side = super::pages::use_side();
+    // the side panel beside the chat from 1180px, its tab, and the phone's Activity sheet
+    let panel_wide = panel::use_wide();
+    let mut panel_tab = use_signal(|| Tab::Changes);
+    let mut activity = use_signal(|| false);
     let subtitle = [
         Some(def.map_or("Terminal".to_string(), |d| d.name.clone())),
         r.map(|r| r.host.config.name.clone()),
@@ -162,6 +167,15 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         font: font_class(settings.reply_font, def),
         all_tools: settings.tool_detail != ToolDetail::Compact,
     };
+    // the live numbers: Copilot and OpenCode report theirs in the transcript
+    let live = agent_info.and_then(|a| a.status.clone());
+    let status = match agent {
+        Some(AgentKind::Copilot | AgentKind::Opencode) => info.as_ref().and_then(|i| i.status.clone()).or(live),
+        _ => live,
+    };
+    let of = panel::Of { host: host.clone(), pane: pane.clone(), ctx: ctx.clone(), here: page_here.clone(), side, agent, status, compact: def.and_then(|d| d.set.compact.clone()) };
+    let busy = crate::changes::running(info.as_ref());
+    let show_panel = agent.is_some() && panel_wide && settings.side_panel && !gone;
     // the pane's machine, or the machine by its id while the pane isn't listed
     let machine_up = r.map(|r| r.host).or(h.hosts.iter().find(|x| x.config.id == host)).is_none_or(|m| m.status == inyon_protocol::HostStatus::Online);
     // and nothing goes to a pane until the hub's own overview says it's this one: a pane id kept
@@ -188,6 +202,25 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let has_pane = r.is_some();
     drop(c);
     drop(h);
+    // the panel stays a moment after it's closed, fading, before it goes (as a sheet does)
+    let mut panel_shown = use_signal(|| show_panel);
+    let leaving = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(0u32)));
+    use_effect(use_reactive!(|show_panel| {
+        let n = leaving.get() + 1;
+        leaving.set(n);
+        if show_panel {
+            panel_shown.set(true);
+            return;
+        }
+        let leaving = leaving.clone();
+        spawn(async move {
+            platform::sleep(PANEL_LEAVE_MS).await;
+            if leaving.get() == n {
+                panel_shown.set(false);
+            }
+        });
+    }));
+    let side_on = settings.side_panel;
 
     rsx! {
         if let Some(kind) = skin {
@@ -211,7 +244,19 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         }
                         p { class: "session-sub mono truncate", "{subtitle}" }
                     }
-                    super::pages::SessionPages { here: page_here.clone(), side }
+                    super::pages::SessionPages {
+                        here: page_here.clone(),
+                        side,
+                        panel_on: show_panel && panel_tab() == Tab::Pages,
+                        on_panel: move |_| {
+                            if show_panel && *panel_tab.peek() == Tab::Pages {
+                                super::notices::set_prefs(|s| s.side_panel = false);
+                            } else {
+                                super::notices::set_prefs(|s| s.side_panel = true);
+                                panel_tab.set(Tab::Pages);
+                            }
+                        },
+                    }
                     if let Some(s) = shown {
                         span { class: "pill session-pill",
                             span { class: "dot dot-{s.class()}" }
@@ -234,6 +279,26 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         nav { class: "segmented session-views", "aria-label": "View",
                             ViewSegment { href: chat_href, on: shows == Some(PaneView::Chat), icon: Icon::MessageSquare, word: "Chat" }
                             ViewSegment { href: terminal_href, on: shows == Some(PaneView::Terminal), icon: Icon::SquareTerminal, word: "Terminal" }
+                        }
+                        button {
+                            class: "icon-button icon-button-lg press session-tool narrow-panel-only",
+                            r#type: "button",
+                            "aria-label": "Running tasks, subagents and changes",
+                            title: "Running tasks, subagents and changes",
+                            onclick: move |_| if show_panel { panel_tab.set(Tab::Activity) } else { activity.set(true) },
+                            Glyph { icon: Icon::Layers, size: 17 }
+                            if busy > 0 {
+                                span { class: "session-tool-badge tabular", "{busy}" }
+                            }
+                        }
+                        button {
+                            class: if side_on { "icon-button icon-button-lg press wide-panel-only icon-button-on" } else { "icon-button icon-button-lg press wide-panel-only" },
+                            r#type: "button",
+                            "aria-label": if side_on { "Hide side panel" } else { "Show side panel" },
+                            "aria-pressed": "{side_on}",
+                            title: if side_on { "Hide side panel" } else { "Show side panel" },
+                            onclick: move |_| super::notices::set_prefs(|s| s.side_panel = !s.side_panel),
+                            Glyph { icon: Icon::PanelRight, size: 16 }
                         }
                     }
                 }
@@ -263,10 +328,20 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                 }
             }
             super::pages::SessionSide { here: page_here, side }
+            if panel_shown() && agent.is_some() {
+                SidePanel { key: "{key}", of: of.clone(), tab: panel_tab, closing: !show_panel }
+            }
+            }
+            if agent.is_some() {
+                ActivitySheet { of: of.clone(), open: activity() && !panel_wide, on_close: move |_| activity.set(false) }
+                PanelSheets { of }
             }
         }
     }
 }
+
+/// How long the side panel fades out after it's closed (--dur-exit, and a frame).
+const PANEL_LEAVE_MS: u32 = 160;
 
 /// Asks, then ends a session: it leaves every list at once with a notice, while the machine stops
 /// the agent and closes its pane. A failure brings it back with the reason. `back` goes to the

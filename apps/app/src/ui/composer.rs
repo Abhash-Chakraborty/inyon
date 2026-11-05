@@ -31,6 +31,23 @@ const PICK_PHOTO: &str = "composer-photo";
 /// How long typing pauses before the draft goes to the hub.
 const DRAFT_MS: u32 = 450;
 
+/// Text another part of the session's screen adds to its message box (lib/compose.ts): a file
+/// mention from the Files tab, or review comments from a diff. Numbered, so the same text twice
+/// still lands.
+static COMPOSE: GlobalSignal<Option<(u64, String, String)>> = Signal::global(|| None);
+
+/// Adds `text` to the session's message box, where it can still be changed before sending; false
+/// when that chat's box isn't on screen.
+pub fn compose(host: &str, pane: &str, text: &str) -> bool {
+    let key = inyon_protocol::chat_key(host, pane);
+    if !OPEN_BOXES.with(|b| b.borrow().get(&key).is_some_and(|n| *n > 0)) {
+        return false;
+    }
+    let n = COMPOSE.peek().as_ref().map_or(0, |c| c.0) + 1;
+    *COMPOSE.write() = Some((n, key, text.to_string()));
+    true
+}
+
 /// What the one round button does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -127,6 +144,8 @@ thread_local! {
     static DRAFTS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     /// per pane, the draft both sides last agreed on when the box went away
     static SYNCED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    /// the panes whose box is on screen, for [`compose`]
+    static OPEN_BOXES: RefCell<HashMap<String, u32>> = RefCell::new(HashMap::new());
 }
 
 /// Adds files to a session's message and starts uploading each.
@@ -329,6 +348,36 @@ pub fn Composer(
         move |e: FormEvent| set_text(e.value())
     };
 
+    // text from the side panel: a mention or review comments, after what's typed
+    {
+        let key = key.clone();
+        use_hook(|| OPEN_BOXES.with(|b| *b.borrow_mut().entry(key.clone()).or_default() += 1));
+        let gone = key.clone();
+        use_drop(move || {
+            OPEN_BOXES.with(|b| {
+                let mut b = b.borrow_mut();
+                if let Some(n) = b.get_mut(&gone) {
+                    *n = n.saturating_sub(1);
+                }
+            })
+        });
+        let seen = use_hook(|| Rc::new(Cell::new(COMPOSE.peek().as_ref().map_or(0, |c| c.0))));
+        let set_text = set_text.clone();
+        use_effect(move || {
+            let Some((n, k, t)) = COMPOSE() else { return };
+            if k != key || n <= seen.get() {
+                return;
+            }
+            seen.set(n);
+            // read the box first: a borrow held while set_text writes it would panic
+            let next = crate::changes::append_to(&text.peek(), &t);
+            set_text(next);
+            spawn(async {
+                dom::focus(BOX);
+                dom::caret_to_end(BOX);
+            });
+        });
+    }
     // the edit that waited for the socket goes out once the box can send
     {
         let (unsent, push_draft) = (unsent.clone(), push_draft.clone());

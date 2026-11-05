@@ -121,6 +121,14 @@ pub enum Icon {
     Tag,
     StickyNote,
     Star,
+    PanelRight,
+    FileDiff,
+    GitBranch,
+    FolderGit2,
+    AtSign,
+    ShieldAlert,
+    Coins,
+    LayoutPanelLeft,
 }
 
 #[component]
@@ -681,6 +689,47 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                 Icon::StickyNote => rsx! {
                     path { d: "M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z" }
                     path { d: "M15 3v5a1 1 0 0 0 1 1h5" }
+                },
+                Icon::PanelRight => rsx! {
+                    rect { width: "18", height: "18", x: "3", y: "3", rx: "2" }
+                    path { d: "M15 3v18" }
+                },
+                Icon::FileDiff => rsx! {
+                    path { d: "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" }
+                    path { d: "M9 10h6" }
+                    path { d: "M12 13V7" }
+                    path { d: "M9 17h6" }
+                },
+                Icon::GitBranch => rsx! {
+                    path { d: "M15 6a9 9 0 0 0-9 9V3" }
+                    circle { cx: "18", cy: "6", r: "3" }
+                    circle { cx: "6", cy: "18", r: "3" }
+                },
+                Icon::FolderGit2 => rsx! {
+                    path { d: "M18 19a5 5 0 0 1-5-5v8" }
+                    path { d: "M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5" }
+                    circle { cx: "13", cy: "12", r: "2" }
+                    circle { cx: "20", cy: "19", r: "2" }
+                },
+                Icon::AtSign => rsx! {
+                    circle { cx: "12", cy: "12", r: "4" }
+                    path { d: "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" }
+                },
+                Icon::ShieldAlert => rsx! {
+                    path { d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" }
+                    path { d: "M12 8v4" }
+                    path { d: "M12 16h.01" }
+                },
+                Icon::Coins => rsx! {
+                    path { d: "M13.744 17.736a6 6 0 1 1-7.48-7.48" }
+                    path { d: "M15 6h1v4" }
+                    path { d: "m6.134 14.768.866-.5 2 3.464" }
+                    circle { cx: "16", cy: "8", r: "6" }
+                },
+                Icon::LayoutPanelLeft => rsx! {
+                    rect { width: "7", height: "18", x: "3", y: "3", rx: "1" }
+                    rect { width: "7", height: "7", x: "14", y: "3", rx: "1" }
+                    rect { width: "7", height: "7", x: "14", y: "14", rx: "1" }
                 },
                 Icon::Star => rsx! {
                     path { d: "M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" }
