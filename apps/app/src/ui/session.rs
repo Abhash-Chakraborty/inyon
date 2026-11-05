@@ -16,7 +16,6 @@ use super::rows::Ctx;
 use super::terminal::TerminalView;
 use super::toast::{self, confirm, Ask, ToastTone};
 use crate::model::Shown;
-use crate::route::BASE;
 use crate::state::{self, Chats, Hub};
 use crate::{dom, format, platform};
 
@@ -87,6 +86,12 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         let (key, out) = (key.clone(), out.clone());
         use_hook(move || {
             let mut c = chats.write();
+            // its last page as kept in this browser draws until the hub sends the real one
+            if !c.get(&key).is_some_and(|e| e.chat.loaded) {
+                if let Some(kept) = crate::snapshot::chat(&key) {
+                    c.patch(&key, platform::clock().now as u64, |d| d.hydrate(kept));
+                }
+            }
             let e = c.entry(&key);
             e.followed = true;
             if hub.peek().connected {
@@ -140,7 +145,9 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         screen.as_ref().and_then(|s| s.mode.as_deref()).or(info.as_ref().and_then(|i| i.mode.as_deref())),
         def,
     );
-    let gone = h.loaded && r.is_none() && info.is_none();
+    // only the hub's own overview can say a pane is gone, not the copy a reload draws first
+    let gone = h.confirmed() && r.is_none() && info.is_none();
+    let machine = h.hosts.iter().find(|x| x.config.id == host).map(|x| x.config.name.clone());
     let skin = agent.filter(|_| settings.agent_skins);
     let ctx = Ctx {
         key: key.clone(),
@@ -151,11 +158,14 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         font: font_class(settings.reply_font, def),
         all_tools: settings.tool_detail != ToolDetail::Compact,
     };
-    let connected = h.connected && r.is_none_or(|r| r.host.status == inyon_protocol::HostStatus::Online);
+    let machine_up = r.is_none_or(|r| r.host.status == inyon_protocol::HostStatus::Online);
+    let connected = h.connected && machine_up;
+    // what the chat says about it: nothing while the first connection is still opening
+    let offline = h.offline() || !machine_up;
     let home = home_view(agent);
     let shows = shown_view(view, agent, r.is_some() || info.is_some());
     // each view's address: the pane's own view goes without ?view=
-    let view_href = |v: PaneView| format!("{BASE}{}", pane_href(&host, &pane, (v != home).then_some(v)));
+    let view_href = |v: PaneView| crate::route::app_href(&pane_href(&host, &pane, (v != home).then_some(v)));
     let (chat_href, terminal_href) = (view_href(PaneView::Chat), view_href(PaneView::Terminal));
     dom::set_title(&format!("{title} · Inyon"));
     // the header's ⋯, as the web app's session menu
@@ -178,7 +188,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         div { class: match skin { Some(k) => format!("session skin-{}", k.as_str()), None => "session".into() },
             header { class: "session-head",
                 div { class: "session-head-row",
-                    a { class: "back-link press", href: "/next/", "aria-label": "Back",
+                    a { class: "back-link press", href: crate::route::Route::Overview.href(), "aria-label": "Back",
                         Glyph { icon: Icon::ChevronLeft, size: 20 }
                     }
                     if let Some(kind) = agent {
@@ -226,15 +236,23 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                     div { class: "empty chat-empty",
                         div { class: "empty-title", "This pane is gone" }
                         div { class: "empty-text", "Its tmux pane closed, or its machine no longer lists it." }
-                        a { class: "button button-md button-primary press empty-action", href: "/next/", "Back to the Overview" }
+                        a { class: "button button-md button-primary press empty-action", href: crate::route::Route::Overview.href(), "Back to the Overview" }
                     }
                 }
             } else if shows == Some(PaneView::Terminal) {
                 div { key: "{TERMINAL_KEY}", class: "session-view fade-in", TerminalView { host: host.clone(), pane: pane.clone() } }
             } else if shows == Some(PaneView::Chat) {
-                div { key: "{CHAT_KEY}", class: "session-view fade-in", ChatView { ctx, connected, controls } }
+                div { key: "{CHAT_KEY}", class: "session-view fade-in", ChatView { ctx, connected, offline, controls } }
             } else {
-                div { class: "session-view" }
+                // the chat column's shape until the machines arrive (a deep link after a reload)
+                div { class: "session-view",
+                    div { class: "session-opening",
+                        super::kit::Waiting {
+                            label: machine.map_or_else(|| "Opening the session".to_string(), |m| format!("Opening the session on {m}")),
+                            lines: 4,
+                        }
+                    }
+                }
             }
             super::pages::SessionSide { here: page_here, side }
             }

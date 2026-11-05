@@ -222,6 +222,31 @@ pub fn Segmented(
     }
 }
 
+/// The shape of what's on its way, with a line saying what (primitives.tsx Waiting): cards as
+/// the Overview lays them out, or lines of text as a chat starts.
+#[component]
+pub fn Waiting(label: String, #[props(default)] lines: Option<usize>) -> Element {
+    const WIDTHS: [u32; 8] = [60, 90, 75, 85, 55, 95, 70, 80];
+    rsx! {
+        div { class: "waiting fade-in", role: "status",
+            if let Some(n) = lines {
+                div { class: "waiting-lines",
+                    for i in 0..n {
+                        div { key: "{i}", class: "skeleton waiting-line", style: "width:{WIDTHS[i % WIDTHS.len()]}%" }
+                    }
+                }
+            } else {
+                div { class: "skeletons",
+                    for i in 0..4 {
+                        div { key: "{i}", class: "skeleton" }
+                    }
+                }
+            }
+            p { class: "waiting-label", "{label}" }
+        }
+    }
+}
+
 /// Rows in a list's shape while it loads, with no spinner.
 #[component]
 pub fn WaitRows(label: String, #[props(default = 3)] count: usize, #[props(default)] class: String) -> Element {

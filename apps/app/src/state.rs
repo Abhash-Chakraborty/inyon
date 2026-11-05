@@ -62,22 +62,48 @@ pub fn hello() -> String {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Hub {
     pub hosts: Vec<HostState>,
-    /// the first overview arrived (until then the screen shows placeholders)
+    /// the first overview arrived, or a copy kept in the browser (until then the screen shows
+    /// placeholders)
     pub loaded: bool,
+    /// the machines are the copy kept in the browser, not yet confirmed by the hub
+    pub stale: bool,
     pub connected: bool,
+    /// the first connection opened or failed, or took long enough to say so; until then nothing
+    /// says "Reconnecting", so a reload doesn't flash it
+    pub settled: bool,
 }
 
 impl Hub {
+    /// The machines as this browser last saw them, drawn until the hub's overview replaces them.
+    pub fn kept(hosts: Option<Vec<HostState>>) -> Hub {
+        match hosts {
+            Some(hosts) => Hub { hosts, loaded: true, stale: true, ..Hub::default() },
+            None => Hub::default(),
+        }
+    }
+
     pub fn set_hosts(&mut self, hosts: Vec<HostState>) {
         crate::asks::note(&hosts);
         self.hosts = hosts;
         self.loaded = true;
+        self.stale = false;
     }
 
     pub fn set_connected(&mut self, up: bool) -> bool {
-        let changed = self.connected != up;
+        let changed = self.connected != up || !self.settled;
         self.connected = up;
+        self.settled = true;
         changed
+    }
+
+    /// Out of reach, as far as the screens should say: down after the first try.
+    pub fn offline(&self) -> bool {
+        self.settled && !self.connected
+    }
+
+    /// The hub's own overview arrived (a kept copy doesn't count): a pane missing from it is gone.
+    pub fn confirmed(&self) -> bool {
+        self.loaded && !self.stale
     }
 }
 
@@ -101,7 +127,7 @@ impl Feed {
             let ctx = Context { route: "/", terminal_view: false, visible: true, native: false, browser_notices: false };
             self.store.apply(&ServerMsg::Overview { hosts, organize: None }, None, &ctx, now);
             let all = &self.store.overview.hosts;
-            (!shown.loaded || shown.hosts != *all).then(|| all.clone())
+            (!shown.confirmed() || shown.hosts != *all).then(|| all.clone())
         });
         (hosts, resync)
     }
@@ -476,9 +502,32 @@ mod tests {
     #[test]
     fn the_connection_flag_reports_changes() {
         let mut hub = Hub::default();
+        // the first try hasn't answered: not "Reconnecting" yet
+        assert!(!hub.offline());
         assert!(hub.set_connected(true));
         assert!(!hub.set_connected(true));
         assert!(hub.set_connected(false));
+        assert!(hub.offline());
+        // a first try that fails says so
+        let mut fresh = Hub::default();
+        assert!(fresh.set_connected(false));
+        assert!(fresh.offline());
+    }
+
+    #[test]
+    fn a_kept_overview_draws_until_the_hubs_replaces_it() {
+        let host: HostState = serde_json::from_value(host_json()).unwrap();
+        let hub = Hub::kept(Some(vec![host]));
+        assert!(hub.loaded && hub.stale && !hub.confirmed());
+        assert_eq!(hub.hosts[0].config.name, "studio");
+        assert!(!Hub::kept(None).loaded);
+        // the hub's first overview counts even when it matches the kept copy
+        let mut feed = Feed::default();
+        let snap = frame(json!({ "t": "snapshot", "stream": "overview", "epoch": 5, "seq": 1, "rows": { "hosts": [host_json()] } }));
+        let (hosts, _) = feed.overview(&snap, &hub, 0);
+        let mut hub = hub;
+        hub.set_hosts(hosts.expect("the hub's own overview"));
+        assert!(hub.confirmed());
     }
 
     #[test]

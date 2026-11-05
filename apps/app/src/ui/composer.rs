@@ -203,7 +203,8 @@ fn remove_file(key: &str, id: &str) {
 }
 
 /// `draft`: the pane's draft as the hub last sent it (its text, when, and whether the terminal
-/// wrote it). `controls`: the model, effort and mode, as one line.
+/// wrote it). `controls`: the model, effort and mode, as one line. `disabled` keeps anything
+/// from going out; `offline` also greys the box out (not while the first connection opens).
 #[component]
 pub fn Composer(
     host: String,
@@ -211,6 +212,7 @@ pub fn Composer(
     agent: String,
     working: bool,
     disabled: bool,
+    #[props(default)] offline: bool,
     draft: Option<(String, u64, bool)>,
     controls: String,
     on_sent: EventHandler<()>,
@@ -255,12 +257,13 @@ pub fn Composer(
             }
         }));
     }
-    // ready to type on arrival, except on a phone, where that would pop the keyboard up
-    use_hook(|| {
-        if !dom::coarse() {
+    // ready to type on arrival and once it can send again, except on a phone, where that would
+    // pop the keyboard up
+    use_effect(use_reactive!(|offline| {
+        if !offline && !dom::coarse() {
             spawn(async { dom::focus(BOX) });
         }
-    });
+    }));
     use_effect(move || {
         let _ = text.read();
         dom::autosize(BOX, 0.4);
@@ -276,23 +279,40 @@ pub fn Composer(
         }
     };
     // your edit: shown at once, sent to the hub once typing pauses
+    let unsent = use_hook(|| Rc::new(RefCell::new(None::<String>)));
     let set_text = {
-        let (typed, push_draft) = (typed.clone(), push_draft.clone());
+        let (typed, push_draft, unsent) = (typed.clone(), push_draft.clone(), unsent.clone());
         move |v: String| {
             let (mut text, mut from_terminal) = (text, from_terminal);
             text.set(v.clone());
             from_terminal.set(false);
             let n = typed.get() + 1;
             typed.set(n);
-            let (typed, push) = (typed.clone(), push_draft.clone());
+            *unsent.borrow_mut() = Some(v.clone());
+            let (typed, push, unsent) = (typed.clone(), push_draft.clone(), unsent.clone());
             spawn(async move {
                 platform::sleep(DRAFT_MS).await;
                 if typed.get() == n {
+                    unsent.borrow_mut().take();
                     push(v);
                 }
             });
         }
     };
+    // leaving the app (or reloading) mid-sentence: the draft goes now, not in half a second, and
+    // on the socket itself, since the page may be gone before the app's queue is read
+    let _leaving = use_hook(|| {
+        let (typed, synced, unsent, out, host, pane) = (typed.clone(), synced.clone(), unsent.clone(), out.clone(), host.clone(), pane.clone());
+        Rc::new(dom::on_leave(move || {
+            let Some(value) = unsent.borrow_mut().take() else { return };
+            // the timer's push is then stale
+            typed.set(typed.get() + 1);
+            if *synced.borrow() != value {
+                *synced.borrow_mut() = value.clone();
+                out.send_now(state::wire(&ClientMsg::Draft { host: host.clone(), pane: pane.clone(), text: value }));
+            }
+        }))
+    });
     let on_input = {
         let set_text = set_text.clone();
         move |e: FormEvent| set_text(e.value())
@@ -461,7 +481,7 @@ pub fn Composer(
     let note = attach::note(uploading, failed).unwrap_or(if !text.read().is_empty() && from_terminal() { "From the terminal" } else { "" });
     let touch = dom::coarse();
     let (mut do_send, mut stop) = (do_send, stop);
-    let box_class = match (disabled, dragging()) {
+    let box_class = match (offline, dragging()) {
         (true, _) => "composer-box composer-off",
         (false, true) => "composer-box composer-drag",
         _ => "composer-box",
@@ -484,7 +504,7 @@ pub fn Composer(
                     class: "composer-text",
                     rows: "1",
                     value: "{text}",
-                    disabled,
+                    disabled: offline,
                     placeholder: "{placeholder}",
                     "aria-label": "Message {agent}",
                     oninput: on_input,

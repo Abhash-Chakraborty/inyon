@@ -376,6 +376,16 @@ input:focus-visible { outline: none; }
 .segment-on, .segment-on:hover { background: var(--panel); color: var(--fg); box-shadow: var(--highlight), 0 0 0 1px var(--line); }
 
 .skeletons { display: grid; grid-template-columns: 1fr; gap: 12px; }
+/* what's on its way, with a line saying what (primitives.tsx Waiting) */
+.waiting-lines { display: flex; flex-direction: column; gap: 16px; }
+.skeleton.waiting-line { height: 16px; border-radius: 4px; }
+.waiting-label { margin-top: 12px; font-size: 12.5px; color: var(--fg-3); }
+/* the sign-in check: the Overview's shape where it will land */
+.opening { margin: 0 auto; width: 100%; max-width: 1280px; padding: 80px 16px 0; }
+@media (min-width: 1024px) { .opening { padding: 112px 32px 0; } }
+/* a session whose pane isn't in the list yet: the chat column's shape */
+.session-opening { margin: 0 auto; width: 100%; max-width: 760px; flex: 1; padding: 20px 16px 0; }
+@media (min-width: 640px) { .session-opening { padding: 20px 24px 0; } }
 .skeleton { height: 170px; border-radius: 24px; background: var(--raised); animation: pulse-soft 1.6s ease-in-out infinite; }
 
 .empty { display: flex; flex-direction: column; align-items: center; padding: 56px 24px; text-align: center; border: 1px dashed var(--line-strong); border-radius: 24px; }

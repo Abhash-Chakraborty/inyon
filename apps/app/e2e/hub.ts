@@ -43,6 +43,14 @@ export const state = {
   uploads: new Map<string, Upload>(),
   /** the files that finished, by path */
   saved: new Map<string, { name: string; bytes: Uint8Array; pane?: string }>(),
+  /** the sign-in check answers after this long, as a hub far away does */
+  sessionDelay: 0,
+  /** each stream (and the React app's overview and chats) answers its sub after this long */
+  subDelay: 0,
+  /** while set, every sub waits for it: the hub hasn't answered yet */
+  gate: undefined as undefined | Promise<void>,
+  /** sockets are refused, as when the hub is out of reach */
+  refuseWs: false,
   /** extra routes a check adds: return a Response to answer, undefined to pass */
   routes: [] as ((req: Request, url: URL) => Promise<Response | undefined> | Response | undefined)[],
 }
@@ -58,6 +66,10 @@ export function resetChats() {
 resetChats()
 const EPOCH = 1
 const sockets = new Set<Socket>()
+/** Closes every socket, as a hub restarting does. */
+export function dropSockets() {
+  for (const ws of sockets) ws.close(1012, 'restarting')
+}
 
 function snapshot(stream: string) {
   if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { hosts: overview().hosts } }
@@ -141,6 +153,7 @@ const server = Bun.serve({
     const url = new URL(req.url)
     const p = url.pathname
     if (p === '/ws2' || p === '/ws') {
+      if (state.refuseWs) return new Response('Unavailable', { status: 503 })
       if (!state.authed) return new Response('Not signed in', { status: 401 })
       return srv.upgrade(req, { data: { subs: new Set<string>(), v1: p === '/ws' } }) ? undefined : new Response('no upgrade', { status: 400 })
     }
@@ -148,6 +161,7 @@ const server = Bun.serve({
       const res = await r(req, url)
       if (res) return res
     }
+    if (p === '/api/session' && state.sessionDelay) await Bun.sleep(state.sessionDelay)
     if (p === '/api/session') return json({ authed: state.authed, setup: false, setupCode: false, version: VERSION })
     const up = await uploads(req, p)
     if (up) return up
@@ -185,9 +199,14 @@ const server = Bun.serve({
     close(ws: Socket) {
       sockets.delete(ws)
     },
-    message(ws: Socket, m) {
+    async message(ws: Socket, m) {
       const msg = JSON.parse(String(m))
       state.frames.push(msg)
+      if (/^sub/.test(msg.t)) {
+        if (state.subDelay) await Bun.sleep(state.subDelay)
+        if (state.gate) await state.gate
+      }
+      if (ws.readyState !== 1) return
       if (msg.t === 'ping') return ws.send(JSON.stringify({ t: 'pong' }))
       if (msg.t === 'draft') state.drafts.push(msg)
       if (ws.data.v1) {

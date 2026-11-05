@@ -135,9 +135,11 @@ fn load_more(chats: Signal<Chats>, key: &str, out: &Outbox) {
     out.send(state::wire2(&ClientMsg2::More { stream: key.to_string(), before }));
 }
 
-/// `controls`: the model, effort and mode as one line, for the message box.
+/// `controls`: the model, effort and mode as one line, for the message box. `connected`:
+/// messages can go to the agent; `offline`: the chat says it's reconnecting (not while the first
+/// connection is still opening).
 #[component]
-pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
+pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> Element {
     let chats = use_context::<Signal<Chats>>();
     let out = outbox();
     let key = ctx.key.clone();
@@ -169,18 +171,16 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
     let backs = use_hook(|| Rc::new(RefCell::new(Some(listen()))));
 
     // after each change: scroll to the bottom while following, else keep the row being read where
-    // it was; and draw the rows that brings into view
+    // it was; and draw the rows that brings into view. The rows a change brings may reach the page
+    // only after this runs, and until they do the page is as tall as before, so a bottom set now
+    // falls short: the list's own resize sets the place again once they're there.
     let settle = {
         let (scroll, drawn, key) = (scroll.clone(), drawn.clone(), key.clone());
         move || {
             let c = chats.peek();
             let Some(e) = c.get(&key) else { return };
-            let top = scroll.borrow_mut().settle(&e.list);
-            if scroll.borrow().stick {
-                dom::set_scroll_top(SCROLLER, 1e9);
-            } else {
-                dom::set_scroll_top(SCROLLER, dom::offset_top(LIST).unwrap_or(0.0) + top);
-            }
+            scroll.borrow_mut().settle(&e.list);
+            place(&scroll.borrow());
             if scroll.borrow().window(&e.list) != drawn.get() {
                 layout += 1;
             }
@@ -344,7 +344,9 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
     let background = chat.screen.as_ref().is_some_and(|s| s.background.as_ref().is_some_and(|b| b.as_ref().is_some_and(|t| !t.is_empty())));
     // why the last turn stopped, when it ended on an error (a rate limit, signed out)
     let failure = machine.as_ref().and_then(|m| m.failure.clone()).filter(|_| !working && prompt.is_none() && !background);
-    let link = link_line(hub_up, machine.as_ref().map(|m| (m.name.as_str(), m.online)), fresh());
+    // the hub counts as gone only once the app says it's reconnecting, not while the first
+    // connection after a load is still opening
+    let link = link_line(hub_up || !offline, machine.as_ref().map(|m| (m.name.as_str(), m.online)), fresh());
     let installed = machine.as_ref().map(|m| m.agents.clone()).unwrap_or_default();
     let rows = chat.rows();
     let w = scroll.borrow().window(&e.list);
@@ -383,6 +385,12 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
             }
             settle();
         }
+    };
+    // the list grew or shrank (rows drawn, measured or replaced): back to the bottom while
+    // following, or to the row being read
+    let on_list_resize = {
+        let scroll = scroll.clone();
+        move |_| place(&scroll.borrow())
     };
     let more_key = key.clone();
     let more_out = out.clone();
@@ -436,7 +444,7 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                                 div { class: "empty-text", "Messages you send here are typed into the terminal, exactly as if you typed them there." }
                             }
                         }
-                        div { id: LIST, class: "chat-list",
+                        div { id: LIST, class: "chat-list", onresize: on_list_resize,
                             div { style: "height:{w.before}px" }
                             for row in shown {
                                 Measured { key: "{row.key()}", id: row.key().into_owned(), chat: key.clone(),
@@ -506,6 +514,7 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                                 agent: ctx.agent_name.clone(),
                                 working,
                                 disabled: !connected,
+                                offline,
                                 draft,
                                 controls,
                                 on_sent: sent,
@@ -535,6 +544,15 @@ fn Measured(id: String, chat: String, children: Element) -> Element {
             },
             {children}
         }
+    }
+}
+
+/// Puts the list where the scroll model has it: the bottom while following, else its row.
+fn place(s: &Scroll) {
+    if s.stick {
+        dom::set_scroll_top(SCROLLER, 1e9);
+    } else {
+        dom::set_scroll_top(SCROLLER, dom::offset_top(LIST).unwrap_or(0.0) + s.top);
     }
 }
 

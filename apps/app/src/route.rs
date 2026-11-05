@@ -103,6 +103,13 @@ impl Route {
     }
 }
 
+/// A path inside the app with the base path in front (`/machines` → `/next/machines`), for the
+/// few links that aren't a [`Route`]. Every link goes through this or [`Route::href`], so moving
+/// the app to another base path is a change to [`BASE`] alone.
+pub fn app_href(path: &str) -> String {
+    format!("{BASE}{path}")
+}
+
 /// A link inside the app: one that leads under the base path, opened with a plain click.
 pub fn internal(href: &str) -> Option<Route> {
     let path = href.strip_prefix(BASE)?;
@@ -186,7 +193,7 @@ mod imp {
             const t = a.getAttribute('target');
             if ((t && t !== '_self') || a.hasAttribute('download')) return;
             const href = a.getAttribute('href');
-            if (href !== '/next' && !href.startsWith('/next/') && !href.startsWith('/next?')) return;
+            if (href !== '__BASE__' && !href.startsWith('__BASE__/') && !href.startsWith('__BASE__?')) return;
             e.preventDefault();
             history.pushState(null, '', href);
             dioxus.send(href);
@@ -211,7 +218,7 @@ mod imp {
     }
 
     pub fn listen(tx: UnboundedSender<Route>) {
-        let mut page = dioxus::document::eval(LISTEN);
+        let mut page = dioxus::document::eval(&LISTEN.replace("__BASE__", super::BASE));
         let t = tx.clone();
         spawn(async move {
             while let Ok(href) = page.recv::<String>().await {
