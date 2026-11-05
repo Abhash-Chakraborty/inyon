@@ -1,7 +1,7 @@
 // The site's page list (site.js) and the site bar: read it, add a page, bring an older site onto it, and
 // check that every page can be reached. Used by add-page.mjs and check-site.mjs.
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
@@ -9,6 +9,8 @@ const asset = (f) => fileURLToPath(new URL(`../assets/site/${f}`, import.meta.ur
 export const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const NAV_CSS_START = '/* ---------- site bar, crumbs, pager, Pages sheet (kit/nav.js) ---------- */';
 const NAV_CSS_END = '/* ---------- end of the site bar ---------- */';
+const DOC_CSS_START = '/* ---------- doc pages: the plan and every page added with add-page.mjs ---------- */';
+const DOC_CSS_END = '/* ---------- end of the doc pages ---------- */';
 const NAV_TAGS = (up) => `<script src="${up}site.js"></script><script src="${up}kit/nav.js"></script>`;
 
 // window.SITE.pages from site.js, run in an empty context (the file is plain data).
@@ -23,7 +25,8 @@ export function readSite(dir) {
   return { file, text, pages };
 }
 
-const quote = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+// a single-quoted JS string; line breaks are escaped too, or site.js would stop running
+const quote = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')}'`;
 export function entry(p) {
   const keys = ['id', 'title', 'href', 'icon', 'group', 'blurb', 'parent', 'hidden'];
   return `{ ${keys.filter((k) => p[k] !== undefined && p[k] !== null && p[k] !== '').map((k) => `${k}: ${typeof p[k] === 'boolean' ? p[k] : quote(p[k])}`).join(', ')} }`;
@@ -63,15 +66,25 @@ export function addPage(dir, { id, title, lede = '', icon, group, blurb, parent,
   if (existsSync(out)) throw new Error(`${href} exists already; add it with --adopt instead`);
   if (parent && !site.pages.some((p) => p.id === parent)) throw new Error(`site.js has no page "${parent}" to be the parent`);
   const tpl = existsSync(join(dir, '_page.html')) ? join(dir, '_page.html') : asset('_page.html');
-  const html = readFileSync(tpl, 'utf8').replace(/__TITLE__/g, esc(title)).replace(/__LEDE__/g, esc(lede || `What ${title.toLowerCase()} covers, in a sentence or two.`));
+  // replacer functions, so a $& or $' in the title is written as it is
+  const html = readFileSync(tpl, 'utf8').replace(/__TITLE__/g, () => esc(title)).replace(/__LEDE__/g, () => esc(lede || `What ${title.toLowerCase()} covers, in a sentence or two.`));
+  // a site.js edited by hand (no comma after the last entry, an entry over several lines) could come
+  // out broken; check it runs before writing anything
+  const list = insertEntry(site.text, { id, title, href, icon, group, blurb, parent, hidden: hidden || undefined }, after);
+  try { vm.runInNewContext(list, { window: {} }, { timeout: 500 }); } catch (e) { throw new Error(`adding the page would break site.js (${e.message}); fix site.js by hand, then try again`); }
   writeFileSync(out, html);
-  writeFileSync(site.file, insertEntry(site.text, { id, title, href, icon, group, blurb, parent, hidden: hidden || undefined }, after));
+  writeFileSync(site.file, list);
   return out;
 }
 
 const htmlFiles = (dir) => readdirSync(dir).filter((f) => f.endsWith('.html') && !f.startsWith('_') && !f.startsWith('.'));
-const hasNav = (html) => /kit\/nav\.js/.test(html);
-const hasKit = (html) => /kit\/kit\.js/.test(html);
+const noComments = (html) => html.replace(/<!--[\s\S]*?-->/g, '');
+// a <script> element that loads the file, with either quote and any ./ or ../ in front; a mention in
+// a comment doesn't count
+const loads = (html, file) => new RegExp(`<script\\b[^>]*\\bsrc\\s*=\\s*["'](?:\\.{1,2}\\/)*${file.replace(/[./]/g, '\\$&')}["']`, 'i').test(noComments(html));
+const hasNav = (html) => loads(html, 'kit/nav.js');
+const hasKit = (html) => loads(html, 'kit/kit.js');
+const hasBar = (html) => /<header\b[^>]*class\s*=\s*["'][^"']*\bsite-bar\b/i.test(noComments(html));
 
 // --adopt: bring a site made before the site bar onto it. Copies kit/nav.js, adds the bar's styles to
 // kit/blueprint.css, writes site.js from the pages it finds (or adds the ones site.js is missing), and
@@ -85,6 +98,9 @@ export function adopt(dir) {
   const skillCss = readFileSync(asset('kit/blueprint.css'), 'utf8');
   const navCss = skillCss.slice(skillCss.indexOf(NAV_CSS_START), skillCss.indexOf(NAV_CSS_END) + NAV_CSS_END.length);
   if (existsSync(css) && !readFileSync(css, 'utf8').includes(NAV_CSS_START)) writeFileSync(css, `${readFileSync(css, 'utf8').trimEnd()}\n\n${navCss}\n`);
+  // the doc page styles too, which pages from add-page.mjs are built on (older sites kept them in index.html)
+  const docCss = skillCss.slice(skillCss.indexOf(DOC_CSS_START), skillCss.indexOf(DOC_CSS_END) + DOC_CSS_END.length);
+  if (existsSync(css) && !readFileSync(css, 'utf8').includes(DOC_CSS_START)) writeFileSync(css, `${readFileSync(css, 'utf8').trimEnd()}\n\n${docCss}\n`);
   if (!existsSync(join(dir, '_page.html'))) copyFileSync(asset('_page.html'), join(dir, '_page.html'));
 
   let site = readSite(dir);
@@ -114,16 +130,24 @@ export function adopt(dir) {
   writeFileSync(site.file, text);
 
   for (const p of readSite(dir).pages) {
+    if (!p || typeof p.href !== 'string') continue;
     const file = join(dir, p.href);
-    if (!existsSync(file) || p.href.startsWith('mockups/')) continue;
-    let html = readFileSync(file, 'utf8');
-    if (hasNav(html)) continue;
-    if (!hasKit(html)) { report.noKit.push(p.href); continue; }
-    const up = '../'.repeat(p.href.split('/').length - 1);
-    html = html.replace(/(<script[^>]*src="(?:\.\.\/)*kit\/kit\.js"[^>]*><\/script>)/, `$1${NAV_TAGS(up)}`);
-    if (!/class="site-bar/.test(html)) html = html.replace(/(<body[^>]*>)/i, '$1\n<header class="site-bar"></header>');
-    writeFileSync(file, html);
-    report.bar.push(p.href);
+    // the screens have no bar; the viewer gets a Pages button instead of one
+    if (!existsSync(file) || (p.href.startsWith('mockups/') && p.href !== 'mockups/index.html')) continue;
+    const viewer = p.href === 'mockups/index.html';
+    const before = readFileSync(file, 'utf8');
+    let html = before;
+    if (!hasNav(html)) {
+      if (!hasKit(html)) { report.noKit.push(p.href); continue; }
+      const up = '../'.repeat(p.href.split('/').length - 1);
+      html = html.replace(/(<script\b[^>]*\bsrc\s*=\s*["'](?:\.{1,2}\/)*kit\/kit\.js["'][^>]*><\/script>)/i, (m) => `${m}${NAV_TAGS(up)}`);
+    }
+    if (viewer) {
+      if (!/data-site-pages/.test(html)) html = html.replace(/(<a class="icon-btn" href="\.\.\/index\.html"[^>]*>[\s\S]*?<\/a>)/, '$1\n      <button class="icon-btn" data-site-pages aria-label="Pages" data-tip="Pages"><i data-lucide="panels-top-left"></i></button>');
+    } else if (!hasBar(html)) {
+      html = html.replace(/(<body[^>]*>)/i, '$1\n<header class="site-bar"></header>');
+    }
+    if (html !== before) { writeFileSync(file, html); report.bar.push(p.href); }
   }
   return report;
 }
@@ -137,17 +161,18 @@ export function checkSite(dir) {
   if (!site) return ['no site.js: run add-page.mjs --adopt to give the site its page list and site bar'];
   const seen = new Set();
   for (const p of site.pages) {
-    if (!p.id || !p.title || !p.href) { problems.push(`site.js: an entry lacks id, title or href (${JSON.stringify(p)})`); continue; }
+    if (!p || typeof p !== 'object' || !p.id || !p.title || !p.href) { problems.push(`site.js: an entry lacks id, title or href (${JSON.stringify(p)})`); continue; }
     if (seen.has(p.id)) problems.push(`site.js: the id "${p.id}" is used twice`);
     seen.add(p.id);
-    if (/^([a-z]+:|\/)/i.test(p.href)) { problems.push(`site.js: ${p.id} links to ${p.href}; hrefs are relative to the site's folder`); continue; }
+    const rel = relative(dir, join(dir, String(p.href)));
+    if (/^([a-z]+:|\/)/i.test(p.href) || rel === '..' || rel.startsWith(`..${sep}`)) { problems.push(`site.js: ${p.id} links to ${p.href}; hrefs are relative to the site's folder`); continue; }
     const file = join(dir, p.href);
     if (!existsSync(file)) { problems.push(`site.js: ${p.id} points at ${p.href}, which doesn't exist`); continue; }
-    if (p.parent && !site.pages.some((q) => q.id === p.parent)) problems.push(`site.js: ${p.id}'s parent "${p.parent}" isn't a page`);
+    if (p.parent && !site.pages.some((q) => q && q.id === p.parent)) problems.push(`site.js: ${p.id}'s parent "${p.parent}" isn't a page`);
     const html = readFileSync(file, 'utf8');
     if (!hasNav(html)) problems.push(`${p.href} doesn't load kit/nav.js, so it has no way to the other pages`);
   }
-  const listed = new Set(site.pages.map((p) => p.href));
+  const listed = new Set(site.pages.filter(Boolean).map((p) => p.href));
   for (const f of htmlFiles(dir)) if (!listed.has(f)) problems.push(`${f} isn't in site.js, so nothing links to it: add it with add-page.mjs --adopt`);
   return problems;
 }

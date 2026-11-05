@@ -288,7 +288,7 @@ body { background: var(--bg); }
 .eyebrow { font: 500 12px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-3); margin: 0 0 12px; }
 .doc h1 { font-size: 44px; line-height: 1.05; font-weight: 600; letter-spacing: -.035em; margin: 0 0 14px; max-width: 14em; }
 .lede { font-size: 17px; line-height: 1.55; color: var(--fg-2); max-width: 42em; margin: 0 0 20px; }
-.doc h2 { font-size: 26px; font-weight: 600; letter-spacing: -.02em; margin: 64px 0 14px; padding-top: 24px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
+.doc h2 { font-size: 26px; font-weight: 600; letter-spacing: -.02em; margin: 64px 0 14px; padding-top: 24px; border-top: 1px solid var(--line); scroll-margin-top: 72px; }
 .doc h2 .n { font: 500 13px var(--mono); color: var(--fg-3); margin-right: 10px; vertical-align: 3px; }
 .doc h3 { font-size: 17px; font-weight: 600; margin: 28px 0 8px; }
 .doc p, .doc li { font-size: 15px; line-height: 1.62; color: var(--fg-2); }
@@ -322,3 +322,4 @@ body { background: var(--bg); }
 .foot { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--fg-3); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 @media (max-width: 700px) { .doc h1 { font-size: 34px; } .toc { grid-template-columns: 1fr; } .stats { grid-template-columns: 1fr 1fr; } .stat:last-child:nth-child(odd) { grid-column: 1 / -1; } .doc td:first-child { white-space: normal; } }
 .doc h2.pages-h { font-size: 17px; margin: 32px 0 0; padding: 0; border: 0; }
+/* ---------- end of the doc pages ---------- */

@@ -68,6 +68,9 @@ describe('--adopt', () => {
       const p = join(d, f);
       writeFileSync(p, readFileSync(p, 'utf8').replace(/<script src="site\.js"><\/script>\n?/, '').replace(/<script src="kit\/nav\.js"><\/script>\n?/, '').replace(/<header class="site-bar[^"]*"><\/header>\n?/, ''));
     }
+    // the viewer as it was: no site.js, no nav.js, no Pages button
+    const v = join(d, 'mockups/index.html');
+    writeFileSync(v, readFileSync(v, 'utf8').replace('<script src="../site.js"></script><script src="../kit/nav.js"></script>', '').replace(/\n\s*<button class="icon-btn" data-site-pages[^\n]*/, ''));
     const css = join(d, 'kit/blueprint.css');
     const s = readFileSync(css, 'utf8');
     writeFileSync(css, s.slice(0, s.indexOf('/* ---------- site bar')));
@@ -92,6 +95,13 @@ describe('--adopt', () => {
     expect(wiring).toContain('<header class="site-bar"></header>');
     expect(existsSync(join(d, 'kit/nav.js'))).toBe(true);
     expect(readFileSync(join(d, 'kit/blueprint.css'), 'utf8')).toContain('end of the site bar');
+    // the doc page styles that add-page.mjs pages use came along
+    expect(readFileSync(join(d, 'kit/blueprint.css'), 'utf8')).toContain('end of the doc pages');
+    // the viewer got its tags and a Pages button, not a bar
+    const viewer = readFileSync(join(d, 'mockups/index.html'), 'utf8');
+    expect(viewer).toContain('<script src="../kit/kit.js"></script><script src="../site.js"></script><script src="../kit/nav.js"></script>');
+    expect(viewer.match(/data-site-pages/g)).toHaveLength(1);
+    expect(viewer).not.toContain('class="site-bar');
     // only the page that doesn't load the kit is left
     expect(checkSite(d)).toEqual(["cart.html doesn't load kit/nav.js, so it has no way to the other pages"]);
   });
@@ -115,6 +125,55 @@ describe('--adopt', () => {
     expect(r.created).toBe(false);
     expect(r.added).toEqual(['notes.html']);
     expect(readSite(d).pages.map((p) => p.id)).toEqual(['plan', 'screens', 'matrix', 'offline', 'notes']);
+  });
+});
+
+describe('pages that half have the bar', () => {
+  test('a mention of nav.js in a comment is not the script, and a missing bar is added on its own', () => {
+    const d = fresh();
+    writeFileSync(join(d, 'a.html'), '<!doctype html><head><!-- kit/nav.js comes later --><script src="kit/kit.js"></script></head><body><h1>A</h1></body>');
+    writeFileSync(join(d, 'b.html'), "<!doctype html><head><script src='./kit/kit.js'></script><script src='site.js'></script><script src='./kit/nav.js'></script></head><body><h1>B</h1></body>");
+    const problems = checkSite(d);
+    expect(problems).toContain("a.html isn't in site.js, so nothing links to it: add it with add-page.mjs --adopt");
+    const r = adopt(d);
+    expect(r.bar.sort()).toEqual(['a.html', 'b.html']);
+    const a = readFileSync(join(d, 'a.html'), 'utf8');
+    expect(a).toContain('<script src="kit/kit.js"></script><script src="site.js"></script><script src="kit/nav.js"></script>');
+    expect(a).toContain('<header class="site-bar"></header>');
+    // b already loaded both: it gets the bar and no second copy of the scripts
+    const b = readFileSync(join(d, 'b.html'), 'utf8');
+    expect(b.match(/nav\.js/g)).toHaveLength(1);
+    expect(b).toContain('<header class="site-bar"></header>');
+    expect(checkSite(d)).toEqual([]);
+  });
+});
+
+describe('odd input', () => {
+  test('a title with a line break or $& is written as it is', () => {
+    const d = fresh();
+    addPage(d, { id: 'costs', title: 'Costs $& benefits', blurb: 'Two\nlines' });
+    expect(readFileSync(join(d, 'costs.html'), 'utf8')).toContain('<h1>Costs $&amp; benefits</h1>');
+    expect(readSite(d).pages.at(-1)).toMatchObject({ title: 'Costs $& benefits', blurb: 'Two\nlines' });
+    expect(checkSite(d)).toEqual([]);
+  });
+
+  test('a page that would break a hand-edited site.js is refused before anything is written', () => {
+    const d = fresh();
+    const s = readFileSync(join(d, 'site.js'), 'utf8');
+    // no comma after the last entry
+    writeFileSync(join(d, 'site.js'), s.replace(/\},(\s*\],\s*\};?\s*)$/, '}$1'));
+    expect(readSite(d).pages).toHaveLength(4);
+    expect(() => addPage(d, { id: 'more', title: 'More' })).toThrow(/would break site\.js/);
+    expect(existsSync(join(d, 'more.html'))).toBe(false);
+  });
+
+  test('check-site names an empty entry and a link out of the folder instead of crashing', () => {
+    const d = fresh();
+    const s = readFileSync(join(d, 'site.js'), 'utf8');
+    writeFileSync(join(d, 'site.js'), insertEntry(s.replace("pages: [", "pages: [\n    null,"), { id: 'up', title: 'Up', href: '../index.html' }));
+    const problems = checkSite(d);
+    expect(problems).toContain('site.js: an entry lacks id, title or href (null)');
+    expect(problems).toContain("site.js: up links to ../index.html; hrefs are relative to the site's folder");
   });
 });
 
