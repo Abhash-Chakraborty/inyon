@@ -32,6 +32,7 @@ pub mod password;
 pub mod phones;
 pub mod push;
 pub mod server;
+pub mod shares;
 pub mod start;
 pub mod static_files;
 #[cfg(test)]

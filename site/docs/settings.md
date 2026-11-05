@@ -56,8 +56,11 @@ From 0.25.
 | Setting | Choices | Default |
 |---|---|---|
 | Clean up old blueprints after | 7, 14 or 30 days, Never | 14 days |
+| Address for shared links | An address such as `https://share.example.com` | Empty |
 
 A blueprint whose tmux session and conversation have both ended, and that hasn't changed in that long, leaves the list the way **Remove** takes it off. Its folder stays. **Clean up now** does it at once, by the same rule (14 days while it's set to **Never**). See [Old blueprints are cleaned up](pages.md#old-blueprints-are-cleaned-up).
+
+From 0.25.4, **Address for shared links** is where links made for **Anyone with the link** open. Leave it empty and every [shared link](pages.md#share-a-blueprint) stays on your network. The hub answers only shared links there, and you point a reverse proxy at it yourself: see [A public address for shared blueprints](hub.md#a-public-address-for-shared-blueprints). When `INYON_SHARE_ORIGIN` sets it on the hub, the field shows it and can't change it. **Shared links** under it lists every live link, with the blueprint, who it's for, when it ends and how often it was opened, with **Revoke** for one and **Revoke all**. These two rows are on the hub's web app, not in the phone app's own settings.
 
 ## Notifications
 

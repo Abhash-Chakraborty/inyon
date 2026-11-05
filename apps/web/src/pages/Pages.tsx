@@ -23,7 +23,7 @@ import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 import {
   ADD_COMMAND, BROWSER_HINT, ChangedDot, PAGES_DOCS, PageFrame, ProgressBar, SANDBOX_NOTE, copyFolder, openInBrowser, openPageSheet, pageLabel, pageMenu, removePage, renewLink,
-  revokeLinks, updatedLine, useMachines, useNames, type PageMachine,
+  revokeLinks, shareItem, updatedLine, useMachines, useNames, type PageMachine,
 } from '../components/pages/shared.tsx'
 import { PART_ICON, notesMenu, useViewer } from '../components/pages/viewer.tsx'
 
@@ -345,6 +345,7 @@ function PhoneViewer({ id }: { id: string }) {
         ...separate(v.parts.length > 1 ? v.parts.map((pt) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: !v.note && v.part === pt, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
         ...separate(page.notes?.length ? notesMenu(page, v).filter((x) => x.key !== 'back').map((x) => ({ ...x, separated: false })) : []),
         ...separate(siblings.length > 1 ? siblings.map((p) => ({ key: p.id, label: p.name, icon: <FileText className="size-4" />, selected: p.id === page.id, onSelect: () => nav(pageHref(p.host, p.slug), { replace: true, state: from ? { from } : undefined }) })) : []),
+        ...shareItem(page, { separated: true }),
         ...(m?.host ? [{ key: 'machine', label: `Open ${m.name}`, icon: <MachineIcon kind={machineKindOf(m.host)} size={16} />, separated: true, onSelect: () => nav(`/machines/${encodeURIComponent(m.host!.config.id)}`) }] : []),
       ]
     : []
@@ -572,6 +573,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
     return () => clearInterval(t)
   }, [])
   const menu: MenuItem[] = [
+    ...shareItem(page),
     { key: 'revoke', label: 'Revoke links', icon: <Link2Off className="size-4" />, onSelect: () => void revokeLinks(page) },
     { key: 'copy', label: 'Copy folder path', icon: <Copy className="size-4" />, onSelect: () => void copyFolder(page) },
     { key: 'folder', label: 'Show folder', icon: <FolderOpen className="size-4" />, onSelect: () => openPageSheet({ kind: 'folder', page }) },

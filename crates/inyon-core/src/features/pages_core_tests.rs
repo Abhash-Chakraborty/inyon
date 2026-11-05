@@ -272,3 +272,43 @@ fn every_view_decision_in_responses_json() {
         assert_eq!(error_page(s), r["errorPages"][s.to_string()].as_str().unwrap());
     }
 }
+
+// ---------- shared links (/share/) ----------
+
+#[test]
+fn a_shared_link_is_decided_by_the_same_rules_under_its_own_prefix() {
+    let dir = TempDir::new("pages-core-share");
+    let site = dir.path("site");
+    std::fs::create_dir_all(site.join("sub")).unwrap();
+    std::fs::write(site.join("index.html"), "<!doctype html>").unwrap();
+    std::fs::write(site.join("sub/index.html"), "<!doctype html>").unwrap();
+    std::fs::write(site.join(".env"), "x").unwrap();
+    let open = |t: &str| (t == "good").then(|| ("local".to_owned(), "plan".to_owned()));
+    let root = |h: &str, s: &str| (h == "local" && s == "plan").then(|| site.clone());
+    let mount = Mount { shared: true, open: &open };
+    let decide = |method: &'static str, target: &'static str| {
+        let req = ViewRequest { method, target, origin: Some("https://share.example.com"), if_none_match: None };
+        decide_at(&req, &mount, &root, &StdFs).now_or_never().unwrap()
+    };
+    let d = decide("GET", "/share/good/");
+    assert_eq!(d.status, 200);
+    let header = |d: &ViewDecision, k: &str| d.headers.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone());
+    assert!(header(&d, "content-security-policy").unwrap().contains("script-src https://share.example.com/share/good/ 'unsafe-inline'"));
+    assert_eq!(header(&d, "x-robots-tag").as_deref(), Some("noindex, nofollow"));
+    assert_eq!(header(&d, "referrer-policy").as_deref(), Some("no-referrer"));
+    // redirects stay under /share/
+    let d = decide("GET", "/share/good/sub");
+    assert_eq!((d.status, header(&d, "location").as_deref()), (301, Some("/share/good/sub/")));
+    assert_eq!(decide("GET", "/share/good").status, 301);
+    assert_eq!(decide("GET", "/share/good/.env").status, 404);
+    assert_eq!(decide("POST", "/share/good/").status, 405);
+    // a token that opens nothing, worded for whoever was sent the link
+    let d = decide("GET", "/share/bad/");
+    assert_eq!(d.status, 403);
+    assert!(d.body.contains("Ask whoever sent it"));
+    assert_eq!(header(&d, "x-robots-tag").as_deref(), Some("noindex, nofollow"));
+    // a /v/ target isn't a shared link
+    assert_eq!(decide("GET", "/v/good/").status, 404);
+    // and the app's own links carry no x-robots-tag, as before
+    assert!(!view_headers(&ViewHeaderInput::default()).iter().any(|(k, _)| *k == "x-robots-tag"));
+}

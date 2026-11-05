@@ -57,7 +57,7 @@ Tap a card to open the page full screen. The bar on top has:
 
 - **Back**, which returns to the list, or from 0.25 to the session you opened the page from. The phone's own back button does the same, even after you've clicked around inside the page.
 - The page's name, and from 0.25 its tmux session under it. From 0.25.3 the machine and the part on screen follow the session's name.
-- **⋯** with **Reload**, **Open in browser** (not for a page on a computer paired with the phone directly), which from 0.25 opens the part or note on screen, **Plan**, **Mockups** and **Matrix** when the site has them, the site's [notes](#notes), the other pages on that machine, and **Open** the machine. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
+- **⋯** with **Reload**, **Open in browser** (not for a page on a computer paired with the phone directly), which from 0.25 opens the part or note on screen, **Plan**, **Mockups** and **Matrix** when the site has them, the site's [notes](#notes), the other pages on that machine, **Share…** (from 0.25.4) and **Open** the machine. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
 
 Before 0.25.3 the machine and **Notes** had buttons of their own in the bar, which left little room for the name on a narrow phone.
 
@@ -65,7 +65,7 @@ Under the bar, a line says **Sandboxed page: never sign in here**. It stays on s
 
 If the phone loses a hub for a moment (a weak signal, the VPN dropping, the hub restarting), its pages stay on the list, shown as offline, and an open page stays on screen with **Can't reach *hub* now** under the bar. Both catch up when the hub answers again. A hub that answers but refuses the phone, because the phone was forgotten there, is different: its pages leave the list and the app says ***hub* forgot this phone** until you pair it again.
 
-Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Revoke links**, **Show folder** and **Remove**. **Show folder** lists the folder's path, the machine, the project and which agent added the page.
+Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Share…** (from 0.25.4, see [Share a blueprint](#share-a-blueprint)), **Revoke links**, **Show folder** and **Remove**. **Show folder** lists the folder's path, the machine, the project and which agent added the page.
 
 The Android app lists the pages of every hub you paired, all together, and from 0.24 also those on the computers paired with the phone directly.
 
@@ -75,7 +75,7 @@ A computer paired with the phone over the phone link needs no hub for its pages.
 
 A few things differ from a page behind a hub:
 
-- There's no **Open in browser**: the page has no address outside the app. **Revoke links** still ends the link on screen.
+- There's no **Open in browser** or **Share…**: the page has no address outside the app. **Revoke links** still ends the link on screen.
 - The phone asks a computer for one file at a time, so a site with many files takes a moment to open the first time. While a page is open the phone keeps the files it already has until something in that folder changes.
 - A single file can be up to 4 MB.
 - **Add a folder** offers each computer that's online, next to each hub's own machine.
@@ -95,7 +95,7 @@ Above the page:
 | **Fit**, **Phone**, **Tablet**, **Desktop** | Show the page filling the pane, or at 390 × 844, 820 × 1180 or 1440 × 900, scaled down to fit |
 | Reload | Load the page again, with a new link |
 | Open in new tab | The page on its own in a browser tab, with a new 12-hour link. From 0.25 it opens the part or note on screen |
-| **⋯** | **Revoke links**, **Copy folder path**, **Show folder** and **Remove** |
+| **⋯** | **Share…** (from 0.25.4), **Revoke links**, **Copy folder path**, **Show folder** and **Remove** |
 
 A machine's own page lists its pages too, under **Blueprints on this machine**.
 
@@ -109,7 +109,7 @@ Only files directly in `research` count, ending in `.md` and not starting with a
 
 The app opens each page with a link the hub signs for that page alone. A link lasts 12 hours. The app makes a new one every time you open a page or press **Reload**, and again an hour before it runs out, while the page is on screen or as soon as you come back to it. If the hub doesn't answer then, the app tries again after a minute, then waits twice as long each time, up to 10 minutes, while the page stays on screen. The app counts those 12 hours on its own clock from when the hub answered, so a phone whose clock is off still renews in time. **Open in browser** and **Open in new tab** make a new link each time, so a tab works for 12 hours from when you opened it. Open the page from the app again for a fresh one.
 
-- **Revoke links** ends every link made for that page so far: tabs on other devices, links you copied, and the one on screen, which the app replaces at once.
+- **Revoke links** ends every link made for that page so far: tabs on other devices, links you copied, [shared links](#share-a-blueprint), and the one on screen, which the app replaces at once.
 - **Remove** takes the page off the list, and its links stop working. The folder and its files stay on the machine. The message that confirms it has **Undo** for a few seconds.
 
 Changing the hub's password ends the links of every page, and forgetting a phone ends the links it made.
@@ -125,6 +125,26 @@ A blueprint only goes when Inyon can tell its session is over:
 - Inyon has to know which session it came from. One added by hand outside tmux stays.
 - Its computer has to be connected. A blueprint on a computer that's away stays.
 - If a tmux session still has its name or its id, it stays, because that may be the same session, renamed.
+
+## Share a blueprint
+
+From 0.25.4 you can hand a blueprint to someone who doesn't use Inyon, such as a product manager or a teammate, with a link of its own. Pick **Share…** in the blueprint's **⋯** menu or the viewer's **⋯**. The sheet asks two things:
+
+| Choice | Options | Default |
+|---|---|---|
+| Who can open it | **People on your network**, **Anyone with the link** | People on your network |
+| Expires after | 1 day, 7 days, 30 days | 7 days |
+
+- **People on your network** makes a link on the hub's own address, the one you have the app open at. It opens only on devices that already reach the hub, such as those on your VPN, and only under the names the hub answers to. Nothing about the hub changes.
+- **Anyone with the link** makes a link on the hub's [address for shared links](hub.md#a-public-address-for-shared-blueprints). It stays greyed out, with a line saying where to set that address, until the hub has one. That's a separate step on purpose: nothing is reachable from outside your network until you set an address and point a reverse proxy at it.
+
+**Create link** makes the link and copies it. Keep it then: the hub stores only a fingerprint of each link, so it can't show it again. Under it the sheet lists the blueprint's live links: who each is for, when it ends, how often it was opened and when it was made, with **Revoke** to end one at once. A visit counts as an open when the link's first page loads. [Settings › Blueprints](settings.md#blueprints) lists the live links of every blueprint, with **Revoke all**.
+
+A shared link opens the blueprint read-only, in the same sandbox as in the app, with no sign-in and no cookies. It ends when it runs out, when you revoke it, when you use **Revoke links** on the blueprint, or when the blueprint is removed or [cleaned up](#old-blueprints-are-cleaned-up). Whoever opens it after that sees **Link expired**. A link for your network never opens on the address for shared links, even if someone passes it on.
+
+> **Warning:** A shared link opens every file in the blueprint's folder, not only the page: the research notes, `progress.json`, pictures, anything an agent saved there. Names starting with a dot and files a symlink leads to outside the folder stay hidden, as in the app. Look through the folder before you share it outside your network.
+
+A blueprint on another computer can be shared too, through the hub; that computer has to be online for the link to open. One on a computer paired with the phone alone has no **Share…**, since it has no address outside the app.
 
 ## What a page can't do
 
@@ -165,4 +185,7 @@ For the same reason, a session's **Preview** tab won't show Inyon's own address.
 | **The hub can't write in ~/.inyon** when adding or removing a page | The hub's user can't write to `~/.inyon` or remove a `pages.json.lock` left behind there. Make sure both belong to the hub's user, then try again |
 | **Couldn't revoke the links**, because the hub couldn't write to its data folder | The hub's disk is full or read-only. The old links stay closed only until the hub restarts. Free some space, then revoke again |
 | **Link expired** inside the page | An old link, or the page's links were revoked. Press **Reload**, or open the page from the list again |
+| **Anyone with the link** is greyed out in **Share…** | The hub has no address for shared links yet. Set one in [Settings › Blueprints](settings.md#blueprints), or with `INYON_SHARE_ORIGIN`, and point a [reverse proxy](hub.md#a-public-address-for-shared-blueprints) at it |
+| **This hub can't share blueprints yet. Update it first.** | The page's hub is older than 0.25.4. Update it |
+| A shared link opens on your network but not on the share address | It was made for **People on your network**. Make one for **Anyone with the link**. If none opens there, check that the proxy keeps the `Host` header |
 | A blank or unstyled page | It loads something from the internet. Copy those files into the folder and link them relatively |

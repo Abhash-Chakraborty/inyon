@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { create } from 'zustand'
 import clsx from 'clsx'
-import { ChevronRight, Copy, ExternalLink, FolderOpen, Link2Off, PanelsTopLeft, Trash2 } from 'lucide-react'
+import { ChevronRight, Copy, ExternalLink, FolderOpen, Link2Off, PanelsTopLeft, Share2, Trash2 } from 'lucide-react'
 import type { HostState } from '@inyon/protocol'
 import { api, ApiError } from '../../lib/api.ts'
 import { toast, useStore } from '../../lib/store.ts'
@@ -21,6 +21,7 @@ import { confirmAction } from '../Confirm.tsx'
 import { useOpened } from '../../lib/useOpened.ts'
 import { publicFile } from '../../lib/base.ts'
 import { bridgeFrame, virtualSrc } from '../../lib/pageBridge.ts'
+import { ShareSheet } from './ShareSheet.tsx'
 
 /** The docs page about Blueprints, for "How blueprints work". */
 export const PAGES_DOCS = 'https://inyon.tech/docs/pages/'
@@ -311,12 +312,18 @@ export async function removePage(p: Page, machine: string, after?: () => void) {
 export const copyFolder = (p: Page) => copyText(p.folder).then((ok) => ok && toast({ title: 'Copied the folder path', tone: 'success' }))
 
 /** The sheets the page menus open, mounted once (in the shell). */
-type PageSheet = { kind: 'folder'; page: Page } | { kind: 'add' }
+type PageSheet = { kind: 'folder'; page: Page } | { kind: 'share'; page: Page } | { kind: 'add' }
 const usePageSheet = create<{ sheet?: PageSheet; open: boolean }>(() => ({ open: false }))
 export const openPageSheet = (sheet: PageSheet) => usePageSheet.setState({ sheet, open: true })
 
 /** What Open in browser says under it: the link's life, and that the tab is no place to sign in. */
 export const BROWSER_HINT = 'A 12 h link. Never sign in there'
+
+/** "Share…" for a page with an address outside the app (not one on a computer paired with the phone alone). */
+export function shareItem(p: Page, o: { separated?: boolean } = {}): MenuItem[] {
+  if (isBridged(p.host)) return []
+  return [{ key: 'share', label: 'Share…', icon: <Share2 className="size-4" />, separated: o.separated, onSelect: () => openPageSheet({ kind: 'share', page: p }) }]
+}
 
 /** One menu for a page wherever it's listed: long-press, right-click and ⋯ share it. */
 export function pageMenu(p: Page, machine: PageMachine, nav: NavigateFunction, o: { open?: boolean } = {}): MenuItem[] {
@@ -325,7 +332,8 @@ export function pageMenu(p: Page, machine: PageMachine, nav: NavigateFunction, o
     ...(o.open === false ? [] : [{ key: 'open', label: 'Open', icon: <PanelsTopLeft className="size-4" />, onSelect: () => nav(pageHref(p.host, p.slug)) }]),
     // a page on a computer paired with the phone has no address outside the app
     ...(isBridged(p.host) ? [] : [{ key: 'browser', label: 'Open in browser', hint: off ? `${machine.name} is offline` : BROWSER_HINT, icon: <ExternalLink className="size-4" />, disabled: off, onSelect: () => void openInBrowser(p) }]),
-    { key: 'revoke', label: 'Revoke links', icon: <Link2Off className="size-4" />, separated: true, onSelect: () => void revokeLinks(p) },
+    ...shareItem(p, { separated: true }),
+    { key: 'revoke', label: 'Revoke links', icon: <Link2Off className="size-4" />, separated: isBridged(p.host), onSelect: () => void revokeLinks(p) },
     { key: 'folder', label: 'Show folder', icon: <FolderOpen className="size-4" />, onSelect: () => openPageSheet({ kind: 'folder', page: p }) },
     { key: 'remove', label: 'Remove', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void removePage(p, machine.name) },
   ]
@@ -335,6 +343,7 @@ export function PageSheets() {
   const { sheet, open } = usePageSheet()
   const close = () => usePageSheet.setState({ open: false })
   if (!sheet) return null
+  if (sheet.kind === 'share') return <ShareSheet page={sheet.page} open={open} onClose={close} />
   return sheet.kind === 'folder' ? <FolderSheet page={sheet.page} open={open} onClose={close} /> : <AddFolderSheet open={open} onClose={close} />
 }
 

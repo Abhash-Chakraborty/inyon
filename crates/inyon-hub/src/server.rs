@@ -306,6 +306,15 @@ pub fn api_for(f: ApiHandler, o: Opts, companion: Option<crate::companions::Comp
 
 /// Answers one request on the core thread: its route if one matches, else the fallback.
 pub async fn dispatch(mut req: Req) -> Resp {
+    // the public address for shared links answers /share/ and nothing else, whatever a proxy in
+    // front forwards: no app, API, WebSocket or sign-in there (the path as fetch reads it)
+    if crate::shares::on_share_host(&req) {
+        req.path = inyon_core::features::pages_core::normalize_target(&req.path).0;
+        if req.path.starts_with(inyon_core::features::pages_core::SHARE_PREFIX) {
+            return crate::pages::share_view(req).await;
+        }
+        return crate::shares::not_here(req.method == Method::HEAD);
+    }
     let routes = ROUTES.with(|r| r.borrow().clone()).expect("routes");
     if let Some((h, params)) = routes.handler(&req.path, &req.method) {
         req.params = params;
@@ -332,6 +341,10 @@ async fn fallback(mut req: Req) -> Resp {
     // Host is checked there without one (pages::view)
     if req.path.starts_with("/v/") {
         return crate::pages::view(req).await;
+    }
+    // a shared link to a blueprint, on the hub's own address (crate::shares)
+    if req.path.starts_with(inyon_core::features::pages_core::SHARE_PREFIX) {
+        return crate::pages::share_view(req).await;
     }
     // a route that only lists some methods leaves OPTIONS to land here
     if let Some(pre) = preflight(&req) {

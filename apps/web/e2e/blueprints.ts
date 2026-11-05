@@ -5,7 +5,9 @@
 // session's kept out) beside the chat on a desktop and in the Activity sheet on a phone, opened
 // there with reload, a new tab and Open full view, whose back comes to the session again. Also
 // the side panel's tabs scrolling in a 420px panel (Usage reachable by keyboard), and the phone
-// viewer's top bar at 360px. At 390×844 and 1440×900, light and dark, with a screenshot of each. CHROME=/path/to/chrome uses a browser other than Playwright's own; SHOTS= picks the folder.
+// viewer's top bar at 360px, and Share…: the sheet with your network as the default and anyone
+// off until the hub has an address, a link made and shown, the address set in Settings with
+// every live link and Revoke all. At 390×844 and 1440×900, light and dark, with a screenshot of each. CHROME=/path/to/chrome uses a browser other than Playwright's own; SHOTS= picks the folder.
 import path from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -58,8 +60,10 @@ const fresh = (): Entry[] => [
 ]
 const note = () => ({ at: now, days: 14, pages: [{ host: 'local', slug: 'old-plan', name: 'Old plan' }, { host: 'local', slug: 'spike', name: 'Search spike' }] })
 const hubSettings = () => ({ uploads: { retentionDays: 7, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, futureKey: 'kept' })
-const state = { pages: fresh(), tmux: 'storefront', opened: [] as string[], cleaned: note() as { pages: unknown[] }, settings: hubSettings() as Record<string, any>, calls: [] as string[] }
-const reset = () => Object.assign(state, { pages: fresh(), tmux: 'storefront', opened: [], cleaned: note(), settings: hubSettings(), calls: [] })
+type Shared = { id: string; host: string; slug: string; public: boolean; created: number; expires: number; opens: number }
+const state = { pages: fresh(), tmux: 'storefront', opened: [] as string[], cleaned: note() as { pages: unknown[] }, settings: hubSettings() as Record<string, any>, calls: [] as string[], address: null as string | null, shares: [] as Shared[] }
+const reset = () => Object.assign(state, { pages: fresh(), tmux: 'storefront', opened: [], cleaned: note(), settings: hubSettings(), calls: [], address: null, shares: [] })
+const shareList = (slug?: string) => ({ address: state.address, fromEnv: false, links: state.shares.filter((x) => !slug || x.slug === slug) })
 
 const ts = new Date(now).toISOString()
 const items = [
@@ -96,6 +100,33 @@ async function open(kind: 'phone' | 'desktop', scheme: 'light' | 'dark', width?:
     if (u.pathname === '/api/settings') {
       if (r.request().method() === 'PUT') state.settings = r.request().postDataJSON()
       return r.fulfill({ json: state.settings })
+    }
+    // shared links, as a hub from 0.25.4 answers them
+    const method = r.request().method()
+    const sh = /^\/api\/pages\/([^/]+)\/([^/]+)\/shares(?:\/([^/]+))?$/.exec(u.pathname)
+    if (sh) {
+      if (method === 'POST') {
+        const b = r.request().postDataJSON()
+        const made: Shared = { id: `s${state.shares.length + 1}`, host: sh[1]!, slug: sh[2]!, public: b.public, created: Date.now(), expires: Date.now() + b.days * 24 * HOUR, opens: 0 }
+        state.shares.push(made)
+        const token = `Tok${made.id}AbCdEfGhIjKlMnOp`.slice(0, 22)
+        return r.fulfill({ json: { ...made, url: b.public ? `${state.address}/share/${token}/` : `/share/${token}/` } })
+      }
+      if (method === 'DELETE') state.shares = state.shares.filter((x) => x.id !== sh[3])
+      return r.fulfill({ json: method === 'DELETE' ? { ok: true } : shareList(sh[2]) })
+    }
+    if (u.pathname === '/api/shares') {
+      if (method === 'DELETE') state.shares = []
+      return r.fulfill({ json: method === 'DELETE' ? { revoked: 1 } : shareList() })
+    }
+    if (u.pathname.startsWith('/api/shares/')) {
+      state.shares = state.shares.filter((x) => x.id !== u.pathname.split('/').pop())
+      return r.fulfill({ json: { ok: true } })
+    }
+    if (u.pathname === '/api/share-address') {
+      const a = String(r.request().postDataJSON().address).trim()
+      state.address = a ? (a.includes('://') ? a : `https://${a}`).replace(/\/$/, '').toLowerCase() : null
+      return r.fulfill({ json: shareList() })
     }
     const o = /^\/api\/pages\/([^/]+)\/([^/]+)\/open$/.exec(u.pathname)
     if (o) {
@@ -255,6 +286,76 @@ try {
       check(state.calls.filter((c) => c === 'POST /api/pages-cleanup').length === 1, `${label}: cleaned up on the hub`)
       await page.locator('#blueprints').screenshot({ path: path.join(shots, `settings-blueprints-1440-${scheme}.png`) })
       await layout(page, label)
+      await ctx.close()
+    }
+
+    // ---- Share…: on a desktop from the viewer's ⋯, then the address and the list in Settings ----
+    {
+      reset()
+      const { ctx, page } = await open('desktop', scheme)
+      const label = `share desktop ${scheme}`
+      await page.goto(`${base}/blueprints/local/checkout-redesign`)
+      await page.frameLocator('iframe').first().getByRole('heading', { name: 'Checkout redesign' }).waitFor()
+      await page.getByRole('button', { name: 'More for Checkout redesign' }).click()
+      await page.getByRole('menuitem', { name: 'Share…' }).click()
+      const sheet = page.getByRole('dialog', { name: 'Share “Checkout redesign”' })
+      await sheet.getByText('None yet.').waitFor()
+      check((await sheet.getByRole('radio', { name: /People on your network/ }).getAttribute('aria-checked')) === 'true', `${label}: your network by default`)
+      check((await sheet.getByRole('radio', { name: /Anyone with the link/ }).getAttribute('aria-disabled')) === 'true', `${label}: anyone is off without an address`)
+      await page.screenshot({ path: path.join(shots, `share-sheet-1440-${scheme}.png`) })
+      await sheet.getByRole('radio', { name: '30 days' }).click()
+      await sheet.getByRole('button', { name: 'Create link' }).click()
+      const url = sheet.getByTestId('share-url')
+      await url.waitFor()
+      check((await url.textContent()) === `${base}/share/Toks1AbCdEfGhIjKlMnOp/`, `${label}: a network link on the app's own address (${await url.textContent()})`)
+      await sheet.getByRole('listitem').getByText('Your network').waitFor()
+      check(state.shares[0]?.expires! - state.shares[0]?.created! === 30 * 24 * HOUR, `${label}: for the days picked`)
+      await page.screenshot({ path: path.join(shots, `share-made-1440-${scheme}.png`) })
+      await layout(page, label)
+      await sheet.getByRole('button', { name: 'Done' }).click()
+      // Settings › Blueprints: the address, then the links
+      await page.goto(`${base}/settings#blueprints`)
+      const field = page.getByPlaceholder('https://share.example.com')
+      await field.waitFor()
+      check((await field.inputValue()) === '', `${label}: no address unless set`)
+      await field.fill('share.example.com')
+      await page.getByRole('button', { name: 'Save the address for shared links' }).click()
+      check(await until(async () => (await field.inputValue()) === 'https://share.example.com'), `${label}: the address as the hub keeps it`)
+      check(await page.getByText('Checkout redesign').first().isVisible(), `${label}: the live link, by its blueprint`)
+      await page.locator('#blueprints').screenshot({ path: path.join(shots, `settings-shares-1440-${scheme}.png`) })
+      await layout(page, `${label} settings`)
+      await page.getByRole('button', { name: 'Revoke all' }).click()
+      await page.getByRole('dialog').getByRole('button', { name: 'Revoke all' }).click()
+      check(await until(() => state.calls.includes('DELETE /api/shares')), `${label}: Revoke all on the hub`)
+      await page.getByText('None live. Share a blueprint from its ⋯ menu.').waitFor()
+      await ctx.close()
+    }
+
+    // ---- Share… on a phone, with the address set: a link for anyone ----
+    {
+      reset()
+      state.address = 'https://share.example.com'
+      const { ctx, page } = await open('phone', scheme)
+      const label = `share phone ${scheme}`
+      await page.goto(`${base}/blueprints`)
+      await page.getByRole('button', { name: 'More for Checkout redesign' }).click()
+      await page.getByRole('menuitem', { name: 'Share…' }).click()
+      const sheet = page.getByRole('dialog', { name: 'Share “Checkout redesign”' })
+      const anyone = sheet.getByRole('radio', { name: /Anyone with the link/ })
+      await anyone.getByText('Opens at share.example.com, through the proxy you set up.').waitFor()
+      await anyone.click()
+      await sheet.getByText(/research notes too/).waitFor()
+      await sheet.getByRole('button', { name: 'Create link' }).click()
+      const url = sheet.getByTestId('share-url')
+      await url.waitFor()
+      check((await url.textContent()) === 'https://share.example.com/share/Toks1AbCdEfGhIjKlMnOp/', `${label}: a link on the share address (${await url.textContent()})`)
+      check(state.shares[0]?.public === true && state.shares[0]?.expires! - state.shares[0]?.created! === 7 * 24 * HOUR, `${label}: for anyone, 7 days`)
+      await sheet.getByRole('listitem').getByText('Anyone with the link').waitFor()
+      await page.screenshot({ path: path.join(shots, `share-sheet-390-${scheme}.png`) })
+      await layout(page, label)
+      await sheet.getByRole('button', { name: 'Revoke' }).click()
+      check(await until(() => state.shares.length === 0), `${label}: Revoke on the hub`)
+      await sheet.getByText('None yet.').waitFor()
       await ctx.close()
     }
 

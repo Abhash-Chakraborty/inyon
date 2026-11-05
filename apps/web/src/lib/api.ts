@@ -95,6 +95,26 @@ const qs = (o: Record<string, string>) => `?${new URLSearchParams(o)}`
 
 export type { Uploaded } from './upload.ts'
 
+/** A shared link to a blueprint, as the hub lists it (never the link itself, which it keeps only hashed). */
+export interface ShareLink {
+  id: string
+  host: string
+  slug: string
+  /** anyone with the link, on the public share address; else people on your network */
+  public: boolean
+  created: number
+  expires: number
+  opens: number
+}
+
+export interface ShareList {
+  /** the public address for shared links, such as https://share.example.com */
+  address: string | null
+  /** set by INYON_SHARE_ORIGIN on the hub, so Settings can't change it */
+  fromEnv: boolean
+  links: ShareLink[]
+}
+
 /** What PATCH …/organize changes on a session; a field left out stays as it is. */
 export interface SessionPatch {
   pinned?: boolean
@@ -494,6 +514,18 @@ export const api = {
   addPage: (host: string, b: PageRegister) => request<PageEntry>('POST', pg(host), b, 20_000),
   /** takes a page off the list; its folder stays */
   removePage: (host: string, slug: string) => request<{ ok: true }>('DELETE', pg(host, slug)),
+  // ---- shared links to a blueprint, for someone outside the app (hubs from 0.25.4) ----
+  /** the page's live shared links, and the hub's public address for them */
+  pageShares: (host: string, slug: string) => request<ShareList>('GET', `${pg(host, slug)}/shares`),
+  /** a new shared link; `url` is shown this once (a path on the hub for your network, a full address for anyone) */
+  sharePage: (host: string, slug: string, b: { public: boolean; days: number }) => request<ShareLink & { url: string }>('POST', `${pg(host, slug)}/shares`, b, 20_000),
+  unsharePage: (host: string, slug: string, id: string) => request<{ ok: true }>('DELETE', `${pg(host, slug)}/shares/${encodeURIComponent(id)}`),
+  /** every live shared link on the hub this app came from */
+  shares: () => request<ShareList>('GET', '/api/shares'),
+  revokeShare: (id: string) => request<{ ok: true }>('DELETE', `/api/shares/${encodeURIComponent(id)}`),
+  revokeAllShares: () => request<{ revoked: number }>('DELETE', '/api/shares'),
+  /** the public address for shared links ("" clears it) */
+  setShareAddress: (address: string) => request<ShareList>('PUT', '/api/share-address', { address }),
   /** a file of a page on a computer paired with the phone: the core answers `/v/<token>/…` itself (lib/pageBridge.ts) */
   pageFile: (path: string, method: 'GET' | 'HEAD') => send(new Request(new URL(path, location.href), { method, credentials: 'omit' })),
 

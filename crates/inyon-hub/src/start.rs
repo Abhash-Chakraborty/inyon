@@ -83,6 +83,7 @@ pub fn serve() -> i32 {
         crate::phones::init();
         crate::companions::init();
         crate::pages::init(inyon_engine::paths::home());
+        crate::shares::init(get("INYON_SHARE_ORIGIN").as_deref());
         // messages held before a restart go once their agents are free
         inyon_core::claude::held::start();
 
@@ -128,6 +129,7 @@ pub fn serve() -> i32 {
             },
             crate::index::routes(updater),
         );
+        crate::shares::warn_overlap(get("INYON_ALLOWED_HOSTS").as_deref(), get("INYON_ALLOWED_ORIGINS").as_deref());
         crate::core_routes::start_core();
         crate::clients::poll_less_when_unwatched();
         crate::push::start_hub_push();
@@ -179,6 +181,9 @@ pub fn serve() -> i32 {
             _ = int.recv() => {}
         }
         crate::core_routes::save_everything();
+        if let Some(s) = crate::shares::current() {
+            s.flush(inyon_core::clock::now_ms());
+        }
         0
     })
 }

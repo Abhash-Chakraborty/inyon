@@ -33,6 +33,7 @@ import { checkAppUpdate, type AppUpdate } from '../lib/appUpdate.ts'
 import { openLink } from '../lib/format.ts'
 import { LastDrop, hubLogId, openConnectHelp } from '../components/ConnectSheet.tsx'
 import { isDown, useConnLog, useLastDrop } from '../lib/connlog.ts'
+import { SharedLinks } from '../components/pages/SharedLinks.tsx'
 
 /** The phone app: stay connected while it's in the background, and Android's battery limits. */
 function Background() {
@@ -578,6 +579,7 @@ export function Settings() {
                   <Segmented size="sm" label="Clean up old blueprints after" value={String(hub.pagesCleanupDays ?? 14)} onChange={(v) => saveHub({}, { pagesCleanupDays: Number(v) })} options={[{ v: '7', label: '7 days' }, { v: '14', label: '14 days' }, { v: '30', label: '30 days' }, { v: '0', label: 'Never' }]} />
                 </Row>
                 <CleanupRow days={hub.pagesCleanupDays ?? 14} />
+                {!isPhone() && <SharedLinks />}
               </>
             )}
           </Section>

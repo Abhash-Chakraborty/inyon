@@ -17,6 +17,7 @@ An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon
 | `TLS_CERT`, `TLS_KEY` | | PEM certificate and key files, to serve HTTPS directly. From 0.20 setup's *LAN* choice makes them (`~/.inyon/tls/`) |
 | `INYON_ALLOWED_HOSTS` | | Extra host names the hub answers to, comma-separated. IPs, single-label names, localhost, `.ts.net`, NetBird names and home-network names (`.local`, `.lan`, `.internal`, `.home.arpa`) always work. `*` turns the check off |
 | `INYON_ALLOWED_ORIGINS` | | Extra origins allowed to call the hub, comma-separated, for a reverse proxy on another hostname |
+| `INYON_SHARE_ORIGIN` | | From 0.25.4, the [address for shared links](hub.md#a-public-address-for-shared-blueprints), such as `https://share.example.com`. On that host the hub answers `/share/` links for anyone and nothing else. It wins over the one in Settings. An address with a path, or anything but http or https, is ignored with a line in the log |
 | `INYON_DATA_DIR` | `~/.inyon` | Where the hub keeps its records |
 | `INYON_HUB_NAME` | the machine's name | The name phones show for this hub |
 | `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines. A mirror needs `SHA256SUMS.minisig` beside `SHA256SUMS`: from 0.20 the hub checks it with the release key first |
@@ -73,6 +74,7 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | `~/.inyon/page-epochs.json` | From 0.20, a counter per page that revoking or removing it moves on, so older links stop working. It moves with `INYON_DATA_DIR` |
 | `~/.inyon/page-sessions.json` | From 0.22.5, which agent session's folder the hub [found](pages.md#blueprints-the-hub-finds) each page in, so the app can group it under that session's name. From 0.25 also the tmux session that conversation runs in, by the name it had when the hub last saw it, so a page keeps its session's newest name after the agent stops. Up to 500 pages. It moves with `INYON_DATA_DIR` |
 | `~/.inyon/page-cleaned.json` | From 0.25, the blueprints the hub's last [clean-up](pages.md#old-blueprints-are-cleaned-up) took off the list (up to 50), for the line over the list, until it's dismissed. It moves with `INYON_DATA_DIR` |
+| `~/.inyon/shares.json` | From 0.25.4, the blueprints' [shared links](pages.md#share-a-blueprint): for each, the SHA-256 of its link (never the link itself), the blueprint, who it's for, when it was made and ends, the page's counter when it was made and how often it was opened; and the address for shared links set in Settings. Ended links are dropped from it. It moves with `INYON_DATA_DIR` |
 | `~/.inyon/page-listed.json` | From 0.20, the pages the hub saw in `pages.json` last time, so a page removed while the hub was stopped still has its old links ended. It moves with `INYON_DATA_DIR` |
 | `<site>/.inyon-page.json` | From 0.20, a marker in a page's own folder with its name and slug, which the hub uses when the page is added. Names starting with a dot are never served |
 

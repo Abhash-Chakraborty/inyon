@@ -380,8 +380,18 @@ pub struct ViewTarget {
 }
 
 pub fn split_view_target(target: &str) -> Option<ViewTarget> {
+    split_target_at(VIEW_PREFIX, target)
+}
+
+/// Where the app's own links are served: `/v/<token>/`.
+pub const VIEW_PREFIX: &str = "/v/";
+/// Where shared links are served: `/share/<token>/`, by the same rules as `/v/` (see `Mount`).
+pub const SHARE_PREFIX: &str = "/share/";
+
+/// `<prefix><token><rest>?<query>` taken apart, after normalize_target.
+pub fn split_target_at(prefix: &str, target: &str) -> Option<ViewTarget> {
     let (p, query) = normalize_target(target);
-    let after = p.strip_prefix("/v/")?;
+    let after = p.strip_prefix(prefix)?;
     Some(match after.find('/') {
         Some(i) => ViewTarget { token: after[..i].to_owned(), rest: after[i..].to_owned(), query },
         None => ViewTarget { token: after.to_owned(), rest: String::new(), query },
@@ -560,11 +570,16 @@ const SANDBOX: &str = "sandbox allow-scripts allow-forms allow-popups allow-down
 /// framing its own files (Blueprint's mockup viewer and its screens) would break. Framing needs the
 /// token URL anyway, and the framed page is still sandboxed.
 pub fn view_csp(origin: Option<&str>, token: Option<&str>) -> String {
+    view_csp_at(VIEW_PREFIX, origin, token)
+}
+
+/// view_csp for a site served under `prefix` (`/v/` or `/share/`).
+pub fn view_csp_at(prefix: &str, origin: Option<&str>, token: Option<&str>) -> String {
     let tail = "object-src 'none'; base-uri 'none'; form-action 'none'";
     let (Some(origin), Some(token)) = (origin, token) else {
         return format!("{SANDBOX}; default-src 'none'; style-src 'unsafe-inline'; {tail}");
     };
-    let b = format!("{origin}/v/{token}/");
+    let b = format!("{origin}{prefix}{token}/");
     [
         SANDBOX.to_owned(),
         "default-src 'none'".to_owned(),
@@ -593,13 +608,16 @@ pub struct ViewHeaderInput<'a> {
     pub etag: Option<&'a str>,
     pub location: Option<&'a str>,
     pub allow: Option<&'a str>,
+    /// a shared link (`/share/`): its own token path in the CSP, and kept out of search engines
+    pub shared: bool,
 }
 
 /// Every header a `/v/` answer carries, lowercase, in this order; the hub adds only what its server
 /// adds by itself (date, content-length). The one place these are made, for every status.
 pub fn view_headers(o: &ViewHeaderInput) -> HeaderList {
+    let prefix = if o.shared { SHARE_PREFIX } else { VIEW_PREFIX };
     let mut h: HeaderList = vec![
-        ("content-security-policy", view_csp(o.origin, o.token)),
+        ("content-security-policy", view_csp_at(prefix, o.origin, o.token)),
         ("access-control-allow-origin", "*".into()),
         ("referrer-policy", "no-referrer".into()),
         ("x-content-type-options", "nosniff".into()),
@@ -607,6 +625,9 @@ pub fn view_headers(o: &ViewHeaderInput) -> HeaderList {
         ("x-dns-prefetch-control", "off".into()),
         ("cache-control", if o.no_store { "no-store" } else { "no-cache" }.into()),
     ];
+    if o.shared {
+        h.push(("x-robots-tag", "noindex, nofollow".into()));
+    }
     for (k, v) in [("content-type", o.content_type), ("etag", o.etag), ("location", o.location), ("allow", o.allow)] {
         if let Some(v) = v.filter(|v| !v.is_empty()) {
             h.push((k, v.to_owned()));
@@ -617,8 +638,10 @@ pub fn view_headers(o: &ViewHeaderInput) -> HeaderList {
 
 // ---------- error pages ----------
 
-fn error_text(status: u16) -> (&'static str, &'static str) {
+fn error_text(status: u16, shared: bool) -> (&'static str, &'static str) {
     match status {
+        403 if shared => ("Link expired", "This shared link ran out or was turned off. Ask whoever sent it for a new one."),
+        404 if shared => ("Not found", "This shared page has no file at that address."),
         403 => ("Link expired", "Open the page again from Inyon."),
         405 => ("Read only", "Pages can be read, nothing else."),
         413 => ("Too big", "This file is too big to show here."),
@@ -630,7 +653,12 @@ fn error_text(status: u16) -> (&'static str, &'static str) {
 /// The small HTML page sent with an error (403, 404, 405, 413 or 421). Light or dark with the
 /// system, no scripts.
 pub fn error_page(status: u16) -> String {
-    let (title, text) = error_text(status);
+    error_page_for(status, false)
+}
+
+/// error_page, worded for someone who got a shared link when `shared`.
+pub fn error_page_for(status: u16, shared: bool) -> String {
+    let (title, text) = error_text(status, shared);
     format!(
         "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>:root{{color-scheme:light dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 system-ui,sans-serif;background:Canvas;color:CanvasText}}main{{max-width:32rem;padding:24px}}h1{{font-size:18px;margin:0 0 4px}}p{{margin:0;opacity:.7}}</style><main><h1>{title}</h1><p>{text}</p></main></html>\n"
     )
@@ -682,13 +710,13 @@ pub struct ViewDecision {
     pub body: String,
 }
 
-fn failure(origin: Option<&str>, status: u16, token: Option<&str>, allow: Option<&str>) -> ViewDecision {
+fn failure(origin: Option<&str>, status: u16, token: Option<&str>, allow: Option<&str>, shared: bool) -> ViewDecision {
     ViewDecision {
         status,
-        headers: view_headers(&ViewHeaderInput { origin, token, no_store: true, content_type: Some("text/html;charset=utf-8"), allow, ..Default::default() }),
+        headers: view_headers(&ViewHeaderInput { origin, token, no_store: true, content_type: Some("text/html;charset=utf-8"), allow, shared, ..Default::default() }),
         file: None,
         site: None,
-        body: error_page(status),
+        body: error_page_for(status, shared),
     }
 }
 
@@ -696,14 +724,24 @@ fn failure(origin: Option<&str>, status: u16, token: Option<&str>, allow: Option
 /// folder on the way was swapped for a symlink in between. The hub opens the file and then asks the
 /// system where the open file really is, so a swap can't lead it out of the site.
 pub fn gone_after_open(req: &ViewRequest<'_>) -> ViewDecision {
-    let token = split_view_target(req.target).map(|t| t.token);
-    failure(req.origin, 404, token.as_deref(), None)
+    gone_after_open_at(req, false)
+}
+
+/// gone_after_open for a `/v/` link, or a shared one when `shared`.
+pub fn gone_after_open_at(req: &ViewRequest<'_>, shared: bool) -> ViewDecision {
+    let token = split_target_at(if shared { SHARE_PREFIX } else { VIEW_PREFIX }, req.target).map(|t| t.token);
+    failure(req.origin, 404, token.as_deref(), None, shared)
 }
 
 /// The 413 for a 200 whose file is on another machine and bigger than the hub fetches from it.
 pub fn too_big(req: &ViewRequest<'_>) -> ViewDecision {
-    let token = split_view_target(req.target).map(|t| t.token);
-    failure(req.origin, 413, token.as_deref(), None)
+    too_big_at(req, false)
+}
+
+/// too_big for a `/v/` link, or a shared one when `shared`.
+pub fn too_big_at(req: &ViewRequest<'_>, shared: bool) -> ViewDecision {
+    let token = split_target_at(if shared { SHARE_PREFIX } else { VIEW_PREFIX }, req.target).map(|t| t.token);
+    failure(req.origin, 413, token.as_deref(), None, shared)
 }
 
 /// The real path is the site's root or inside it, with no dot-named folder or file on the way.
@@ -720,23 +758,40 @@ pub fn within(root: &Path, real: &Path) -> bool {
 /// anything whose real path leaves the site or passes a dot name: 404), then the cache (304) or the
 /// file (200).
 pub async fn decide_view(req: &ViewRequest<'_>, ctx: &ViewContext<'_>) -> ViewDecision {
-    let fail = |status: u16, token: Option<&str>, allow: Option<&str>| failure(req.origin, status, token, allow);
+    let open = |t: &str| verify_token(t, &ctx.verify).ok().map(|c| (c.h, c.s));
+    decide_at(req, &Mount { shared: false, open: &open }, ctx.site_root, ctx.fs).await
+}
+
+/// Which links a request is answered under: the app's signed `/v/` links, or shared `/share/` ones.
+pub struct Mount<'a> {
+    /// `/share/<token>/` rather than `/v/<token>/`
+    pub shared: bool,
+    /// The site (host and slug) a token opens, or None for a token that opens nothing (403).
+    pub open: &'a dyn Fn(&str) -> Option<(String, String)>,
+}
+
+/// decide_view for either kind of link: the same checks in the same order, with the token judged by
+/// `mount.open` and every path, redirect and CSP under the mount's own prefix.
+pub async fn decide_at(req: &ViewRequest<'_>, mount: &Mount<'_>, site_root: &dyn Fn(&str, &str) -> Option<PathBuf>, fs: &dyn ViewFs) -> ViewDecision {
+    let shared = mount.shared;
+    let prefix = if shared { SHARE_PREFIX } else { VIEW_PREFIX };
+    let fail = |status: u16, token: Option<&str>, allow: Option<&str>| failure(req.origin, status, token, allow, shared);
     if req.origin.is_none() {
         return fail(421, None, None);
     }
     if req.method != "GET" && req.method != "HEAD" {
         return fail(405, None, Some("GET, HEAD"));
     }
-    let Some(t) = split_view_target(req.target) else { return fail(404, None, None) };
-    let Ok(claims) = verify_token(&t.token, &ctx.verify) else { return fail(403, None, None) };
+    let Some(t) = split_target_at(prefix, req.target) else { return fail(404, None, None) };
+    let Some((host, slug)) = (mount.open)(&t.token) else { return fail(403, None, None) };
     let token = Some(t.token.as_str());
-    let Some(root) = (ctx.site_root)(&claims.h, &claims.s) else { return fail(404, token, None) };
+    let Some(root) = site_root(&host, &slug) else { return fail(404, token, None) };
     let redirect = |segments: &[String]| {
         let path: String = segments.iter().map(|s| format!("{}/", encode_uri_component(s))).collect();
-        let location = format!("/v/{}/{path}{}", t.token, kept_query(t.query.as_deref()));
+        let location = format!("{prefix}{}/{path}{}", t.token, kept_query(t.query.as_deref()));
         ViewDecision {
             status: 301,
-            headers: view_headers(&ViewHeaderInput { origin: req.origin, token, no_store: true, location: Some(&location), ..Default::default() }),
+            headers: view_headers(&ViewHeaderInput { origin: req.origin, token, no_store: true, location: Some(&location), shared, ..Default::default() }),
             file: None,
             site: None,
             body: String::new(),
@@ -747,23 +802,23 @@ pub async fn decide_view(req: &ViewRequest<'_>, ctx: &ViewContext<'_>) -> ViewDe
     }
     let Some((segments, dir)) = view_segments(&t.rest) else { return fail(404, token, None) };
 
-    let Some(site_real) = ctx.fs.realpath(&root).await else { return fail(404, token, None) };
+    let Some(site_real) = fs.realpath(&root).await else { return fail(404, token, None) };
     let joined = segments.iter().fold(root.clone(), |p, s| p.join(s));
-    let mut real = match ctx.fs.realpath(&joined).await {
+    let mut real = match fs.realpath(&joined).await {
         Some(r) if within(&site_real, &r) => r,
         _ => return fail(404, token, None),
     };
-    let mut st = ctx.fs.stat(&real).await;
+    let mut st = fs.stat(&real).await;
     let mut name = segments.last().cloned().unwrap_or_else(|| "index.html".into());
     if st.is_some_and(|s| s.dir) {
         if !dir {
             return redirect(&segments);
         }
-        real = match ctx.fs.realpath(&real.join("index.html")).await {
+        real = match fs.realpath(&real.join("index.html")).await {
             Some(r) if within(&site_real, &r) => r,
             _ => return fail(404, token, None),
         };
-        st = ctx.fs.stat(&real).await;
+        st = fs.stat(&real).await;
         name = "index.html".into();
     } else if dir {
         return fail(404, token, None);
@@ -772,15 +827,15 @@ pub async fn decide_view(req: &ViewRequest<'_>, ctx: &ViewContext<'_>) -> ViewDe
 
     let ty = content_type(&name);
     if no_store(&name) {
-        let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, no_store: true, content_type: Some(ty), ..Default::default() });
+        let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, no_store: true, content_type: Some(ty), shared, ..Default::default() });
         return ViewDecision { status: 200, headers, file: Some((real, st.size)), site: Some(site_real), body: String::new() };
     }
     let etag = etag_of(st.size, st.mtime_ms);
     if etag_matches(req.if_none_match, &etag) {
-        let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, etag: Some(&etag), ..Default::default() });
+        let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, etag: Some(&etag), shared, ..Default::default() });
         return ViewDecision { status: 304, headers, file: None, site: None, body: String::new() };
     }
-    let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, content_type: Some(ty), etag: Some(&etag), ..Default::default() });
+    let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, content_type: Some(ty), etag: Some(&etag), shared, ..Default::default() });
     ViewDecision { status: 200, headers, file: Some((real, st.size)), site: Some(site_real), body: String::new() }
 }
 
