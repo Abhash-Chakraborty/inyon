@@ -10,7 +10,7 @@ import { api } from '../../lib/api.ts'
 import { openLink, shortPath, since } from '../../lib/format.ts'
 import { Diff, useHunks } from '../chat/Diff.tsx'
 import { AssistantTurn, CommandRow, GoalRow, NoticeRow, UserMessage } from '../chat/Messages.tsx'
-import { Button, Empty, Segmented, Sheet, Waiting, inputClass } from '../ui/primitives.tsx'
+import { Button, Empty, Segmented, Sheet, Waiting, arrowStep, inputClass, useStrip } from '../ui/primitives.tsx'
 import { CommentableDiff, FilesTab, ReviewBar, WorkingTree, type PaneKey } from './Workspace.tsx'
 import { UsagePanel } from './Usage.tsx'
 import type { SessionModel } from './useSession.ts'
@@ -381,9 +381,9 @@ export { useSessionPages }
  * The session's blueprints (see SessionBlueprints): this conversation's first, then the tmux
  * session's earlier ones. `inline` opens one in the panel; otherwise the viewer comes back here.
  */
-export function PagesTab({ s, inline, from }: { s: SessionModel; inline?: boolean; from?: string }) {
+export function PagesTab({ s, inline, from, viewerClass }: { s: SessionModel; inline?: boolean; from?: string; viewerClass?: string }) {
   const { list, tmux } = useSessionPages(s)
-  return <SessionBlueprints list={list} tmux={tmux} inline={inline} from={from} />
+  return <SessionBlueprints list={list} tmux={tmux} inline={inline} from={from} viewerClass={viewerClass} />
 }
 
 /**
@@ -413,7 +413,7 @@ function useTabUnderline(strip: React.RefObject<HTMLElement | null>, index: numb
     <span
       aria-hidden
       data-part="underline"
-      className={clsx('pointer-events-none absolute -bottom-px left-0 h-0.5 w-[100px] origin-left bg-accent', moved.current && 'transition-transform duration-(--dur-move) ease-out-soft')}
+      className={clsx('pointer-events-none absolute bottom-0 left-0 h-0.5 w-[100px] origin-left bg-accent', moved.current && 'transition-transform duration-(--dur-move) ease-out-soft')}
       style={{ transform: `translateX(${at.left}px) scaleX(${at.width / 100})` }}
     />
   )
@@ -435,7 +435,10 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
     ...(pages || tab === 'pages' ? [{ id: 'pages' as const, label: 'Blueprints', badge: pages || undefined }] : []),
     { id: 'usage', label: 'Usage' },
   ]
-  const underline = useTabUnderline(strip, tabs.findIndex((t) => t.id === tab))
+  const at = tabs.findIndex((t) => t.id === tab)
+  const underline = useTabUnderline(strip, at)
+  // more tabs than fit a narrow panel: the strip scrolls, and the one on screen stays in view
+  const fade = useStrip(strip, at)
   const previewSuggestions = useMemo(() => {
     const out = new Set<string>()
     for (const i of items.slice(-400)) {
@@ -450,15 +453,30 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
   return (
     // in from its edge; out with a fade while PanePage keeps it mounted
     <aside className={clsx('flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-sidebar 2xl:w-[480px]', closing ? 'animate-fade-out' : 'animate-panel-in')}>
-      <div ref={strip} role="tablist" className="relative flex shrink-0 gap-0.5 border-b border-line px-2.5 pt-2">
+      <div
+        ref={strip}
+        role="tablist"
+        aria-label="Side panel"
+        style={fade}
+        onKeyDown={(e) => {
+          const next = arrowStep(e.key, Math.max(0, at), tabs.length)
+          if (next === undefined) return
+          e.preventDefault()
+          setTab(tabs[next]!.id)
+          strip.current?.querySelectorAll<HTMLElement>('[role=tab]')[next]?.focus()
+        }}
+        className="no-scrollbar relative flex shrink-0 gap-0.5 overflow-x-auto overflow-y-hidden border-b border-line px-2.5 pt-2"
+      >
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
             role="tab"
             aria-selected={tab === t.id}
+            // one stop for the strip; the arrows move along it
+            tabIndex={tab === t.id ? 0 : -1}
             onClick={() => setTab(t.id)}
-            className={clsx('flex h-9 items-center gap-1.5 px-2.5 text-[12.5px] font-medium transition-colors', tab === t.id ? 'text-fg' : 'text-fg-3 hover:text-fg-2')}
+            className={clsx('flex h-9 shrink-0 items-center gap-1.5 px-2.5 text-[12.5px] font-medium whitespace-nowrap transition-colors', tab === t.id ? 'text-fg' : 'text-fg-3 hover:text-fg-2')}
           >
             {t.label}
             {t.badge !== undefined && <span className="tabular rounded-full bg-sunken px-1.5 text-[12px] text-fg-2">{t.badge}</span>}

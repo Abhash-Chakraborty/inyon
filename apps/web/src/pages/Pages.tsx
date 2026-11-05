@@ -335,17 +335,17 @@ function PhoneViewer({ id }: { id: string }) {
   const v = useViewer(page)
   const m = page ? machine(page.host) : undefined
   const siblings = page ? (all ?? []).filter((p) => p.host === page.host) : []
+  // the top bar keeps only the way back, the name and this menu, so it fits a 360px phone: the
+  // parts, the notes, the other blueprints on the machine and the machine itself are all in here
+  const separate = (items: MenuItem[]) => items.map((x, i) => (i === 0 ? { ...x, separated: true } : x))
   const more: MenuItem[] = page
     ? [
         { key: 'reload', label: 'Reload', icon: <RotateCw className="size-4" />, disabled: !v.link, onSelect: v.reload },
-        ...(v.parts.length > 1 ? v.parts.map((pt, i) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: !v.note && v.part === pt, separated: i === 0, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
-        ...(v.bridged ? [] : [{ key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page, browserPath(v.part, v.note)) }]),
-      ]
-    : []
-  const machineItems: MenuItem[] = page && m
-    ? [
-        ...siblings.map((p) => ({ key: p.id, label: p.name, icon: <FileText className="size-4" />, selected: p.id === page.id, onSelect: () => nav(pageHref(p.host, p.slug), { replace: true, state: from ? { from } : undefined }) })),
-        ...(m.host ? [{ key: 'machine', label: `Open ${m.name}`, icon: <MachineIcon kind={machineKindOf(m.host)} size={16} />, separated: true, onSelect: () => nav(`/machines/${encodeURIComponent(m.host!.config.id)}`) }] : []),
+        ...(v.bridged ? [] : [{ key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, disabled: !v.link, onSelect: () => void openInBrowser(page, browserPath(v.part, v.note)) }]),
+        ...separate(v.parts.length > 1 ? v.parts.map((pt) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: !v.note && v.part === pt, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
+        ...separate(page.notes?.length ? notesMenu(page, v).filter((x) => x.key !== 'back').map((x) => ({ ...x, separated: false })) : []),
+        ...separate(siblings.length > 1 ? siblings.map((p) => ({ key: p.id, label: p.name, icon: <FileText className="size-4" />, selected: p.id === page.id, onSelect: () => nav(pageHref(p.host, p.slug), { replace: true, state: from ? { from } : undefined }) })) : []),
+        ...(m?.host ? [{ key: 'machine', label: `Open ${m.name}`, icon: <MachineIcon kind={machineKindOf(m.host)} size={16} />, separated: true, onSelect: () => nav(`/machines/${encodeURIComponent(m.host!.config.id)}`) }] : []),
       ]
     : []
   return (
@@ -353,35 +353,17 @@ function PhoneViewer({ id }: { id: string }) {
       <header className="pt-safe shrink-0 border-b border-line bg-bg">
         <div className="flex h-11 items-center gap-0.5 px-0.5">
           <IconButton label={from ? 'Back to the session' : 'Back to Blueprints'} className="size-11 rounded-xl" onClick={back}><ChevronLeft className="size-5" /></IconButton>
-          {/* which blueprint this is, and the session it belongs to */}
+          {/* which blueprint this is, the session it belongs to and its machine, and the part on screen */}
           <div className="min-w-0 flex-1 pl-0.5 leading-tight">
             <h1 className="truncate text-[15px] font-semibold tracking-[-0.01em]">{page?.name ?? ''}</h1>
-            {page && <div className="viewer-where truncate font-mono text-[12px] text-fg-3">{groupName(page, names)}</div>}
+            {page && (
+              <div className="truncate font-mono text-[12px] text-fg-3">
+                <span className="viewer-where">{[groupName(page, names), m?.name].filter(Boolean).join(' · ')}</span>
+                {v.parts.length > 1 && !v.note && <span className="viewer-part"> · {PART_LABEL[v.part]}</span>}
+              </div>
+            )}
           </div>
-          {m && (
-            <Menu
-              align="end"
-              header={m.name}
-              items={machineItems}
-              trigger={({ toggle, ref }) => (
-                <button ref={ref} type="button" onClick={toggle} aria-label={`Machine: ${m.name}`} className="press flex h-[30px] max-w-[132px] shrink-0 items-center gap-1.5 rounded-full border border-line bg-white/45 px-2.5 font-mono text-[12px] text-fg-2 dark:bg-white/[0.03]">
-                  <MachineIcon kind={m.host ? machineKindOf(m.host) : 'server'} size={14} className="shrink-0" />
-                  <span className="truncate">{m.name}</span>
-                </button>
-              )}
-            />
-          )}
-          {!!page?.notes?.length && (
-            <Menu
-              align="end"
-              header="Notes"
-              items={notesMenu(page, v)}
-              trigger={({ toggle, ref }) => (
-                <IconButton label={v.note ? `Notes: ${noteTitle(v.note)} open` : 'Notes'} className={clsx('size-11 rounded-xl', v.note && 'text-fg')} onClick={toggle} ref={ref}><NotebookText className="size-[18px]" /></IconButton>
-              )}
-            />
-          )}
-          {page && <Menu align="end" items={more} trigger={({ toggle, ref }) => <IconButton label="More" className="size-11 rounded-xl" onClick={toggle} ref={ref}><Ellipsis className="size-[18px]" /></IconButton>} />}
+          {page && <Menu align="end" header={page.name} items={more} trigger={({ toggle, ref }) => <IconButton label="More" className="size-11 shrink-0 rounded-xl" onClick={toggle} ref={ref}><Ellipsis className="size-[18px]" /></IconButton>} />}
         </div>
         {/* always on screen, so a page can't pass itself off as the app asking for a password */}
         <div className="flex h-6 items-center gap-1.5 border-t border-line px-3 font-mono text-[12px] text-fg-3">

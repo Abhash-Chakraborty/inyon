@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ChevronLeft, ExternalLink, PanelsTopLeft, ShieldCheck } from 'lucide-react'
-import { PART_LABEL, browserPath, noteTitle, sessionCount, sessionPages, tmuxOf, usePages, type Page, type Part, type SessionList } from '../../lib/pages.ts'
+import { ChevronLeft, ExternalLink, Maximize2, PanelsTopLeft, RotateCw, ShieldCheck } from 'lucide-react'
+import { PART_LABEL, browserPath, noteTitle, pageHref, sessionCount, sessionPages, tmuxOf, usePages, type Page, type Part, type SessionList } from '../../lib/pages.ts'
 import { Empty, IconButton, Menu, Segmented } from '../ui/primitives.tsx'
 import type { SessionModel } from '../session/useSession.ts'
 import { PageFrame, PageRows, SANDBOX_NOTE, openInBrowser, useMachines, useNames } from './shared.tsx'
@@ -39,14 +40,15 @@ export function sections(list: SessionList, tmux?: string): { label?: string; pa
 
 /**
  * A session's blueprints, as Claude's artifacts sit beside a chat. `inline` (the side panel on a
- * wide screen) opens one right here, with the way back to the list; otherwise a row opens the
- * full-screen viewer, whose back returns to the session (`from`).
+ * wide screen, the Activity sheet on a phone) opens one right here, with the way back to the list
+ * and **Open full view**; otherwise a row opens the full-screen viewer, whose back returns to the
+ * session (`from`). `viewerClass` sizes the open one where its box has no height of its own.
  */
-export function SessionBlueprints({ list, tmux, from, inline }: { list: SessionList; tmux?: string; from?: string; inline?: boolean }) {
+export function SessionBlueprints({ list, tmux, from, inline, viewerClass }: { list: SessionList; tmux?: string; from?: string; inline?: boolean; viewerClass?: string }) {
   const [open, setOpen] = useState<string>()
   const all = [...list.mine, ...list.earlier, ...list.nearby]
   const page = inline ? all.find((p) => p.id === open) : undefined
-  if (page) return <SideViewer page={page} onBack={() => setOpen(undefined)} />
+  if (page) return <SideViewer page={page} onBack={() => setOpen(undefined)} className={viewerClass} />
   if (!all.length) {
     return (
       <Empty icon={<PanelsTopLeft className="size-5" />} title="No blueprints here">
@@ -66,20 +68,28 @@ export function SessionBlueprints({ list, tmux, from, inline }: { list: SessionL
   )
 }
 
-/** One blueprint open in the session's panel: which it is, its session and machine, its parts, and the frame. */
-function SideViewer({ page, onBack }: { page: Page; onBack: () => void }) {
+/**
+ * One blueprint open beside the session: which it is, its session and machine, its parts, the
+ * frame, and the viewer's own controls in small (reload, a new tab, the full view).
+ */
+function SideViewer({ page, onBack, className }: { page: Page; onBack: () => void; className?: string }) {
   const v = useViewer(page)
   const names = useNames()
+  const nav = useNavigate()
+  const here = useLocation()
   const m = useMachines()(page.host)
   const where = [tmuxOf(page, names)?.name, m.name].filter(Boolean).join(' · ')
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-12 shrink-0 items-center gap-1 border-b border-line pr-1.5 pl-1">
+    <div className={clsx('flex min-h-0 flex-1 flex-col', className)}>
+      <div className="flex h-12 shrink-0 items-center gap-0.5 border-b border-line pr-1.5 pl-1">
         <IconButton label="This session's blueprints" onClick={onBack}><ChevronLeft className="size-4" /></IconButton>
-        <div className="min-w-0 flex-1 leading-tight">
+        <div className="min-w-0 flex-1 pl-0.5 leading-tight">
           <div className="viewer-name truncate text-[13.5px] font-semibold">{page.name}</div>
           <div className="viewer-where truncate font-mono text-[12px] text-fg-3">{where}</div>
         </div>
+        <IconButton label="Reload" disabled={!v.link} onClick={v.reload}><RotateCw className="size-4" /></IconButton>
+        {/* the Blueprints screen, whose back comes here again */}
+        <IconButton label="Open full view" onClick={() => nav(pageHref(page.host, page.slug), { state: { from: here.pathname + here.search } })}><Maximize2 className="size-4" /></IconButton>
         {!v.bridged && (
           <IconButton label="Open in new tab" title="Open in new tab. A 12 h link; never sign in there." disabled={!v.link} onClick={() => void openInBrowser(page, browserPath(v.part, v.note))}>
             <ExternalLink className="size-4" />

@@ -183,7 +183,8 @@ export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: {
         {tab === 'changes' && <ChangesTab items={items} p={p} onComposed={onClose} />}
         {tab === 'files' && p && <FilesTab p={p} onComposed={onClose} />}
         {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={[]} />}
-        {tab === 'pages' && <PagesTab s={s} from={here.pathname + here.search} />}
+        {/* a blueprint opens over the session, in this sheet; Open full view goes to Blueprints */}
+        {tab === 'pages' && <PagesTab s={s} inline from={here.pathname + here.search} viewerClass="h-[72dvh] flex-none" />}
       </div>
     </Sheet>
   )

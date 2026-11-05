@@ -62,7 +62,7 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 
 ## Background work
 
-The layers button in the header (or the side panel on a wide screen) shows what's running beside the conversation:
+The layers button in the header (or the side panel on a wide screen) shows what's running beside the conversation. From 0.25.3, when its tabs don't all fit (a narrow panel, a phone), the row scrolls sideways with the hidden side faded, the tab you pick scrolls into view, and the arrow keys, `Home` and `End` move along it. Every row of tabs in the app does the same.
 
 - **Running:** queued messages, subagents with their transcripts, background shells with live output, and monitors. Shells and monitors each have a real **Stop**. Codex's sub-agents are listed here too from 0.17.6, by the name Codex gave them, from the moment they start until they report back; what they said back shows in the chat.
 - **Changes:** what changed, two ways. **This chat** lists every file the agent changed with its edit tools in this conversation, with the diff of each edit, newest first. Changes it made by running commands (a formatter, `sed`, a script) aren't there; they show under Working tree. **Working tree** (from 0.17) shows what git sees: every change since the last commit, whoever made it. See [Reviewing changes](#reviewing-changes).

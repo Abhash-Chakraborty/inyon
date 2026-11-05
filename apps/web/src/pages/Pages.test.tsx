@@ -252,29 +252,35 @@ describe('the viewer', () => {
     await flush()
     await flush()
     await user.click(screen.getByRole('button', { name: 'More' }))
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Reload', 'Plan', 'Mockups', 'Open in browserA 12 h link. Never sign in there'])
+    const items = screen.getAllByRole('menuitem').map((m) => m.textContent)
+    expect(items.slice(0, 4)).toEqual(['Reload', 'Open in browserA 12 h link. Never sign in there', 'Plan', 'Mockups'])
+    expect(items).not.toContain('Matrix')
     await user.click(screen.getByRole('menuitem', { name: 'Mockups' }))
     expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/mockups/?theme=light')
   })
 
-  test("on a phone, a site's research notes open from the Notes button, and Back returns to the plan", async () => {
+  test("on a phone, a site's research notes open from the menu, and Back returns to the plan", async () => {
     viewport(390, 844)
     usePages.setState({ pages: [{ ...PLAN, notes: ['ghostex features.md', 'plan.md'] }, HANDY, LAPTOP] })
     const user = userEvent.setup()
     const first = await at('/blueprints/local/ghostex')
     await flush()
-    await user.click(screen.getByRole('button', { name: 'Notes' }))
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['ghostex features', 'plan'])
+    // the bar has no Notes button of its own any more: the notes are in the menu
+    expect(screen.queryByRole('button', { name: 'Notes' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'More' }))
+    const names = screen.getAllByRole('menuitem').map((m) => m.textContent)
+    expect(names).toContain('ghostex features')
+    expect(names).toContain('plan')
     await user.click(screen.getByRole('menuitem', { name: 'ghostex features' }))
     expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/research/ghostex%20features.md?as=note&theme=light')
-    expect(screen.getByRole('button', { name: 'Notes: ghostex features open' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Back to Plan' }))
     expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/?theme=light')
-    // a page without notes has no Notes button
+    // a page without notes lists none
     first.unmount()
     await at('/blueprints/local/handy')
     await flush()
-    expect(screen.queryByRole('button', { name: 'Notes' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'More' }))
+    expect(screen.queryByRole('menuitem', { name: 'plan' })).toBeNull()
   })
 
   test('on a desktop, a note takes the place of the part, and a part brings the page back', async () => {
@@ -324,7 +330,7 @@ describe('the viewer', () => {
     const user = userEvent.setup()
     const { container } = await at('/blueprints/local/ghostex')
     await flush()
-    await user.click(screen.getByRole('button', { name: 'Machine: abhash-arm' }))
+    await user.click(screen.getByRole('button', { name: 'More' }))
     await user.click(screen.getByRole('menuitem', { name: 'Handy redesign' }))
     await flush()
     expect(container.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.handy.sig/?theme=light')
