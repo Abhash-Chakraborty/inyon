@@ -125,7 +125,7 @@ fn commands(h: &Hub, here: &Route, mac: bool) -> Vec<Row> {
     let go = |label: &str, icon: Icon, r: Route| Row::new(label, "", Mark::Icon(icon), ("Open", Action::Go(r)));
     v.push(go("Go to Overview", Icon::LayoutGrid, Route::Overview));
     v.push(go("Go to Machines", Icon::Monitor, Route::Machines { add: false }));
-    v.push(go("Go to Pages", Icon::PanelsTopLeft, Route::Pages { page: None }));
+    v.push(go("Go to Blueprints", Icon::PanelsTopLeft, Route::Pages { page: None }));
     v.push(go("Go to Settings", Icon::Settings, Route::Settings));
     v.push(go("Go to Temp files", Icon::FolderOpen, Route::Temp { host: None }));
     let mut new = Row::new("New session…", "", Mark::Icon(Icon::Plus), ("Run", Action::Quick(QuickOp::NewSession)));

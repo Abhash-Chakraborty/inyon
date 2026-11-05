@@ -228,6 +228,7 @@ try {
       // a mark picks a tab: > for commands, @ for files
       await input.fill('>')
       check(await quick.getByRole('tab', { name: 'Commands' }).getAttribute('aria-selected') === 'true', `${label}: > switches to Commands`)
+      check((await titles()).includes('Go to Blueprints'), `${label}: Commands go to Blueprints by its name`)
       await input.fill('')
       // Tab goes along the lists and wraps
       await input.press('Tab')
