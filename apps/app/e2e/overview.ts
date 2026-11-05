@@ -475,6 +475,9 @@ try {
     await page.keyboard.press('Enter')
     await page.waitForTimeout(400)
     check(state.answers.length === answered, `${label}: Enter on Copy link sends no answer`)
+    await page.keyboard.press('Space')
+    await page.waitForTimeout(400)
+    check(state.answers.length === answered, `${label}: Space on Copy link sends no answer`)
     await page.screenshot({ path: path.join(shots, `session-390-${scheme}-link-question.png`) })
     await layout(page, label)
     // the machine doesn't take the answer: a toast says so, and the card stays for another try

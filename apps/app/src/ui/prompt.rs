@@ -175,10 +175,10 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
                                 div { class: "prompt-link-url mono", "{u}" }
                                 div {
                                     class: "prompt-link-actions",
-                                    // Enter on Open or Copy link is that button's, not a pick of the
-                                    // focused choice
+                                    // Enter or Space on Open or Copy link is that button's, not a pick
+                                    // of the focused choice
                                     onkeydown: move |e: KeyboardEvent| {
-                                        if e.key() == Key::Enter {
+                                        if e.key() == Key::Enter || e.key() == Key::Character(" ".into()) {
                                             e.stop_propagation();
                                         }
                                     },
