@@ -7,6 +7,7 @@ use dioxus::prelude::*;
 use inyon_protocol::{AgentKind, ScreenPrompt, CONFIRM_OPTION};
 
 use super::icons::{AgentMark, Glyph, Icon};
+use super::toast::{self, ToastTone};
 use crate::prompt::{self as rules, Block, DiffLine, KeyAction};
 use crate::{api, dom, platform};
 
@@ -37,7 +38,6 @@ fn option_id(i: usize) -> String {
 #[component]
 pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bool, agent: Option<AgentKind>) -> Element {
     let mut busy = use_signal(|| None::<String>);
-    let mut error = use_signal(|| None::<String>);
     let mut free = use_signal(|| None::<String>);
     let mut focused = use_signal(|| rules::likely(&prompt));
     let key = rules::key_of(&prompt);
@@ -47,7 +47,6 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
         use_effect(use_reactive!(|key| {
             let _ = &key;
             busy.set(None);
-            error.set(None);
             free.set(None);
             focused.set(likely);
             // the card holds focus at once, so keys pressed before a choice can take it still
@@ -64,8 +63,8 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
         let (host, pane) = (host.clone(), pane.clone());
         move |id: String, call: Call| {
             busy.set(Some(id));
-            error.set(None);
             let (host, pane) = (host.clone(), pane.clone());
+            let tick = call.answers();
             spawn(async move {
                 let result = match &call {
                     Call::Answer { key, n, text } => api::answer(&host, &pane, &rules::answer(key, *n, text.as_deref())).await,
@@ -75,11 +74,15 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
                 match result {
                     // the screen replaces this card once the agent moves on
                     Ok(()) => {
+                        if tick {
+                            super::notices::haptic(inyon_chat_core::store::Haptic::Select);
+                        }
                         platform::sleep(2500).await;
                         busy.set(None);
                     }
                     Err(e) => {
-                        error.set(Some(e.message));
+                        // a toast, as the web app says it; the card stays for another try
+                        toast::toast("Could not answer", Some(e.message), ToastTone::Error);
                         busy.set(None);
                     }
                 }
@@ -170,9 +173,38 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
                         for u in links.iter() {
                             div { key: "{u}", class: "prompt-link",
                                 div { class: "prompt-link-url mono", "{u}" }
-                                a { class: "button button-sm button-primary", href: "{u}", target: "_blank", rel: "noreferrer",
-                                    Glyph { icon: Icon::ExternalLink, size: 14 }
-                                    "Open"
+                                div {
+                                    class: "prompt-link-actions",
+                                    // Enter or Space on Open or Copy link is that button's, not a pick
+                                    // of the focused choice
+                                    onkeydown: move |e: KeyboardEvent| {
+                                        if e.key() == Key::Enter || e.key() == Key::Character(" ".into()) {
+                                            e.stop_propagation();
+                                        }
+                                    },
+                                    a { class: "button button-sm button-primary", href: "{u}", target: "_blank", rel: "noreferrer",
+                                        Glyph { icon: Icon::ExternalLink, size: 14 }
+                                        "Open"
+                                    }
+                                    button {
+                                        class: "button button-sm button-quiet press",
+                                        r#type: "button",
+                                        onclick: {
+                                            let u = u.clone();
+                                            move |_| {
+                                                let u = u.clone();
+                                                spawn(async move {
+                                                    if dom::copy(&u).await {
+                                                        toast::toast("Link copied", None, ToastTone::Success);
+                                                    } else {
+                                                        toast::toast("Couldn't copy the link", Some("Select it and copy it instead.".into()), ToastTone::Error);
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        Glyph { icon: Icon::Copy, size: 14 }
+                                        "Copy link"
+                                    }
                                 }
                             }
                         }
@@ -259,9 +291,6 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
                     }
                 }
             }
-            if let Some(e) = error() {
-                div { class: "prompt-error", role: "alert", "Couldn't answer: {e}" }
-            }
             div { class: "prompt-foot",
                 button {
                     class: "button button-md button-ghost press",
@@ -334,6 +363,14 @@ enum Call {
     Input(String),
 }
 
+impl Call {
+    /// An answer given (a choice or typed text), rather than a key pressed to move around the
+    /// question or cancel it: only an answer gives a tick.
+    fn answers(&self) -> bool {
+        !matches!(self, Call::Keys(_))
+    }
+}
+
 /// A command or a file's text, kept exactly as framed; an edit's diff in the diff colours.
 #[component]
 fn CodeLines(lines: Vec<String>) -> Element {
@@ -390,5 +427,18 @@ fn InputForm(label: String, locked: bool, on_submit: EventHandler<String>) -> El
                 Glyph { icon: Icon::Send, size: 16 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_answer_ticks_not_a_key_that_moves_or_cancels() {
+        assert!(Call::Answer { key: "k".into(), n: 1, text: None }.answers());
+        assert!(Call::Input("ab12".into()).answers());
+        assert!(!Call::Keys(vec!["Escape".into()]).answers());
+        assert!(!Call::Keys(vec!["Down".into()]).answers());
     }
 }

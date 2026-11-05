@@ -368,6 +368,8 @@ impl Context<'_> {
 pub enum Haptic {
     Success,
     Warning,
+    /// one light tick: an answer or a choice taken
+    Select,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

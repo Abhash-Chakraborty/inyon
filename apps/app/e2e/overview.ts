@@ -24,7 +24,7 @@ const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs'
 const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 
 const PASSWORD = 'correct horse'
-const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0, controls: [] as Record<string, unknown>[] }
+const state = { setup: false, setupCode: false, authed: false, refuse: false, answerFails: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0, controls: [] as Record<string, unknown>[] }
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
 
@@ -106,6 +106,7 @@ const server = Bun.serve({
         return json({ ok: true })
       }
       state.answers.push({ host, pane, ...body })
+      if (state.answerFails) return json({ error: 'The machine stopped answering' }, 502)
       const c = streams.get(stream)
       const asked = (c?.state.screen as { prompt?: { body: string[]; options: { n: number; label: string }[] } } | undefined)?.prompt
       if (c && asked) {
@@ -443,6 +444,59 @@ try {
     await ctx.close()
   }
 
+  // ---- a question with a link: Open and Copy link; an answer that fails says so; a tick on answering ----
+  for (const scheme of ['light', 'dark'] as const) {
+    resetChats()
+    const ctx = await browser.newContext({ ...devices['iPhone 13'], viewport: { width: 390, height: 844 }, colorScheme: scheme, reducedMotion: 'reduce' })
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base })
+    // the vibrations asked for, since a headless browser has no motor
+    await ctx.addInitScript(() => {
+      ;(window as any).__buzz = []
+      Object.defineProperty(navigator, 'vibrate', { configurable: true, value: (p: number | number[]) => ((window as any).__buzz.push(p), true) })
+    })
+    const page = await ctx.newPage()
+    watch(page)
+    const label = `link question ${scheme}`
+    const stream = 'local:%12'
+    const asked = accounts().state.screen.prompt
+    const signIn = { ...asked, body: ['Sign in to GitHub to push the branch.'], links: ['https://github.com/login/device'] }
+    await page.goto(`${base}/next/m/local/p/12`)
+    await page.getByText('Would you like to run the following command?').waitFor()
+    change(stream, { state: { screen: { ...accounts().state.screen, prompt: signIn } } })
+    await page.getByText('Sign in to GitHub to push the branch.').waitFor()
+    const link = page.locator('.prompt-link')
+    check((await link.getByRole('link', { name: 'Open' }).getAttribute('href')) === 'https://github.com/login/device', `${label}: Open goes to the link`)
+    await link.getByRole('button', { name: 'Copy link' }).click()
+    await page.getByText('Link copied').waitFor()
+    check((await page.evaluate(() => navigator.clipboard.readText())) === 'https://github.com/login/device', `${label}: the link is on the clipboard`)
+    // Enter on the focused button copies again; it doesn't answer with the focused choice
+    const answered = state.answers.length
+    await link.getByRole('button', { name: 'Copy link' }).focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(400)
+    check(state.answers.length === answered, `${label}: Enter on Copy link sends no answer`)
+    await page.keyboard.press('Space')
+    await page.waitForTimeout(400)
+    check(state.answers.length === answered, `${label}: Space on Copy link sends no answer`)
+    await page.screenshot({ path: path.join(shots, `session-390-${scheme}-link-question.png`) })
+    await layout(page, label)
+    // the machine doesn't take the answer: a toast says so, and the card stays for another try
+    state.answerFails = true
+    await page.getByRole('option', { name: /Yes, proceed/ }).click()
+    await page.getByText('Could not answer').waitFor()
+    check(await page.getByText('The machine stopped answering').isVisible(), `${label}: the toast says why`)
+    check(await page.getByText('Sign in to GitHub to push the branch.').isVisible(), `${label}: the card stays`)
+    check(!(await page.evaluate(() => (window as any).__buzz.length)), `${label}: no tick for an answer that failed`)
+    state.answerFails = false
+    await page.waitForTimeout(300)
+    await page.getByRole('option', { name: /Yes, proceed/ }).click()
+    const ticked = await page.waitForFunction(() => JSON.stringify((window as any).__buzz) === '[[8]]', null, { timeout: 3000 }).then(() => true, () => false)
+    check(ticked, `${label}: one light tick for the answer (${await page.evaluate(() => JSON.stringify((window as any).__buzz))})`)
+    // the stand-in hub asks its next question; let it land before the next pass starts afresh
+    await page.getByText('Which store should the passkeys live in?').waitFor()
+    await ctx.close()
+  }
+
   // ---- a session's terminal: typing, IME, the key bar, the menu, resting, closing, reconnecting ----
   {
     resetChats()
@@ -720,8 +774,9 @@ try {
   server.stop(true)
 }
 
-// the sign-in check above reads a wrong password on purpose, and the hub refuses the socket once signed out
-const unexpected = errors.filter((e) => !/401|Unauthorized|WebSocket/.test(e))
+// the sign-in check above reads a wrong password on purpose, the hub refuses the socket once signed
+// out, and an answer is turned down on purpose (502)
+const unexpected = errors.filter((e) => !/401|Unauthorized|WebSocket|502 \(Bad Gateway\)/.test(e))
 check(!unexpected.length, `errors in the page: ${unexpected.join(' | ')}`)
 if (problems.length) {
   console.error(problems.join('\n'))
