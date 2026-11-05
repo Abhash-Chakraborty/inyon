@@ -361,6 +361,13 @@ try {
         await keyword.scrollIntoViewIfNeeded()
         await page.waitForTimeout(300)
         await page.locator('.code-block').first().screenshot({ path: path.join(shots, `session-${w}-${scheme}-code.png`) })
+        if (!phone) {
+          // a right-click inside the block offers the code and the whole reply
+          await page.locator('.code-block').first().click({ button: 'right' })
+          const offered = (await page.getByRole('menuitem').allTextContents()).map((t) => t.trim())
+          check(JSON.stringify(offered) === JSON.stringify(['Copy code', 'Copy reply']), `${label}: the code block's menu (${JSON.stringify(offered)})`)
+          await page.keyboard.press('Escape')
+        }
       }
       await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-history.png`) })
 

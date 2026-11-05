@@ -65,13 +65,26 @@ fn node(n: &Md) -> Element {
     }
 }
 
+/// The finished reply a block sits in, for its menu's "Copy reply" (Messages.tsx offers both on a
+/// right-click inside a code block). None while the reply is still being written.
+#[derive(Clone, Copy)]
+pub struct ReplyText(pub Signal<Option<String>>);
+
 /// A fenced block: the language over it, a copy button, and the text exactly as written (leading
 /// spaces and tabs included), coloured once its language has loaded.
 #[component]
 pub fn CodeBlock(lang: Option<String>, code: String) -> Element {
     let text = code.strip_suffix('\n').unwrap_or(&code).to_string();
     let copy = text.clone();
-    let items = vec![Item::copy("Copy code", &text)];
+    let reply = try_use_context::<ReplyText>();
+    let code_text = text.clone();
+    let items = move || {
+        let mut items = vec![Item::copy("Copy code", &code_text)];
+        if let Some(t) = reply.and_then(|r| r.0.peek().clone()) {
+            items.push(Item::copy("Copy reply", &t));
+        }
+        items
+    };
     let hl = highlight::wanted(lang.as_deref(), &text).map(str::to_string);
     // bumped when a language arrives, so the block colours itself then
     let mut arrived = use_signal(|| 0u32);
@@ -89,7 +102,7 @@ pub fn CodeBlock(lang: Option<String>, code: String) -> Element {
         }
     }));
     rsx! {
-        div { class: "code-block", oncontextmenu: menu::open(items),
+        div { class: "code-block", oncontextmenu: menu::open_with(items),
             div { class: "code-head",
                 span { class: "code-lang mono", {lang.clone().unwrap_or_else(|| "text".into())} }
                 CopyButton { text: copy, label: "Copy code" }
