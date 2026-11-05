@@ -92,6 +92,70 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
   )
 }
 
+/**
+ * A row of tabs or choices that scrolls sideways when it doesn't fit, so every one stays
+ * reachable: the edge with more to see fades out, a mouse wheel scrolls it, and the chosen one
+ * (child `active + offset`) is scrolled into view when it changes or the row resizes. Returns
+ * the row's style (the fades).
+ */
+export function useStrip(ref: React.RefObject<HTMLElement | null>, active: number, offset = 0): React.CSSProperties | undefined {
+  const [edges, setEdges] = useState({ start: false, end: false })
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const read = () => {
+      const start = el.scrollLeft > 1
+      const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+      setEdges((e) => (e.start === start && e.end === end ? e : { start, end }))
+    }
+    // a wheel turned over the row scrolls it sideways, while there's further to go
+    const wheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || el.scrollWidth <= el.clientWidth) return
+      const left = el.scrollLeft
+      el.scrollLeft += e.deltaY
+      if (el.scrollLeft !== left) e.preventDefault()
+    }
+    read()
+    el.addEventListener('scroll', read, { passive: true })
+    el.addEventListener('wheel', wheel, { passive: false })
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(read) : undefined
+    ro?.observe(el)
+    return () => {
+      el.removeEventListener('scroll', read)
+      el.removeEventListener('wheel', wheel)
+      ro?.disconnect()
+    }
+  }, [ref])
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const show = () => {
+      const item = el.children[active + offset] as HTMLElement | undefined
+      if (!item || el.scrollWidth <= el.clientWidth) return
+      // past the fade, so the chosen one reads whole
+      const pad = 28
+      if (item.offsetLeft - pad < el.scrollLeft) el.scrollLeft = Math.max(0, item.offsetLeft - pad)
+      else if (item.offsetLeft + item.offsetWidth + pad > el.scrollLeft + el.clientWidth) el.scrollLeft = item.offsetLeft + item.offsetWidth + pad - el.clientWidth
+    }
+    show()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(show) : undefined
+    ro?.observe(el)
+    return () => ro?.disconnect()
+  }, [ref, active, offset])
+  if (!edges.start && !edges.end) return undefined
+  const mask = `linear-gradient(to right, ${edges.start ? 'transparent' : 'black'}, black 28px, black calc(100% - 28px), ${edges.end ? 'transparent' : 'black'})`
+  return { maskImage: mask, WebkitMaskImage: mask }
+}
+
+/** The next of `count` items for an arrow key (wrapping round), or undefined for any other key. */
+export function arrowStep(key: string, at: number, count: number): number | undefined {
+  if (key === 'ArrowRight') return (at + 1) % count
+  if (key === 'ArrowLeft') return (at - 1 + count) % count
+  if (key === 'Home') return 0
+  if (key === 'End') return count - 1
+  return undefined
+}
+
 export function Segmented<T extends string>({
   value,
   options,
@@ -129,10 +193,26 @@ export function Segmented<T extends string>({
   useEffect(() => {
     if (pill) moved.current = true
   }, [pill?.left])
+  const fade = useStrip(box, index, 1)
   const r = pill ? pill.height / 2 : 0
   const part = clsx('absolute inset-y-0 left-0 border-y border-line bg-elev shadow-card', moved.current && 'transition-transform duration-(--dur-move) ease-out-soft')
   return (
-    <div ref={box} role="radiogroup" aria-label={label} className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'no-scrollbar w-full overflow-x-auto' : 'w-max')}>
+    <div
+      ref={box}
+      role="radiogroup"
+      aria-label={label}
+      style={fade}
+      // arrows move the choice along, as a radio group's do
+      onKeyDown={(e) => {
+        const next = arrowStep(e.key, Math.max(0, index), options.length)
+        if (next === undefined) return
+        e.preventDefault()
+        onChange(options[next]!.v)
+        ;(box.current?.children[next + 1] as HTMLElement | undefined)?.focus()
+      }}
+      // too wide for its place, it scrolls sideways rather than running off the edge
+      className={clsx('no-scrollbar relative flex gap-0.5 overflow-x-auto rounded-full border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max max-w-full shrink-0')}
+    >
       <span aria-hidden className={clsx('pointer-events-none absolute inset-x-0 top-0.5 bottom-0.5', !pill && 'hidden')}>
         {pill && (
           <>

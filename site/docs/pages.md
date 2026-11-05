@@ -38,8 +38,9 @@ From 0.22.3 a page also shows where you work with the agent that made it. When a
 
 From 0.25 a session's blueprints are the ones made in its tmux session, the way Claude's artifacts belong to a chat. The ones this conversation made come first, then those that earlier conversations in the same tmux session made. A page whose tmux session isn't known (one added outside tmux, or before 0.25 by a conversation that has ended) shows by its folder, as before. A page made in another tmux session stays out, even in the same folder. The list follows live, so a page the agent adds or moves on shows up as it happens.
 
-- **On a desktop**, the side panel's **Blueprints** tab opens a page right there, beside the chat, with its name, tmux session and machine above it, its parts and notes, and **Open in new tab**. The arrow back, **This session's blueprints**, returns to the list.
-- **On a phone**, the **Activity** sheet's **Blueprints** tab lists them, and a page opens full screen with **Back to the session** returning to it.
+- **On a desktop**, the side panel's **Blueprints** tab opens a page right there, beside the chat, with its name, tmux session and machine above it, its parts and notes, **Reload**, **Open full view** (from 0.25.3) and **Open in new tab**. The arrow back, **This session's blueprints**, returns to the list.
+- **On a phone**, the **Activity** sheet's **Blueprints** tab lists them. From 0.25.3 a page opens in the sheet, over the session, with the same controls; before, it opened full screen.
+- **Open full view** takes the page to the Blueprints screen, whose **Back** on a phone returns to the session. A page opened from the Blueprints list always opens there.
 - **In the [new app at `/next`](hub.md#the-new-app-at-next)**, the session's header has a **Blueprints** button with how many there are, and a dot when one changed since you opened it. It opens them beside the chat on a desktop, or the page itself when there's only one, and in a sheet on a phone.
 
 ## Blueprints on your other computers
@@ -55,10 +56,10 @@ The computer's own `inyon` reads the files and sends them to the hub, which chec
 Tap a card to open the page full screen. The bar on top has:
 
 - **Back**, which returns to the list, or from 0.25 to the session you opened the page from. The phone's own back button does the same, even after you've clicked around inside the page.
-- The page's name, and from 0.25 its tmux session under it.
-- The machine's name, a menu of the other pages on that machine and a way to open the machine.
-- **Notes**, from 0.22.4, when the site has a `research` folder with Markdown files in it. See [Notes](#notes).
-- **⋯** with **Reload**, **Plan**, **Mockups** and **Matrix** when the site has them, and **Open in browser** (not for a page on a computer paired with the phone directly), which from 0.25 opens the part or note on screen. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
+- The page's name, and from 0.25 its tmux session under it. From 0.25.3 the machine and the part on screen follow the session's name.
+- **⋯** with **Reload**, **Open in browser** (not for a page on a computer paired with the phone directly), which from 0.25 opens the part or note on screen, **Plan**, **Mockups** and **Matrix** when the site has them, the site's [notes](#notes), the other pages on that machine, and **Open** the machine. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
+
+Before 0.25.3 the machine and **Notes** had buttons of their own in the bar, which left little room for the name on a narrow phone.
 
 Under the bar, a line says **Sandboxed page: never sign in here**. It stays on screen, so a page can't pass itself off as the app asking for your password.
 

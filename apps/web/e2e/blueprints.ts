@@ -2,9 +2,10 @@
 // made-up machines and pages: the list grouped by tmux session with the machine as a label, a
 // heading that follows a renamed session, the viewer naming the session, Open in new tab opening
 // the part on screen, and a session's blueprints (this conversation's first, another tmux
-// session's kept out) beside the chat on a desktop and in the Activity sheet on a phone, whose
-// viewer goes back to the session. At 390×844 and 1440×900, light and dark, with a screenshot of
-// each. CHROME=/path/to/chrome uses a browser other than Playwright's own; SHOTS= picks the folder.
+// session's kept out) beside the chat on a desktop and in the Activity sheet on a phone, opened
+// there with reload, a new tab and Open full view, whose back comes to the session again. Also
+// the side panel's tabs scrolling in a 420px panel (Usage reachable by keyboard), and the phone
+// viewer's top bar at 360px. At 390×844 and 1440×900, light and dark, with a screenshot of each. CHROME=/path/to/chrome uses a browser other than Playwright's own; SHOTS= picks the folder.
 import path from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -79,8 +80,8 @@ const until = async (f: () => boolean | Promise<boolean>, ms = 5000) => {
   return false
 }
 
-async function open(kind: 'phone' | 'desktop', scheme: 'light' | 'dark') {
-  const ctx = await browser.newContext(kind === 'phone' ? { ...devices['iPhone 13'], viewport: { width: 390, height: 844 }, colorScheme: scheme } : { viewport: { width: 1440, height: 900 }, colorScheme: scheme })
+async function open(kind: 'phone' | 'desktop', scheme: 'light' | 'dark', width?: number) {
+  const ctx = await browser.newContext(kind === 'phone' ? { ...devices['iPhone 13'], viewport: { width: width ?? 390, height: 844 }, colorScheme: scheme } : { viewport: { width: width ?? 1440, height: 900 }, colorScheme: scheme })
   await ctx.route('**/api/**', (r) => {
     const u = new URL(r.request().url())
     if (u.pathname === '/api/session') return r.fulfill({ json: { authed: true } })
@@ -137,6 +138,15 @@ async function layout(page: Tab, what: string) {
 
 const heads = (page: Tab) => page.locator('.group-heading-name').allTextContents()
 
+/** How much of an element its scrolling strip shows, from 0 (none) to 1 (all of it). */
+const shown = (el: import('playwright').Locator) =>
+  el.evaluate((e) => {
+    const strip = e.parentElement!
+    const a = e.getBoundingClientRect()
+    const b = strip.getBoundingClientRect()
+    return Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) / a.width
+  })
+
 try {
   for (const scheme of ['light', 'dark'] as const) {
     // ---- the list on a desktop: by tmux session, the machine as a label, a rename followed ----
@@ -180,6 +190,20 @@ try {
       const toggle = page.getByRole('button', { name: /^(Show|Hide) side panel$/ })
       await toggle.waitFor()
       if ((await toggle.getAttribute('aria-label')) === 'Show side panel') await toggle.click()
+      // a 420px panel has more tabs than room: the strip scrolls, and the arrows reach the end
+      const strip = page.getByRole('tablist', { name: 'Side panel' })
+      check(await strip.evaluate((el) => el.scrollWidth > el.clientWidth), `${label}: the tabs overflow a 420px panel (the case this covers)`)
+      await strip.getByRole('tab', { name: /Changes/ }).click()
+      await page.keyboard.press('End')
+      const usage = strip.getByRole('tab', { name: 'Usage' })
+      check((await usage.getAttribute('aria-selected')) === 'true', `${label}: End picks the last tab`)
+      check(await until(async () => (await shown(usage)) === 1), `${label}: Usage scrolled fully into view (${await shown(usage)})`)
+      check(await page.evaluate(() => document.activeElement?.textContent === 'Usage'), `${label}: focus follows the arrows`)
+      check((await strip.evaluate((el) => getComputedStyle(el).maskImage)).includes('gradient'), `${label}: the hidden side fades`)
+      await page.screenshot({ path: path.join(shots, `session-tabs-1440-${scheme}.png`) })
+      await page.keyboard.press('ArrowLeft')
+      await page.keyboard.press('Home')
+      check((await strip.getByRole('tab', { name: /Changes/ }).getAttribute('aria-selected')) === 'true', `${label}: Home goes back to the first`)
       await page.getByRole('tab', { name: /Blueprints/ }).click()
       const side = page.locator('aside')
       check((await side.locator('.side-label').allTextContents()).join('|') === 'This conversation|Earlier in storefront', `${label}: this conversation's first (${await side.locator('.side-label').allTextContents()})`)
@@ -195,10 +219,21 @@ try {
       check((await side.locator('.viewer-name').textContent()) === 'Cart mockups', `${label}: its name`)
       check((await side.locator('.viewer-where').textContent()) === 'storefront · studio', `${label}: its session and machine (${await side.locator('.viewer-where').textContent()})`)
       check(page.url().endsWith('/m/local/p/11'), `${label}: still on the session`)
+      // the viewer's controls, in small
+      for (const name of ['Reload', 'Open full view', 'Open in new tab']) check(await side.getByRole('button', { name }).isVisible(), `${label}: ${name} in the side view`)
+      const opens = state.opened.length
+      await side.getByRole('button', { name: 'Reload' }).click()
+      check(await until(() => state.opened.length > opens), `${label}: Reload asks for a fresh link`)
       await page.screenshot({ path: path.join(shots, `session-blueprints-viewer-1440-${scheme}.png`) })
       await layout(page, label)
       await side.getByRole('button', { name: "This session's blueprints" }).click()
       await side.locator('.side-label').first().waitFor()
+      // Open full view: the Blueprints screen with that one open
+      await side.getByRole('link', { name: /Cart mockups/ }).click()
+      await side.getByRole('button', { name: 'Open full view' }).click()
+      await page.waitForURL(/\/blueprints\/local\/cart-mockups$/)
+      await page.frameLocator('iframe').first().getByRole('heading', { name: 'Cart mockups' }).waitFor()
+      check((await page.locator('.crumb-group').textContent()) === 'storefront', `${label}: the full viewer`)
       await ctx.close()
     }
 
@@ -250,14 +285,59 @@ try {
       await sheet.getByRole('radio', { name: 'Blueprints' }).click()
       check((await sheet.locator('.side-label').allTextContents()).join('|') === 'This conversation|Earlier in storefront', `${label}: the sheet, this conversation's first`)
       await page.screenshot({ path: path.join(shots, `session-sheet-390-${scheme}.png`) })
+      // a row opens the blueprint over the session, in the sheet
       await sheet.getByRole('link', { name: /Cart mockups/ }).click()
+      await sheet.frameLocator('iframe').getByRole('heading', { name: 'Cart mockups' }).waitFor()
+      check(page.url().endsWith('/m/local/p/11'), `${label}: still on the session`)
+      for (const name of ['Reload', 'Open full view']) check(await sheet.getByRole('button', { name }).isVisible(), `${label}: ${name} in the sheet`)
+      check((await sheet.locator('.viewer-where').textContent()) === 'storefront · studio', `${label}: the sheet names the session and machine`)
+      await page.screenshot({ path: path.join(shots, `session-sheet-viewer-390-${scheme}.png`) })
+      await layout(page, `${label} sheet viewer`)
+      // Open full view goes to Blueprints, whose back comes to the session
+      await sheet.getByRole('button', { name: 'Open full view' }).click()
       await page.waitForURL(/\/blueprints\/local\/cart-mockups$/)
       await page.frameLocator('iframe').first().getByRole('heading', { name: 'Cart mockups' }).waitFor()
-      check((await page.locator('.viewer-where').textContent()) === 'storefront', `${label}: the viewer names the session`)
+      check((await page.locator('.viewer-where').textContent()) === 'storefront · studio', `${label}: the viewer names the session and machine (${await page.locator('.viewer-where').textContent()})`)
       await page.screenshot({ path: path.join(shots, `session-viewer-390-${scheme}.png`) })
       await layout(page, `${label} viewer`)
       await page.getByRole('button', { name: 'Back to the session' }).click()
       await page.waitForURL(/\/m\/local\/p\/11$/)
+      await ctx.close()
+    }
+
+    // ---- the phone viewer's top bar at 360px: back, the name, and everything else in ⋯ ----
+    {
+      reset()
+      const { ctx, page } = await open('phone', scheme, 360)
+      const label = `phone viewer 360 ${scheme}`
+      await page.goto(`${base}/blueprints/local/checkout-redesign`)
+      await page.frameLocator('iframe').first().getByRole('heading', { name: 'Checkout redesign' }).waitFor()
+      const bar = page.locator('header').first()
+      const title = await bar.locator('h1').evaluate((el) => el.getBoundingClientRect().width)
+      check(title >= 200, `${label}: the name has room (${title}px)`)
+      check((await bar.getByRole('button').count()) === 2, `${label}: only Back and More in the bar (${await bar.getByRole('button').count()})`)
+      await bar.getByRole('button', { name: 'More' }).click()
+      const menu = page.getByRole('menu')
+      for (const name of ['Reload', 'Open in browser', 'Plan', 'Mockups', 'Cart mockups', 'Open studio']) check(await menu.getByRole('menuitem', { name }).first().isVisible(), `${label}: ${name} in ⋯`)
+      await page.screenshot({ path: path.join(shots, `blueprints-viewer-menu-360-${scheme}.png`) })
+      await menu.getByRole('menuitem', { name: 'Mockups', exact: true }).click()
+      await page.frameLocator('iframe').first().getByRole('heading', { name: 'Checkout redesign: mockups' }).waitFor()
+      check((await page.locator('.viewer-part').textContent()) === ' · Mockups', `${label}: the part on screen under the name`)
+      await page.screenshot({ path: path.join(shots, `blueprints-viewer-360-${scheme}.png`) })
+      await layout(page, label)
+      // a machine's six tabs scroll at this width too, and the last one comes into view
+      await page.goto(`${base}/machines/local`)
+      const integration = page.getByRole('radio', { name: 'Integration' })
+      await integration.waitFor()
+      check(await integration.evaluate((el) => el.parentElement!.scrollWidth > el.parentElement!.clientWidth), `${label}: a machine's tabs overflow 360px (the case this covers)`)
+      await page.getByRole('radio', { name: 'Sessions' }).focus()
+      await page.keyboard.press('End')
+      check((await integration.getAttribute('aria-checked')) === 'true', `${label}: End picks the machine's last tab`)
+      check(await until(async () => (await shown(integration)) === 1), `${label}: Integration scrolled into view (${await shown(integration)})`)
+      await layout(page, `${label} machine`)
+      // let the pill finish sliding under the tab
+      await page.waitForTimeout(400)
+      await page.screenshot({ path: path.join(shots, `machine-tabs-360-${scheme}.png`) })
       await ctx.close()
     }
   }
