@@ -77,7 +77,10 @@ async fn check(mut auth: Signal<Auth>) {
             signed_out();
             Auth::SignedOut { setup: s.setup, code: s.setup_code }
         }
-        // the hub didn't answer: the form, whose submit says why it can't go on
+        // the hub didn't answer: the app drawn from the browser's copy stays, saying it's
+        // reconnecting (the socket asks again once it's up); otherwise the form, whose submit says
+        // why it can't go on
+        Err(_) if *auth.peek() == Auth::SignedIn => Auth::SignedIn,
         Err(_) => Auth::SignedOut { setup: false, code: false },
     };
     // already drawn from the kept copy: a confirmed sign-in changes nothing on screen
@@ -173,6 +176,13 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 }
                 for sub in chats.peek().subs() {
                     out.send(state::wire2(&sub));
+                }
+                // earlier messages asked for while no socket was open never went; each chat
+                // starts over from its snapshot anyway
+                if chats.peek().map.values().any(|e| e.loading_more) {
+                    for e in chats.write().map.values_mut() {
+                        e.loading_more = false;
+                    }
                 }
             }
             socket::Event::Down(why) => {

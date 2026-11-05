@@ -146,7 +146,9 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         def,
     );
     // only the hub's own overview can say a pane is gone, not the copy a reload draws first
-    let gone = h.confirmed() && r.is_none() && info.is_none();
+    // a chat page kept in the browser doesn't keep a pane alive; one the hub sends does
+    let kept = c.get(&key).is_some_and(|e| e.chat.stale);
+    let gone = h.confirmed() && r.is_none() && (info.is_none() || kept);
     let machine = h.hosts.iter().find(|x| x.config.id == host).map(|x| x.config.name.clone());
     let skin = agent.filter(|_| settings.agent_skins);
     let ctx = Ctx {
@@ -158,7 +160,8 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         font: font_class(settings.reply_font, def),
         all_tools: settings.tool_detail != ToolDetail::Compact,
     };
-    let machine_up = r.is_none_or(|r| r.host.status == inyon_protocol::HostStatus::Online);
+    // the pane's machine, or the machine by its id while the pane isn't listed
+    let machine_up = r.map(|r| &r.host).or(h.hosts.iter().find(|x| x.config.id == host)).is_none_or(|m| m.status == inyon_protocol::HostStatus::Online);
     let connected = h.connected && machine_up;
     // what the chat says about it: nothing while the first connection is still opening
     let offline = h.offline() || !machine_up;
@@ -264,6 +267,11 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
 /// the agent and closes its pane. A failure brings it back with the reason. `back` goes to the
 /// Overview once it's gone (from the session's own screen).
 pub async fn end_session(mut hub: Signal<Hub>, host: &str, pane: &str, back: Option<Signal<crate::route::Route>>) -> bool {
+    if !hub.peek().confirmed() {
+        // the machines drawn are the browser's copy; ending goes through the hub's list
+        toast::toast("Could not end the session", Some("Inyon is still connecting to the hub. Try again in a moment.".into()), ToastTone::Error);
+        return false;
+    }
     let (ask, found) = {
         let h = hub.peek();
         let refs = all_panes(&h.hosts);

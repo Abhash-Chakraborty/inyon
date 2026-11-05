@@ -49,6 +49,8 @@ export const state = {
   subDelay: 0,
   /** while set, every sub waits for it: the hub hasn't answered yet */
   gate: undefined as undefined | Promise<void>,
+  /** the sign-in check fails, as when the hub doesn't answer */
+  sessionFail: false,
   /** sockets are refused, as when the hub is out of reach */
   refuseWs: false,
   /** extra routes a check adds: return a Response to answer, undefined to pass */
@@ -162,6 +164,7 @@ const server = Bun.serve({
       if (res) return res
     }
     if (p === '/api/session' && state.sessionDelay) await Bun.sleep(state.sessionDelay)
+    if (p === '/api/session' && state.sessionFail) return new Response('Bad gateway', { status: 502 })
     if (p === '/api/session') return json({ authed: state.authed, setup: false, setupCode: false, version: VERSION })
     const up = await uploads(req, p)
     if (up) return up

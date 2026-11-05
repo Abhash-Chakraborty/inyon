@@ -86,8 +86,16 @@ for (const [w, h] of SIZES)
       check(chat.data.items.length === 40 && chat.data.hasMore === true, `${tag} session: the last 40 messages, more before them (${chat.data.items.length})`)
       check((await kept(page, 'inyon.chats.v1')) === '["local:%11"]', `${tag} session: listed among the kept chats`)
 
-      // ---- a draft typed just before the reload goes with it ----
+      // ---- a message sent just before a reload isn't sent again as the draft ----
       const box = page.locator('#composer-input')
+      await box.fill('run it once more')
+      await page.getByRole('button', { name: /^(Send|Queue follow-up)$/ }).click()
+      await page.reload({ waitUntil: 'commit' })
+      await page.getByText(LAST).first().waitFor()
+      await page.waitForTimeout(600)
+      check(!state.drafts.some((d) => d.text === 'run it once more'), `${tag} send: the sent message isn't left as the draft`)
+
+      // ---- a draft typed just before the reload goes with it ----
       await box.click()
       await box.fill('and check the coupon path too')
       await page.reload({ waitUntil: 'commit' })
@@ -128,6 +136,23 @@ for (const [w, h] of SIZES)
       check(await page.getByText('This pane is gone').waitFor({ timeout: 5000 }).then(() => true, () => false), `${tag} deep link: gone once the hub's overview says so`)
       check(!(await sawReconnecting(page)), `${tag} deep link: never said Reconnecting`)
 
+      // ---- the Overview from the kept copy: no answering a question that may be long gone ----
+      const let_go3 = hold()
+      await page.goto(`${base}/next/`)
+      await page.getByText('Migrate auth to passkeys').first().waitFor()
+      check(!(await page.locator('.answers').count()), `${tag} kept overview: no answer buttons until the hub answers`)
+      let_go3()
+      check(await page.locator('.answers').first().waitFor({ timeout: 5000 }).then(() => true, () => false), `${tag} kept overview: answer buttons once it has`)
+
+      // ---- a sign-in check that fails keeps what was drawn ----
+      state.sessionFail = true
+      await page.reload()
+      await page.getByText('Migrate auth to passkeys').first().waitFor()
+      await page.waitForTimeout(1200)
+      check(!(await page.getByLabel('Password', { exact: true }).count()), `${tag} check fails: the kept app stays, not the sign-in form`)
+      state.sessionFail = false
+      for (let i = errors.length - 1; i >= 0; i--) if (/502/.test(errors[i]!)) errors.splice(i, 1)
+
       // ---- a real drop still says so ----
       await page.goto(`${base}/next/m/local/p/11`)
       await page.getByText(LAST).first().waitFor()
@@ -151,6 +176,7 @@ for (const [w, h] of SIZES)
       await page.screenshot({ path: path.join(shots, `reload-failed-${tag}.png`) }).catch(() => {})
     } finally {
       state.authed = true
+      state.sessionFail = false
       state.sessionDelay = 0
       state.refuseWs = false
       state.gate = undefined

@@ -278,10 +278,13 @@ pub fn Composer(
             }
         }
     };
-    // your edit: shown at once, sent to the hub once typing pauses
+    // your edit: shown at once, sent to the hub once typing pauses, or once the socket is up when
+    // that's later (a message for a socket not yet open is dropped)
     let unsent = use_hook(|| Rc::new(RefCell::new(None::<String>)));
+    let off = use_hook(|| Rc::new(Cell::new(disabled)));
+    off.set(disabled);
     let set_text = {
-        let (typed, push_draft, unsent) = (typed.clone(), push_draft.clone(), unsent.clone());
+        let (typed, push_draft, unsent, off) = (typed.clone(), push_draft.clone(), unsent.clone(), off.clone());
         move |v: String| {
             let (mut text, mut from_terminal) = (text, from_terminal);
             text.set(v.clone());
@@ -289,10 +292,10 @@ pub fn Composer(
             let n = typed.get() + 1;
             typed.set(n);
             *unsent.borrow_mut() = Some(v.clone());
-            let (typed, push, unsent) = (typed.clone(), push_draft.clone(), unsent.clone());
+            let (typed, push, unsent, off) = (typed.clone(), push_draft.clone(), unsent.clone(), off.clone());
             spawn(async move {
                 platform::sleep(DRAFT_MS).await;
-                if typed.get() == n {
+                if typed.get() == n && !off.get() {
                     unsent.borrow_mut().take();
                     push(v);
                 }
@@ -321,8 +324,16 @@ pub fn Composer(
     // pastes, dropped files and typing with nothing focused, from anywhere on the page. The
     // page's listener decides at once whether the app takes the event (so the browser's own
     // handling can be stopped), and this task, inside the app, does the rest.
-    let off = use_hook(|| Rc::new(Cell::new(disabled)));
-    off.set(disabled);
+    {
+        let (unsent, push_draft) = (unsent.clone(), push_draft.clone());
+        use_effect(use_reactive!(|disabled| {
+            if !disabled {
+                if let Some(v) = unsent.borrow_mut().take() {
+                    push_draft(v);
+                }
+            }
+        }));
+    }
     let live = use_hook(|| Rc::new(RefCell::new((host.clone(), pane.clone()))));
     *live.borrow_mut() = (host.clone(), pane.clone());
     let listener = use_hook(|| {
@@ -387,7 +398,7 @@ pub fn Composer(
     let can_send = (!text.read().trim().is_empty() || !ready.is_empty()) && !uploading && !failed && !disabled;
     let mode = button(working, can_send, uploading || failed);
     let do_send = {
-        let (host, pane, key, synced, typed) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone());
+        let (host, pane, key, synced, typed, unsent) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone(), unsent.clone());
         move || {
             let list = attach::of(&key);
             let (uploading, failed, ready) = attach::summary(&list);
@@ -402,6 +413,7 @@ pub fn Composer(
             }
             // the box empties here and on the hub; the terminal's line is cleared by the send
             typed.set(typed.get() + 1);
+            unsent.borrow_mut().take();
             *synced.borrow_mut() = String::new();
             text.set(String::new());
             from_terminal.set(false);
@@ -430,17 +442,18 @@ pub fn Composer(
         }
     };
     let hold = {
-        let (host, pane, key, synced, typed) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone());
+        let (host, pane, key, synced, typed, unsent) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone(), unsent.clone());
         move || {
             let msg = text.peek().trim().to_string();
             // the hub holds text only
             if msg.is_empty() || !attach::of(&key).is_empty() {
                 return;
             }
-            let (host, pane, synced, typed) = (host.clone(), pane.clone(), synced.clone(), typed.clone());
+            let (host, pane, synced, typed, unsent) = (host.clone(), pane.clone(), synced.clone(), typed.clone(), unsent.clone());
             spawn(async move {
                 if api::hold(&host, &pane, &msg).await.is_ok() {
                     typed.set(typed.get() + 1);
+                    unsent.borrow_mut().take();
                     *synced.borrow_mut() = String::new();
                     text.set(String::new());
                 }

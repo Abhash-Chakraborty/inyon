@@ -254,6 +254,9 @@ fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
     let items = r.map(|r| row_items(r, &org, &sel, clock, cfg!(target_arch = "wasm32"))).unwrap_or_default();
     let press = menu::long_press(items.clone());
     let Some(r) = r else { return rsx! {} };
+    // a question from the copy kept in the browser may be long answered, and a tap on it would
+    // answer whatever asks now: answers wait for the hub's own overview
+    let live = h.confirmed();
     let (p1, p2, p3, p4) = (press.clone(), press.clone(), press.clone(), press);
     let a = r.agent();
     let shown = Shown::of(a, r.host);
@@ -325,7 +328,7 @@ fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
             }
             div { class: "card-line", {model::card_line(r, clock)} }
             div { class: "card-foot mono",
-                if waiting && r.host.status == HostStatus::Online {
+                if waiting && live && r.host.status == HostStatus::Online {
                     Answers { host: r.host.config.id.clone(), pane: r.pane.id.clone(), href: href.clone(), options }
                 } else {
                     span { class: "truncate", {model::model_line(a)} }

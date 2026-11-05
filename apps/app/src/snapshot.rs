@@ -60,15 +60,26 @@ pub enum Kept {
     Chat(Box<ChatSnapshot>),
 }
 
+/// A sign-out in one tab, for the others: its time, so every sign-out changes it.
+pub const SIGNED_OUT: &str = "inyon.signed-out.v1";
+
+/// Queues a write: the newest data for a key, moved to the end, so the list is written in the
+/// order things changed (and the chat changed last stays among the kept ones). True when the key
+/// wasn't waiting yet.
+pub fn queue<T>(list: &mut Vec<(String, T)>, key: &str, data: T) -> bool {
+    let was = list.iter().position(|(k, _)| k == key).map(|i| list.remove(i)).is_some();
+    list.push((key.to_string(), data));
+    !was
+}
+
 #[cfg(target_arch = "wasm32")]
 mod imp {
     use super::*;
     use std::cell::RefCell;
-    use std::collections::HashMap;
     use wasm_bindgen::{closure::Closure, JsCast};
 
     thread_local! {
-        static WAITING: RefCell<HashMap<String, Kept>> = RefCell::new(HashMap::new());
+        static WAITING: RefCell<Vec<(String, Kept)>> = const { RefCell::new(Vec::new()) };
     }
 
     fn storage() -> Option<web_sys::Storage> {
@@ -80,17 +91,20 @@ mod imp {
         decode(&raw, js_sys::Date::now())
     }
 
-    fn write<T: Serialize>(key: &str, data: &T) {
-        let (Some(s), Some(raw)) = (storage(), encode(data, js_sys::Date::now())) else { return };
-        let _ = s.set_item(key, &raw);
+    /// Whether it was kept (not when it's too long, or the browser is out of room).
+    fn write<T: Serialize>(key: &str, data: &T) -> bool {
+        let (Some(s), Some(raw)) = (storage(), encode(data, js_sys::Date::now())) else { return false };
+        s.set_item(key, &raw).is_ok()
     }
 
     fn put(key: &str, kept: Kept) {
         match kept {
-            Kept::Overview(hosts) => write(key, &hosts),
-            Kept::Chat(chat) => {
-                write(key, &chat);
-                // only the last few chats stay; the rest load from the hub as before
+            Kept::Overview(hosts) => {
+                write(key, &hosts);
+            }
+            // only the last few chats stay; the rest load from the hub as before. One that couldn't
+            // be kept takes no other's place.
+            Kept::Chat(chat) if write(key, &chat) => {
                 let Some(s) = storage() else { return };
                 let id = key.strip_prefix(CHAT_PREFIX).unwrap_or(key);
                 let (index, gone) = chat_index(s.get_item(CHAT_INDEX).ok().flatten().as_deref(), id);
@@ -99,18 +113,26 @@ mod imp {
                 }
                 let _ = s.set_item(CHAT_INDEX, &serde_json::to_string(&index).unwrap_or_default());
             }
+            Kept::Chat(_) => {}
         }
+    }
+
+    fn take(key: &str) -> Option<Kept> {
+        WAITING.with(|w| {
+            let mut w = w.borrow_mut();
+            let i = w.iter().position(|(k, _)| k == key)?;
+            Some(w.remove(i).1)
+        })
     }
 
     /// Writes a little after a change, at most once per wait, with the newest data then.
     fn later(key: String, ms: u32, kept: Kept) {
-        let waiting = WAITING.with(|w| w.borrow_mut().insert(key.clone(), kept).is_some());
-        if waiting {
+        if !WAITING.with(|w| queue(&mut w.borrow_mut(), &key, kept)) {
             return;
         }
         wasm_bindgen_futures::spawn_local(async move {
             gloo_timers::future::TimeoutFuture::new(ms).await;
-            if let Some(kept) = WAITING.with(|w| w.borrow_mut().remove(&key)) {
+            if let Some(kept) = take(&key) {
                 put(&key, kept);
             }
         });
@@ -132,33 +154,50 @@ mod imp {
         later(format!("{CHAT_PREFIX}{key}"), CHAT_MS, Kept::Chat(Box::new(chat)));
     }
 
-    /// Writes everything that is waiting now (the page going away).
+    /// Writes everything that is waiting now, in the order it changed (the page going away).
     pub fn flush() {
-        let all: Vec<(String, Kept)> = WAITING.with(|w| w.borrow_mut().drain().collect());
+        let all: Vec<(String, Kept)> = WAITING.with(|w| std::mem::take(&mut *w.borrow_mut()));
         for (key, kept) in all {
             put(&key, kept);
         }
     }
 
-    /// Signing out takes the pictures with it.
+    /// Signing out takes the pictures with it: every kept chat, listed or not (two tabs can each
+    /// write the list), and what other tabs were about to write.
     pub fn clear() {
         WAITING.with(|w| w.borrow_mut().clear());
         let Some(s) = storage() else { return };
-        let (index, _) = chat_index(s.get_item(CHAT_INDEX).ok().flatten().as_deref(), "");
-        for k in index.iter().filter(|k| !k.is_empty()) {
-            let _ = s.remove_item(&format!("{CHAT_PREFIX}{k}"));
-        }
-        for k in [CHAT_INDEX, OVERVIEW_KEY, "inyon.organize.v1"] {
+        let n = s.length().unwrap_or(0);
+        let chats: Vec<String> = (0..n).filter_map(|i| s.key(i).ok().flatten()).filter(|k| k.starts_with(CHAT_PREFIX)).collect();
+        for k in chats.iter().map(String::as_str).chain([CHAT_INDEX, OVERVIEW_KEY, "inyon.organize.v1"]) {
             let _ = s.remove_item(k);
         }
+        let _ = s.set_item(SIGNED_OUT, &js_sys::Date::now().to_string());
     }
 
-    /// A page going away writes what it was about to keep.
+    /// A page hidden or going away writes what it was about to keep (a phone may close a hidden
+    /// page without telling it); a sign-out in another tab drops it instead.
     pub fn install() {
         let Some(win) = web_sys::window() else { return };
-        let cb = Closure::<dyn Fn()>::new(flush);
-        let _ = win.add_event_listener_with_callback("pagehide", cb.as_ref().unchecked_ref());
-        cb.forget();
+        let leave = Closure::<dyn Fn(web_sys::Event)>::new(|e: web_sys::Event| {
+            let hidden = web_sys::window().and_then(|w| w.document()).is_some_and(|d| d.visibility_state() == web_sys::VisibilityState::Hidden);
+            if e.type_() == "pagehide" || hidden {
+                flush();
+            }
+        });
+        let _ = win.add_event_listener_with_callback("pagehide", leave.as_ref().unchecked_ref());
+        if let Some(d) = win.document() {
+            let _ = d.add_event_listener_with_callback("visibilitychange", leave.as_ref().unchecked_ref());
+        }
+        leave.forget();
+        let other = Closure::<dyn Fn(web_sys::Event)>::new(|e: web_sys::Event| {
+            let key = js_sys::Reflect::get(&e, &"key".into()).ok().and_then(|k| k.as_string());
+            if key.as_deref() == Some(SIGNED_OUT) {
+                WAITING.with(|w| w.borrow_mut().clear());
+            }
+        });
+        let _ = win.add_event_listener_with_callback("storage", other.as_ref().unchecked_ref());
+        other.forget();
     }
 }
 
@@ -216,6 +255,16 @@ mod tests {
         assert_eq!(index, vec!["a:%1", "b:%1", "c:%1"]);
         assert!(gone.is_empty());
         assert_eq!(chat_index(Some("{}"), "a").0, vec!["a"]);
+    }
+
+    #[test]
+    fn writes_wait_in_the_order_things_changed() {
+        let mut q: Vec<(String, u32)> = vec![];
+        assert!(queue(&mut q, "a", 1));
+        assert!(queue(&mut q, "b", 2));
+        // a changed again: its newest data, and now the last to be written
+        assert!(!queue(&mut q, "a", 3));
+        assert_eq!(q, vec![("b".to_string(), 2), ("a".to_string(), 3)]);
     }
 
     #[test]
