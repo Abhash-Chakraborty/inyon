@@ -94,6 +94,31 @@ pub fn startable(installed: &[AgentKind]) -> Vec<AgentKind> {
     out
 }
 
+/// The messages to send again by themselves: each that failed only because the connection dropped
+/// (`retryable`) and was on its way before the connection last came back (`back_at`), so a send
+/// that spans a reconnect goes again even when its failure lands after it.
+pub fn resend_due(pending: &[inyon_chat_core::pending::PendingMessage], back_at: u64) -> Vec<(String, String)> {
+    pending.iter().filter(|p| p.status == PendingStatus::Failed && p.retryable && !p.remote && p.at < back_at).map(|p| (p.id.clone(), p.text.clone())).collect()
+}
+
+/// How long a start keeps its button busy at most, waiting for the pane to say an agent runs.
+const START_WAIT_MS: u64 = 15_000;
+
+/// What each pane is starting (an agent's id, or "resume") and since when, so a second tap, or the
+/// card drawn again, can't type the command twice while the first one comes up.
+static STARTING: GlobalSignal<std::collections::HashMap<String, (String, u64)>> = Signal::global(std::collections::HashMap::new);
+
+/// Whether the hub says an agent runs in this pane.
+fn pane_runs(hub: &Hub, host: &str, pane: &str) -> bool {
+    hub.hosts.iter().filter(|m| m.config.id == host).flat_map(|m| &m.sessions).flat_map(|s| &s.windows).flat_map(|w| &w.panes).any(|p| p.id == pane && p.agent.is_some())
+}
+
+/// What a pane is still starting at `now`, if anything: a start counts until its pane runs, it
+/// fails, or [`START_WAIT_MS`] pass.
+pub fn starting(entry: Option<&(String, u64)>, now: u64) -> Option<&str> {
+    entry.filter(|(_, at)| now.saturating_sub(*at) < START_WAIT_MS).map(|(what, _)| what.as_str())
+}
+
 /// Asks the hub for the messages before the first one this chat has.
 fn load_more(chats: Signal<Chats>, key: &str, out: &Outbox) {
     let before = {
@@ -237,15 +262,21 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
     // every reconnect
     {
         let (key, host, pane) = (key.clone(), ctx.host.clone(), ctx.pane.clone());
-        use_effect(use_reactive!(|connected| {
+        // when the connection last came back, and whether it was up at the last look
+        let (mut back_at, mut was_up) = (use_signal(|| 0u64), use_signal(|| false));
+        // a new failure that may have spanned a reconnect looks again
+        let failed = chats.read().get(&key).map(|e| e.chat.pending.iter().filter(|p| p.status == PendingStatus::Failed && p.retryable).count()).unwrap_or(0);
+        use_effect(use_reactive!(|connected, failed| {
+            let _ = failed;
             if !connected {
+                was_up.set(false);
                 return;
             }
-            let waiting: Vec<(String, String)> = chats
-                .peek()
-                .get(&key)
-                .map(|e| e.chat.pending.iter().filter(|p| p.status == PendingStatus::Failed && p.retryable && !p.remote).map(|p| (p.id.clone(), p.text.clone())).collect())
-                .unwrap_or_default();
+            if !*was_up.peek() {
+                was_up.set(true);
+                back_at.set(now());
+            }
+            let waiting = chats.peek().get(&key).map(|e| resend_due(&e.chat.pending, *back_at.peek())).unwrap_or_default();
             for (id, text) in waiting {
                 super::composer::retry(chats, host.clone(), pane.clone(), id, text);
             }
@@ -373,7 +404,13 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                     if !first_loaded {
                         Loading { done: catching_up }
                     } else if rows.is_empty() && !running {
-                        NotRunning { host: ctx.host.clone(), pane: ctx.pane.clone(), agent: ctx.agent, installed: installed.clone(), session_id: session_id.clone(), terminal_href: terminal_href.clone(), compact: false }
+                        if let Some(text) = failure.clone() {
+                            div { class: "line-row chat-failure fade-in", role: "status",
+                                span { class: "line-mark", span { class: "dot dot-danger" } }
+                                "{text}"
+                            }
+                        }
+                        NotRunning { host: ctx.host.clone(), pane: ctx.pane.clone(), agent: ctx.agent, installed: installed.clone(), session_id: session_id.clone(), terminal_href: terminal_href.clone(), compact: false, online: connected }
                     } else {
                         if has_more {
                             div { class: "chat-earlier",
@@ -415,7 +452,7 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                             }
                         }
                         if !running {
-                            NotRunning { host: ctx.host.clone(), pane: ctx.pane.clone(), agent: ctx.agent, installed, session_id, terminal_href, compact: true }
+                            NotRunning { host: ctx.host.clone(), pane: ctx.pane.clone(), agent: ctx.agent, installed, session_id, terminal_href, compact: true, online: connected }
                         }
                     }
                 }
@@ -544,9 +581,10 @@ fn HelpLink(id: Option<String>) -> Element {
 fn TerminalFirst(ctx: Ctx, machine: Option<Machine>, terminal_href: String) -> Element {
     // its chat info says nothing; the pane says whether it runs
     if machine.as_ref().is_some_and(|m| !m.running) {
+        let online = machine.as_ref().is_some_and(|m| m.online);
         let installed = machine.map(|m| m.agents).unwrap_or_default();
         return rsx! {
-            NotRunning { host: ctx.host, pane: ctx.pane, agent: ctx.agent, installed, session_id: None, terminal_href, compact: false }
+            NotRunning { host: ctx.host, pane: ctx.pane, agent: ctx.agent, installed, session_id: None, terminal_href, compact: false, online }
         };
     }
     let name = ctx.agent_name;
@@ -566,25 +604,52 @@ fn TerminalFirst(ctx: Ctx, machine: Option<Machine>, terminal_href: String) -> E
 }
 
 /// "No agent is running in this pane", with its way back: resume the conversation, start an
-/// agent, or the terminal. `compact`: a card under the conversation that ended.
+/// agent, or the terminal. `compact`: a card under the conversation that ended. `online`: the
+/// machine can be reached; until it can, nothing starts.
 #[component]
-fn NotRunning(host: String, pane: String, agent: Option<AgentKind>, installed: Vec<AgentKind>, session_id: Option<String>, terminal_href: String, compact: bool) -> Element {
-    let mut busy = use_signal(|| None::<String>);
-    let start = move |kind: AgentKind, resume: Option<String>| {
-        let (host, pane) = (host.clone(), pane.clone());
-        busy.set(Some(if resume.is_some() { "resume".into() } else { kind.as_str().to_string() }));
-        spawn(async move {
-            if let Err(e) = api::start(&host, &pane, kind, resume.as_deref()).await {
-                toast::toast("Could not start", Some(e.message), ToastTone::Error);
+fn NotRunning(
+    host: String,
+    pane: String,
+    agent: Option<AgentKind>,
+    installed: Vec<AgentKind>,
+    session_id: Option<String>,
+    terminal_href: String,
+    compact: bool,
+    online: bool,
+) -> Element {
+    let hub = use_context::<Signal<Hub>>();
+    let key = inyon_protocol::chat_key(&host, &pane);
+    // a start in flight holds every button, here and wherever this pane's card shows, until the
+    // pane says an agent runs, the start fails, or the wait runs out
+    let busy = starting(STARTING.read().get(&key), now()).map(str::to_string);
+    let start = {
+        let key = key.clone();
+        move |kind: AgentKind, resume: Option<String>| {
+            let (host, pane, key) = (host.clone(), pane.clone(), key.clone());
+            if starting(STARTING.peek().get(&key), now()).is_some() {
+                return;
             }
-            // the pane says it runs a moment later; until then the button stays busy
-            platform::sleep(2500).await;
-            busy.set(None);
-        });
+            let what = if resume.is_some() { "resume".to_string() } else { kind.as_str().to_string() };
+            let began = now();
+            STARTING.write().insert(key.clone(), (what, began));
+            // spawned at the root, so the wait goes on after this card goes
+            dioxus::core::spawn_forever(async move {
+                if let Err(e) = api::start(&host, &pane, kind, resume.as_deref()).await {
+                    STARTING.write().remove(&key);
+                    toast::toast("Could not start", Some(e.message), ToastTone::Error);
+                    return;
+                }
+                while now().saturating_sub(began) < START_WAIT_MS && !pane_runs(&hub.peek(), &host, &pane) {
+                    platform::sleep(250).await;
+                }
+                STARTING.write().remove(&key);
+            });
+        }
     };
     let resume = session_id.zip(agent);
     let kinds = startable(&installed);
-    let is_busy = move |what: &str| busy().as_deref() == Some(what);
+    let held = busy.is_some() || !online;
+    let is_busy = move |what: &str| busy.as_deref() == Some(what);
     rsx! {
         div { class: if compact { "not-running not-running-card" } else { "not-running" },
             p { class: "not-running-title", "No agent is running in this pane" }
@@ -594,9 +659,9 @@ fn NotRunning(host: String, pane: String, agent: Option<AgentKind>, installed: V
                     button {
                         class: "button button-md button-primary press",
                         r#type: "button",
-                        disabled: busy().is_some(),
+                        disabled: held,
                         onclick: {
-                            let mut start = start.clone();
+                            let start = start.clone();
                             move |_| start(kind, Some(id.clone()))
                         },
                         if is_busy("resume") {
@@ -612,9 +677,9 @@ fn NotRunning(host: String, pane: String, agent: Option<AgentKind>, installed: V
                         key: "{kind.as_str()}",
                         class: "button button-md button-quiet press",
                         r#type: "button",
-                        disabled: busy().is_some(),
+                        disabled: held,
                         onclick: {
-                            let mut start = start.clone();
+                            let start = start.clone();
                             move |_| start(kind, None)
                         },
                         if is_busy(kind.as_str()) {
@@ -653,6 +718,26 @@ mod tests {
         assert_eq!(link_line(false, Some(("studio", false)), true), Some(LinkLine::Hub));
         assert_eq!(link_line(true, Some(("studio", false)), true), Some(LinkLine::Machine("studio".into())));
         assert_eq!(link_line(true, Some(("studio", false)), false), Some(LinkLine::Offline("studio".into())));
+    }
+
+    #[test]
+    fn a_send_that_spans_a_reconnect_goes_again_by_itself() {
+        use inyon_chat_core::pending::PendingMessage;
+        let failed = |id: &str, at: u64, retryable: bool| PendingMessage { retryable, ..PendingMessage::new(id, id, PendingStatus::Failed, at) };
+        let pending = [failed("before", 100, true), failed("after", 300, true), failed("tapped", 100, false), PendingMessage::new("sent", "sent", PendingStatus::Sent, 100)];
+        // the connection came back at 200: the send from before it goes again, even if it failed later
+        assert_eq!(resend_due(&pending, 200), [("before".to_string(), "before".to_string())]);
+        // back again at 400: both
+        assert_eq!(resend_due(&pending, 400).len(), 2);
+    }
+
+    #[test]
+    fn a_start_holds_its_buttons_until_it_fails_or_the_wait_runs_out() {
+        let e = ("claude".to_string(), 1_000);
+        assert_eq!(starting(Some(&e), 1_500), Some("claude"));
+        assert_eq!(starting(Some(&e), 1_000 + START_WAIT_MS - 1), Some("claude"));
+        assert_eq!(starting(Some(&e), 1_000 + START_WAIT_MS), None);
+        assert_eq!(starting(None, 0), None);
     }
 
     #[test]

@@ -13,9 +13,15 @@ use inyon_protocol::{AgentState, HostState, HostStatus, PromptOption, ScreenProm
 pub struct Asks(HashMap<(String, String), ScreenPrompt>);
 
 impl Asks {
-    /// Notes what every session in the overview is asking now.
+    /// Notes what every session in the overview is asking now. A machine that's online lists all its
+    /// panes, so a question kept for a pane it no longer lists goes: tmux may give a new pane the
+    /// same id, and the old question mustn't show in its chat.
     pub fn note(&mut self, hosts: &[HostState]) {
         for h in hosts {
+            if h.status == HostStatus::Online {
+                let listed: std::collections::HashSet<&str> = h.sessions.iter().flat_map(|s| &s.windows).flat_map(|w| &w.panes).map(|p| p.id.as_str()).collect();
+                self.0.retain(|(host, pane), _| *host != h.config.id || listed.contains(pane.as_str()));
+            }
             for p in h.sessions.iter().flat_map(|s| &s.windows).flat_map(|w| &w.panes) {
                 let k = (h.config.id.clone(), p.id.clone());
                 let asking = p.agent.as_ref().filter(|a| a.state == AgentState::Waiting).and_then(|a| Some((a, a.options.as_deref().filter(|o| !o.is_empty())?)));
@@ -98,6 +104,24 @@ mod tests {
         // back, and not asking any more
         a.note(&hosts("online", idle));
         assert!(a.get("box", "%3").is_none());
+    }
+
+    #[test]
+    fn a_question_goes_with_its_pane_once_the_machine_is_back() {
+        let mut a = Asks::default();
+        a.note(&hosts("online", waiting()));
+        // the machine drops, and its pane is gone when it comes back
+        a.note(&hosts("error", waiting()));
+        let mut back = hosts("online", waiting());
+        back[0].sessions[0].windows[0].panes.clear();
+        a.note(&back);
+        assert!(a.get("box", "%3").is_none());
+        // a machine that's away lists nothing for sure: its questions stay
+        a.note(&hosts("online", waiting()));
+        let mut away = hosts("error", waiting());
+        away[0].sessions.clear();
+        a.note(&away);
+        assert!(a.get("box", "%3").is_some());
     }
 
     #[test]

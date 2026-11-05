@@ -151,6 +151,8 @@ The list works for every machine, whether you reach it through your hub, a paire
 
 If the agent has exited, the session offers **Resume conversation**, **Past conversations** (to pick another one), **Start** for each installed agent, or **Terminal**. A pane that has closed says *This pane is gone*.
 
+In the [new app at `/next`](hub.md#the-new-app-at-next), from 0.25.4, the buttons wait while the machine is offline, and after you start one they stay busy until the agent comes up (15 seconds at most), so a second tap doesn't type the command twice. If the last turn stopped on an error, the line saying why shows above them.
+
 ## Signing in
 
 If an agent isn't signed in on that machine, the session shows a banner with **Sign in**. Inyon runs the agent's own sign-in and turns it into steps: a code to copy, a page to open, or a code to paste back. See [Setting up a machine](machines.md#the-setup-tab).

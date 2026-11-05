@@ -24,7 +24,7 @@ const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 type Obj = Record<string, unknown>
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
-const state = { starts: [] as Obj[], startFails: false, sends: [] as Obj[], sendDown: false }
+const state = { starts: [] as Obj[], startFails: false, sends: [] as Obj[], sendDown: false, sendFailures: 0 }
 
 // the machines: the demo's, with three more sessions on studio and docs run by Cursor CLI
 type Host = { config: { id: string; name: string }; status: string; sessions: Obj[] } & Obj
@@ -38,6 +38,9 @@ function resetHosts() {
   studio.sessions.push(
     session(21, 'search', pane('%21', 'Speed up search', { kind: 'claude', state: 'idle', failure: { error: 'rate_limit', resetsAt: Math.floor(now / 1000) + 3600 } })),
     session(22, 'archive', pane('%22', 'Read the archive', { kind: 'claude', state: 'idle' })),
+    // a shell with no agent, and an empty chat whose agent stopped on a rate limit
+    session(23, 'logs', { ...pane('%23', 'Shell', {}), agent: undefined }),
+    session(24, 'notes', pane('%24', 'Tidy the notes', { kind: 'claude', state: 'idle', failure: { error: 'rate_limit', resetsAt: Math.floor(now / 1000) + 3600 } })),
   )
   const docs = (hosts[1]!.sessions[0] as { windows: { panes: { agent: Obj }[] }[] }).windows[0]!.panes[0]!
   docs.agent = { ...docs.agent, kind: 'cursor' }
@@ -57,6 +60,8 @@ function resetChats() {
   streams.set('build-box:%14', { seq: 1, items: [], state: { info: info('build-box', '%14', 'opencode', { running: false }), loaded: true, hasMore: false } })
   // stopped on a rate limit
   streams.set('local:%21', { seq: 1, items: s.items.slice(-6), state: { info: info('local', '%21', 'claude', { title: 'Speed up search' }), screen: { working: false, width: 120, model: 'Sonnet 5.5' }, loaded: true, hasMore: false } })
+  streams.set('local:%23', { seq: 1, items: [], state: { info: info('local', '%23', 'claude', { running: false }), loaded: true, hasMore: false } })
+  streams.set('local:%24', { seq: 1, items: [], state: { info: info('local', '%24', 'claude', { running: false, title: 'Tidy the notes' }), loaded: true, hasMore: false } })
   // a long record the hub is still reading
   streams.set('local:%22', { seq: 1, items: [], state: { loaded: false, progress: { done: 42, total: 100 } } })
 }
@@ -111,6 +116,10 @@ const server = Bun.serve({
         return state.startFails ? json({ error: 'tmux could not type into the pane' }, 409) : json({ ok: true })
       }
       if (state.sendDown) return json({ error: 'The machine is not answering' }, 503)
+      if (state.sendFailures > 0) {
+        state.sendFailures--
+        return json({ error: 'The machine is not answering' }, 503)
+      }
       state.sends.push({ host, pane: action[2], ...body })
       const stream = `${host}:%${action[2]}`
       setTimeout(() => change(stream, { append: [{ kind: 'user', seq: 2000 + state.sends.length, uuid: `sent${state.sends.length}`, ts: new Date().toISOString(), text: body.text, images: 0 }] }), 300)
@@ -149,6 +158,11 @@ const base = `http://127.0.0.1:${server.port}`
 const problems: string[] = []
 const check = (ok: unknown, what: string) => {
   if (!ok) problems.push(what)
+}
+async function until(ok: () => boolean | Promise<boolean>, ms = 6000) {
+  const end = Date.now() + ms
+  while (!(await ok()) && Date.now() < end) await Bun.sleep(50)
+  return ok()
 }
 
 /** Text smaller than 12px, or a page wider than its window. */
@@ -264,7 +278,8 @@ try {
     await page.goto(`${base}/next/m/local/p/11`)
     const card = page.locator('.not-running-card')
     await card.getByRole('button', { name: 'Start Codex' }).click()
-    check(await card.getByRole('button', { name: 'Resume conversation' }).isDisabled(), 'start: the other buttons wait while it starts')
+    // the stand-in's overview already lists an agent in this pane, so the start is over at once; the
+    // wait for a pane that isn't running yet has its own check below
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('.not-running-card button')?.disabled, null, { timeout: 5000 })
     check(JSON.stringify(state.starts.at(-1)) === JSON.stringify({ pane: '11', agent: 'codex' }), `start: ${JSON.stringify(state.starts.at(-1))}`)
     await card.getByRole('button', { name: 'Resume conversation' }).click()
@@ -330,6 +345,84 @@ try {
     await page.waitForTimeout(800)
     check(state.sends.length === 1 && (state.sends[0] as { text?: string }).text === 'Try the index on the title column', `resend: sent once after reconnecting (${JSON.stringify(state.sends)})`)
     check((await page.locator('.bubble').filter({ hasText: 'Try the index on the title column' }).count()) === 1, 'resend: the message shows once')
+    await ctx.close()
+  }
+
+  // ---- a send whose failure lands after the connection came back goes again by itself ----
+  {
+    state.sends = []
+    const { ctx, page } = await open(390, 844, 'light')
+    await page.goto(`${base}/next/m/local/p/21`)
+    const box = page.getByRole('textbox', { name: 'Message Claude Code' })
+    await box.waitFor()
+    // the send's four tries all fail, over about eight seconds; the connection drops and comes back
+    // in the middle of them
+    state.sendFailures = 4
+    await box.fill('Cache the search results')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await page.waitForTimeout(1000)
+    for (const ws of sockets) ws.close()
+    check(await until(() => state.sends.length === 1, 20_000), `spanned: sent again by itself (${JSON.stringify(state.sends)})`)
+    await page.waitForTimeout(800)
+    check(!(await page.locator('.msg-retry').count()), 'spanned: no Retry left to tap')
+    check((await page.locator('.bubble').filter({ hasText: 'Cache the search results' }).count()) === 1, 'spanned: the message shows once')
+    state.sendFailures = 0
+    await ctx.close()
+  }
+
+  // ---- a start holds every button until the pane runs; nothing starts while the machine is away ----
+  {
+    const { ctx, page } = await open(390, 844, 'light')
+    await page.goto(`${base}/next/m/local/p/23?view=chat`)
+    const card = page.locator('.not-running').first()
+    await card.getByRole('button', { name: 'Start Codex' }).waitFor()
+    const n = state.starts.length
+    await card.getByRole('button', { name: 'Start Codex' }).click()
+    check(await until(() => state.starts.length === n + 1), 'guard: the start goes out')
+    await page.waitForTimeout(3000)
+    check(await card.getByRole('button', { name: 'Start Claude Code' }).isDisabled(), 'guard: three seconds on, the pane not running yet, the buttons still wait')
+    await card.getByRole('button', { name: 'Start Codex' }).click({ force: true })
+    await page.waitForTimeout(500)
+    check(state.starts.length === n + 1, `guard: a second tap types nothing (${state.starts.length - n} starts)`)
+    // the pane says an agent runs: the start is over
+    machine('local', (h) => {
+      const p = (h.sessions.find((x) => x.id === '$23') as { windows: { panes: { agent?: Obj }[] }[] }).windows[0]!.panes[0]!
+      p.agent = { kind: 'codex', state: 'idle', pid: 7, startedAt: now, mappedBy: 'hook' }
+    })
+    check(await until(async () => !(await card.getByRole('button', { name: 'Start Claude Code' }).isDisabled())), 'guard: free again once the pane runs')
+    // the machine drops: nothing can start until it's back
+    machine('local', (h) => (h.status = 'error'))
+    check(await until(async () => await card.getByRole('button', { name: 'Start Claude Code' }).isDisabled()), 'offline: Start waits for the machine')
+    machine('local', (h) => (h.status = 'online'))
+    check(await until(async () => !(await card.getByRole('button', { name: 'Start Claude Code' }).isDisabled())), 'offline: and works once it is back')
+    resetHosts()
+    await ctx.close()
+  }
+
+  // ---- an empty chat whose agent stopped says why, over the way back ----
+  {
+    const { ctx, page } = await open(390, 844, 'light')
+    await page.goto(`${base}/next/m/local/p/24`)
+    const failure = page.locator('.chat-failure')
+    await failure.waitFor()
+    check(/^Stopped: rate limit/.test((await failure.textContent()) ?? ''), `stopped empty: the failure line (${await failure.textContent()})`)
+    check(await page.locator('.not-running').first().isVisible(), 'stopped empty: and the way back under it')
+    await ctx.close()
+  }
+
+  // ---- opening a session takes its pushed notification away too ----
+  {
+    const { ctx, page } = await open(390, 844, 'light')
+    // the service worker's notifications, as the page sees them
+    await ctx.addInitScript(() => {
+      const w = window as unknown as { closedTags: string[] }
+      w.closedTags = []
+      const reg = { getNotifications: async (o?: { tag?: string }) => [{ close: () => w.closedTags.push(o?.tag ?? '') }] }
+      Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { getRegistration: async () => reg, register: async () => reg, ready: Promise.resolve(reg), addEventListener() {} } })
+    })
+    await page.goto(`${base}/next/m/local/p/21`)
+    await page.getByRole('textbox', { name: 'Message Claude Code' }).waitFor()
+    check(await until(async () => ((await page.evaluate(() => (window as unknown as { closedTags: string[] }).closedTags)) ?? []).includes('local:%21')), `push: the session's notification closes (${await page.evaluate(() => (window as unknown as { closedTags: string[] }).closedTags)})`)
     await ctx.close()
   }
 

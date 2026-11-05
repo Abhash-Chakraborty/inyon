@@ -90,6 +90,11 @@ pub fn opened() -> watch::Receiver<Option<String>> {
     rx
 }
 
+/// Says each time the app comes on screen or leaves it.
+pub fn visible() -> watch::Receiver<bool> {
+    visible_tx().subscribe()
+}
+
 /// Whether the app is on screen now.
 pub fn is_visible() -> bool {
     *visible_tx().borrow()

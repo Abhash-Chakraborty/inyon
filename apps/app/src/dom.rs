@@ -545,13 +545,42 @@ mod imp {
         static SHOWN: std::cell::RefCell<std::collections::HashMap<String, wasm_bindgen::JsValue>> = std::cell::RefCell::new(std::collections::HashMap::new());
     }
 
-    /// Takes back the notification shown under `tag`.
+    /// Takes back the notification shown under `tag`: the page's own, and the one the service
+    /// worker showed for a push under the same tag.
     pub fn close_notice(tag: &str) {
         if let Some(n) = SHOWN.with(|s| s.borrow_mut().remove(tag)) {
-            if let Some(f) = js_sys::Reflect::get(&n, &"close".into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok()) {
-                let _ = f.call0(&n);
-            }
+            call(&n, "close");
         }
+        let tag = tag.to_string();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = close_pushed(&tag).await;
+        });
+    }
+
+    /// Calls `obj[name]()`, when it has one.
+    fn call(obj: &wasm_bindgen::JsValue, name: &str) -> Option<wasm_bindgen::JsValue> {
+        let f = js_sys::Reflect::get(obj, &name.into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
+        f.call0(obj).ok()
+    }
+
+    /// Closes the service worker's notifications under `tag` (sw.js shows pushes with the same
+    /// tags the page uses).
+    async fn close_pushed(tag: &str) -> Option<()> {
+        use wasm_bindgen_futures::JsFuture;
+        let nav = web_sys::window()?.navigator();
+        let workers = js_sys::Reflect::get(&nav, &"serviceWorker".into()).ok().filter(|w| !w.is_undefined())?;
+        let reg = JsFuture::from(call(&workers, "getRegistration")?.dyn_into::<js_sys::Promise>().ok()?).await.ok()?;
+        if reg.is_undefined() || reg.is_null() {
+            return None;
+        }
+        let get = js_sys::Reflect::get(&reg, &"getNotifications".into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
+        let opts = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&opts, &"tag".into(), &tag.into());
+        let list = JsFuture::from(get.call1(&reg, &opts).ok()?.dyn_into::<js_sys::Promise>().ok()?).await.ok()?;
+        for n in js_sys::Array::from(&list).iter() {
+            call(&n, "close");
+        }
+        Some(())
     }
 
     /// A notification from the browser itself; clicking it brings the app forward at `href` (a
@@ -771,9 +800,71 @@ mod imp {
     }
     pub fn on_shortcut(_f: impl Fn(&str) -> bool + 'static) {}
     pub fn on_page_menu(_f: impl Fn(f64, f64) -> bool + 'static) {}
-    pub fn on_wake(_f: impl Fn() + 'static) {}
+    thread_local! {
+        static WAKE: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
+        static AWAY: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+    }
+
+    /// Calls `f` whenever the app comes back on screen. The phone app hears it from the platform
+    /// (Android: the activity's start); the page's own events don't reach Rust here.
+    pub fn on_wake(f: impl Fn() + 'static) {
+        #[cfg(all(feature = "phone", not(test)))]
+        watch_phone();
+        WAKE.with(|w| w.borrow_mut().push(Box::new(f)));
+    }
+
+    /// How long the app was out of sight before it came back (ms), for an [`on_wake`] callback.
     pub fn away_ms() -> f64 {
-        0.0
+        AWAY.with(std::cell::Cell::get)
+    }
+
+    #[cfg_attr(not(feature = "phone"), allow(dead_code))]
+    /// The app came back after `away` ms out of sight: runs every [`on_wake`] callback.
+    pub fn woke(away: f64) {
+        AWAY.with(|a| a.set(away));
+        WAKE.with(|w| w.borrow().iter().for_each(|f| f()));
+    }
+
+    /// How long the app is out of sight, from the platform's word each time it leaves the screen or
+    /// comes back.
+    #[cfg_attr(not(feature = "phone"), allow(dead_code))]
+    #[derive(Debug, Default)]
+    pub struct Away(Option<f64>);
+
+    #[cfg_attr(not(feature = "phone"), allow(dead_code))]
+    impl Away {
+        /// The app came on screen (`on`) or left it at `now` (ms): how long it was away, when it's back.
+        pub fn change(&mut self, on: bool, now: f64) -> Option<f64> {
+            if on {
+                self.0.take().map(|at| now - at)
+            } else {
+                self.0.get_or_insert(now);
+                None
+            }
+        }
+    }
+
+    /// Follows the phone app on and off screen, once, for the [`on_wake`] callbacks: Android says it
+    /// on its own thread, and this runs them on the screens' thread.
+    #[cfg(all(feature = "phone", not(test)))]
+    fn watch_phone() {
+        thread_local!(static ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        if ON.with(|o| o.replace(true)) {
+            return;
+        }
+        dioxus::core::spawn_forever(async {
+            let mut rx = crate::phone::visible();
+            let (mut away, start) = (Away::default(), std::time::Instant::now());
+            loop {
+                let on = *rx.borrow_and_update();
+                if let Some(ms) = away.change(on, start.elapsed().as_secs_f64() * 1000.0) {
+                    woke(ms);
+                }
+                if rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
     }
     pub fn on_resize(_f: impl Fn() + 'static) {}
     pub fn secure() -> bool {
@@ -827,6 +918,28 @@ pub use imp::*;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn the_app_coming_back_says_how_long_it_was_away() {
+        let mut a = super::Away::default();
+        assert_eq!(a.change(true, 10.0), None);
+        assert_eq!(a.change(false, 1_000.0), None);
+        // leaving twice counts from the first time
+        assert_eq!(a.change(false, 2_000.0), None);
+        assert_eq!(a.change(true, 361_000.0), Some(360_000.0));
+        assert_eq!(a.change(true, 362_000.0), None);
+    }
+
+    #[test]
+    fn coming_back_runs_the_wake_callbacks_with_the_time_away() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let seen = Rc::new(Cell::new(0.0));
+        let s = seen.clone();
+        super::on_wake(move || s.set(super::away_ms()));
+        super::woke(400_000.0);
+        assert_eq!(seen.get(), 400_000.0);
+    }
+
     #[test]
     fn a_date_off_the_browser_is_a_calendar_date() {
         // 2 November 2026, 18:00 UTC
