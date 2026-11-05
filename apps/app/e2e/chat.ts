@@ -283,7 +283,7 @@ try {
     const { ctx, page } = await open(390, 844, 'light')
     // the overview first, which notes what each session asks, then the session in place
     await page.goto(`${base}/next/`)
-    await page.locator('a[href="/next/m/local/p/12"]').click()
+    await page.locator('a.card-link[href="/next/m/local/p/12"]').click()
     await page.getByText('Would you like to run the following command?').waitFor()
     machine('local', (h) => {
       h.status = 'error'
