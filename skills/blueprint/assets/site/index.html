@@ -5,51 +5,11 @@
 <link rel="icon" href="kit/icon.svg">
 <link rel="stylesheet" href="kit/blueprint.css">
 <script src="kit/lucide.min.js"></script><script src="kit/data.js"></script>
-<script src="kit/kit.js"></script><!-- mockups --><script src="mockups/screens.js"></script><!-- /mockups -->
+<script src="kit/kit.js"></script><script src="site.js"></script><script src="kit/nav.js"></script><!-- mockups --><script src="mockups/screens.js"></script><!-- /mockups -->
 <style>
-  body { background: var(--bg); }
-  .doc { max-width: 960px; margin: 0 auto; padding: 28px 16px 120px; }
-  .doc-top { display: flex; align-items: center; gap: 10px; margin-bottom: 40px; }
-  .doc-top b { font-size: 14px; }
-  .doc-top .sp { flex: 1; }
-  .doc-top a.btn { text-decoration: none; }
-  .eyebrow { font: 500 12px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-3); margin: 0 0 12px; }
-  .doc h1 { font-size: 44px; line-height: 1.05; font-weight: 600; letter-spacing: -.035em; margin: 0 0 14px; max-width: 14em; }
-  .lede { font-size: 17px; line-height: 1.55; color: var(--fg-2); max-width: 42em; margin: 0 0 20px; }
-  .doc h2 { font-size: 26px; font-weight: 600; letter-spacing: -.02em; margin: 64px 0 14px; padding-top: 24px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
-  .doc h2 .n { font: 500 13px var(--mono); color: var(--fg-3); margin-right: 10px; vertical-align: 3px; }
-  .doc h3 { font-size: 17px; font-weight: 600; margin: 28px 0 8px; }
-  .doc p, .doc li { font-size: 15px; line-height: 1.62; color: var(--fg-2); }
-  .doc p { margin: 0 0 12px; max-width: 46em; }
-  .doc ul, .doc ol { margin: 0 0 14px; padding-left: 22px; } .doc li { margin: 4px 0; }
-  .doc b, .doc strong { color: var(--fg); font-weight: 600; }
-  .doc code { font: 13px/1.4 var(--mono); background: var(--code); padding: 1px 5px; border-radius: 5px; color: var(--fg); }
-  .doc a { color: var(--fg); text-underline-offset: 3px; }
-  .tw { overflow-x: auto; margin: 10px 0 22px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel); }
-  .doc table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  .doc th, .doc td { text-align: left; padding: 10px 14px; vertical-align: top; border-top: 1px solid var(--line); line-height: 1.5; color: var(--fg-2); }
-  .doc th { color: var(--fg-3); font: 500 12px var(--mono); letter-spacing: .05em; text-transform: uppercase; border-top: 0; background: var(--raised); }
-  .doc td:first-child { color: var(--fg); font-weight: 500; white-space: nowrap; }
-  .toc { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 32px; padding: 16px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); margin: 28px 0 0; }
-  .toc a { display: flex; gap: 10px; padding: 6px 0; font-size: 14px; color: var(--fg-2); text-decoration: none; }
-  .toc a:hover { color: var(--fg); }
-  .toc a span { font: 12px var(--mono); color: var(--fg-3); width: 20px; padding-top: 2px; }
-  .links { display: flex; gap: 8px; flex-wrap: wrap; }
-  .links a { text-decoration: none; }
-  .fig { margin: 18px 0 8px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: var(--raised); }
-  .fig img { display: block; width: 100%; height: auto; }
-  .cap { font-size: 13px; color: var(--fg-3); margin: 0 0 20px; }
-  .tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font: 500 12px var(--mono); white-space: nowrap; background: var(--accent-soft); color: var(--fg); }
-  .tag.ok { color: var(--ok); background: var(--diff-add); } .tag.warn { color: var(--warn); background: var(--warn-soft); } .tag.bad { color: var(--danger); background: var(--diff-del); }
-  .call { border: 1px solid var(--line); border-left: 3px solid var(--fg); border-radius: 0 14px 14px 0; background: var(--panel); padding: 14px 18px; margin: 16px 0; }
-  .call p:last-child { margin: 0; }
   .short { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
   .short li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); margin: 0; }
   .short li svg { width: 18px; height: 18px; color: var(--fg); margin-top: 3px; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 18px 0; }
-  .stat { padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
-  .stat b { display: block; font: 600 24px var(--sans); letter-spacing: -.02em; color: var(--fg); }
-  .stat span { font-size: 13px; color: var(--fg-3); }
   .gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin: 18px 0; }
   .gal a { display: block; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel); text-decoration: none; transition: transform var(--dur-small) var(--ease), border-color var(--dur-small) var(--ease); }
   .gal a:hover { transform: translateY(-2px); border-color: var(--line-strong); }
@@ -79,7 +39,6 @@
   .dec .card { padding: 14px 16px; border-radius: 14px; }
   .dec .card h4 { margin: 0 0 4px; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .dec .card p { margin: 0; font-size: 14px; }
-  .foot { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--fg-3); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .prog { margin: 32px 0 0; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); overflow: hidden; }
   .prog-h { display: flex; align-items: center; gap: 12px; padding: 16px 18px 12px; flex-wrap: wrap; }
   .prog-h h2 { all: unset; font-size: 17px; font-weight: 600; color: var(--fg); }
@@ -115,21 +74,15 @@
   .prog-log li time { font: 12px var(--mono); color: var(--fg-3); }
   @media (max-width: 700px) { .prog-rel > summary { grid-template-columns: 44px 1fr 56px 18px; } .prog-rel .c { display: none; } .prog-tasks { padding-left: 18px; } .prog-tasks li { grid-template-columns: 1fr; gap: 2px; } }
   @media (max-width: 700px) {
-    .doc h1 { font-size: 34px; } .doc-top .links a { display: none; } .toc { grid-template-columns: 1fr; } .stats { grid-template-columns: 1fr 1fr; } .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
     .rel > summary { grid-template-columns: 52px 1fr auto; } .rel .bd { padding-left: 18px; }
-    .doc td:first-child { white-space: normal; }
   }
 </style>
 </head><body>
 <!-- Blueprint plan page. Replace every sample sentence (the "Pantry" app) with your project's own,
      keep the section order unless the plan needs a different one, and number the h2s to match the TOC.
      The mockups markers wrap what links to the screens; new-site.mjs --no-mockups removes those parts. -->
+<header class="site-bar"></header>
 <article class="doc">
-  <div class="doc-top"><span id="logo"></span><b id="brand"></b><span class="sp"></span>
-    <div class="links"><!-- mockups --><a class="btn sm" href="mockups/index.html"><i data-lucide="layout-template"></i>Screens</a><!-- /mockups --><a class="btn sm" href="matrix.html"><i data-lucide="table-2"></i>Feature matrix</a>
-    <button class="icon-btn" id="theme" aria-label="Switch theme" data-tip="Switch theme"><i data-lucide="sun-moon"></i></button></div>
-  </div>
-
   <p class="eyebrow">Plan · 1 March 2027 · from 2.3</p>
   <h1>Shared lists that work offline</h1>
   <p class="lede">Pantry lists sync only while you have signal, so the shop is where they break. This plan makes every list work offline on the phone, merges edits when you're back, and adds recipes that fill a list for you.</p>
@@ -142,6 +95,9 @@
     <div id="pgRels"></div>
     <div class="prog-log"><h3>Activity</h3><ol id="pgLog"></ol></div>
   </section>
+
+  <h2 class="pages-h" id="pages">Pages in this plan</h2>
+  <div data-page-cards></div>
 
   <nav class="toc" aria-label="Contents">
     <a href="#short"><span>01</span>Short version</a>
@@ -213,12 +169,9 @@
 
 <script>
 (() => {
-  K.$('#logo').innerHTML = K.logo(22);
-  K.$('#brand').textContent = BRAND.name;
   K.$('#footBrand').textContent = `${BRAND.name} plan`;
   document.title = `${BRAND.name} plan`;
   const stills = (t) => K.$$('img[data-still]').forEach((i) => (i.src = `shots/${i.dataset.still}-${t === 'dark' ? 'dd' : 'd'}.webp`));
-  K.$('#theme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; K.setTheme(t); stills(t); };
   document.addEventListener('bp:theme', (e) => stills(e.detail));
 
   /* mockups */

@@ -53,10 +53,11 @@ inyon skill add inyon
 
 ## Blueprint
 
-Blueprint turns a plan into a small website instead of a long chat message. Ask your agent for "a plan page", "an HTML plan" or "mockups of the redesign" and it builds a folder with four parts:
+Blueprint turns a plan into a small website instead of a long chat message. Ask your agent for "a plan page", "an HTML plan" or "mockups of the redesign" and it builds a folder with these parts:
 
 - **The plan:** the written plan, with a live "Where it stands" board on top and releases you can open one by one.
 - **Screens:** clickable mockups in a viewer that switches between phone and desktop sizes and light and dark. Right-click, long-press, menus, sheets and toasts work.
+- **Pages:** from 0.25.4, one page per topic the plan only summarises, such as research on one subject, a release in depth, a build guide or a shopping list. Every page has the same bar at the top: the product's name takes you home, **Back** goes to the page above, the other pages sit in the bar (on a phone, under **Pages**), and each page ends with links to the previous and next one. The plan shows a card for each page.
 - **Feature matrix:** one row per feature, with what exists today, its status and the release that brings it, plus search and filters. From 0.22 its statuses, words and columns come from the site's data, so the same page fits a parts list or a task list, and a row can link out.
 - **Progress board:** read from `progress.json`, which the agent updates while it works. The page checks it every 20 seconds.
 
@@ -67,6 +68,8 @@ The skill starts from a working sample site for a made-up grocery app, then repl
 | Script | What it does |
 |---|---|
 | `new-site.mjs <dir> --name "App"` | Copies the template into a new folder and marks it with `.inyon-page.json`. From 0.22 `--no-mockups` leaves out the screens and every link to them, for a plan with no UI. Inside a git repository the folder can be left out: it's then `private/plans/<slug>` in the repository's main folder, also from a worktree |
+| `add-page.mjs <dir> <id> --title "Title"` | From 0.25.4, adds a page and lists it in the site's `site.js`, so the bar and the plan's cards reach it. `--group` puts it in a menu with related pages. `--adopt` gives a site made before 0.25.4 the same bar: it lists the pages it finds and puts the bar on each one that uses the kit |
+| `check-site.mjs <dir>` | From 0.25.4, checks that every page is listed and has the bar, so none is a dead end |
 | `publish.mjs <dir> --name "Plan"` | Puts the site under [Blueprints](pages.md) on a computer with Inyon set up but no `inyon` command on the path. When an agent's sandbox can't write to `~/.inyon`, it prints a line for you to run in your own terminal: the `inyon` command by its full path, or the same `publish.mjs` line when the command isn't installed |
 | `serve.mjs <dir> --host <ip> --port 8790` | Serves the site with the same sandbox Inyon puts around a page, so a site that works here works in the app. Use a private address, such as a VPN or home network IP, to open it on your phone |
 | `stills.mjs <dir> --audit` | Saves gallery pictures of every screen and reports errors and dead buttons |

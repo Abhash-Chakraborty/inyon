@@ -1,7 +1,7 @@
 // node new-site.mjs [dir] --name "Product" [--slug product] [--no-mockups] [--force]
 // Copies the Blueprint site template into <dir>, sets the product name and writes .inyon-page.json, the
-// marker Inyon reads. Then replace the sample "Pantry" content: kit/data.js, mockups/screens.js, the
-// screens, matrix-data.js, progress.json, index.html.
+// marker Inyon reads. Then replace the sample "Pantry" content: kit/data.js, site.js, mockups/screens.js,
+// the screens, matrix-data.js, progress.json, index.html and offline.html (a sample detail page).
 // In a git repo, <dir> defaults to <repo>/private/plans/<slug>, the usual home for a plan. In a linked
 // worktree that is the repo's main checkout, so the plan isn't deleted with the worktree.
 // --no-mockups leaves out the screens (mockups/, kit/shell.js, kit/menus.js) and every link to them,
@@ -49,6 +49,7 @@ if (!mockups) {
     s = s.replace(/(<nav class="toc"[\s\S]*?<\/nav>)/, (nav) => nav.replace(/<span>\d+<\/span>/g, () => `<span>${String(++t).padStart(2, '0')}</span>`));
     return s.replace(/<span class="n">\d+<\/span>/g, () => `<span class="n">${String(++h).padStart(2, '0')}</span>`);
   });
+  edit('site.js', (s) => s.replace(/^[ \t]*\/\* mockups \*\/[\s\S]*?\/\* \/mockups \*\/[ \t]*\n/gm, ''));
   appendFileSync(join(out, 'matrix-data.js'), '// Made with --no-mockups: the site has no mockups folder, so rows link to no screens.\nwindow.MATRIX_MOCKUPS = false;\n');
 }
 writeMarker(out, { slug, name: name || basename(out) });
