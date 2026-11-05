@@ -153,6 +153,11 @@ fn Connected(auth: Signal<Auth>) -> Element {
         state::reset_feed();
         pages::PAGES.write().pages = None;
         organize::reset();
+        if hub.peek().stale {
+            if let Some(org) = crate::snapshot::organize() {
+                organize::kept(org);
+            }
+        }
         let (outbox, inbox) = socket::channel();
         let out = outbox.clone();
         // a first connection that neither opens nor fails for a while says it's reconnecting
@@ -224,6 +229,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 Incoming::Frame(f) if f.stream() == Some(ORGANIZE) => {
                     let (org, resync) = state::with_feed(|feed| feed.organize(&f));
                     if let Some(org) = org {
+                        crate::snapshot::save_organize(org.clone());
                         organize::set(org);
                     }
                     if let Some(m) = resync {

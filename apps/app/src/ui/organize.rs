@@ -35,6 +35,12 @@ pub fn set(org: Organize) {
     *ORG.write() = Org { org, loaded: true };
 }
 
+/// How sessions were organised as this browser last saw it: they take their places at once, and
+/// the actions wait for the hub's own copy.
+pub fn kept(org: Organize) {
+    *ORG.write() = Org { org, loaded: false };
+}
+
 /// A change to one session or several, or a sheet that asks for one.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrgOp {

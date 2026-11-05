@@ -4,10 +4,12 @@
 //! action still goes to the hub, and the next message from it wins.
 
 use inyon_chat_core::chat_list::ChatSnapshot;
-use inyon_protocol::HostState;
+use inyon_protocol::{HostState, Organize};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub const OVERVIEW_KEY: &str = "inyon.overview.v1";
+/// each hub's pins, parking, tags and notes, by where it came from (`main` for this hub)
+pub const ORGANIZE_KEY: &str = "inyon.organize.v1";
 pub const CHAT_PREFIX: &str = "inyon.chat.v1.";
 pub const CHAT_INDEX: &str = "inyon.chats.v1";
 /// older than this and the picture is more misleading than helpful
@@ -57,6 +59,7 @@ pub fn chat_index(saved: Option<&str>, key: &str) -> (Vec<String>, Vec<String>) 
 /// What waits to be written.
 pub enum Kept {
     Overview(Vec<HostState>),
+    Organize(Box<Organize>),
     Chat(Box<ChatSnapshot>),
 }
 
@@ -102,6 +105,16 @@ mod imp {
             Kept::Overview(hosts) => {
                 write(key, &hosts);
             }
+            // one that can't be kept takes the old one with it, so a later launch doesn't draw
+            // out-of-date pins as if they were current
+            Kept::Organize(org) => {
+                let by: std::collections::BTreeMap<&str, &Organize> = [("main", &*org)].into();
+                if !write(key, &by) {
+                    if let Some(s) = storage() {
+                        let _ = s.remove_item(key);
+                    }
+                }
+            }
             // only the last few chats stay; the rest load from the hub as before. One that couldn't
             // be kept takes no other's place.
             Kept::Chat(chat) if write(key, &chat) => {
@@ -146,6 +159,14 @@ mod imp {
         later(OVERVIEW_KEY.into(), OVERVIEW_MS, Kept::Overview(hosts));
     }
 
+    pub fn organize() -> Option<Organize> {
+        read::<std::collections::BTreeMap<String, Organize>>(ORGANIZE_KEY)?.remove("main")
+    }
+
+    pub fn save_organize(org: Organize) {
+        later(ORGANIZE_KEY.into(), OVERVIEW_MS, Kept::Organize(Box::new(org)));
+    }
+
     pub fn chat(key: &str) -> Option<ChatSnapshot> {
         read(&format!("{CHAT_PREFIX}{key}"))
     }
@@ -169,7 +190,7 @@ mod imp {
         let Some(s) = storage() else { return };
         let n = s.length().unwrap_or(0);
         let chats: Vec<String> = (0..n).filter_map(|i| s.key(i).ok().flatten()).filter(|k| k.starts_with(CHAT_PREFIX)).collect();
-        for k in chats.iter().map(String::as_str).chain([CHAT_INDEX, OVERVIEW_KEY, "inyon.organize.v1"]) {
+        for k in chats.iter().map(String::as_str).chain([CHAT_INDEX, OVERVIEW_KEY, ORGANIZE_KEY]) {
             let _ = s.remove_item(k);
         }
         let _ = s.set_item(SIGNED_OUT, &js_sys::Date::now().to_string());
@@ -210,6 +231,10 @@ mod imp {
         None
     }
     pub fn save_overview(_hosts: Vec<HostState>) {}
+    pub fn organize() -> Option<Organize> {
+        None
+    }
+    pub fn save_organize(_org: Organize) {}
     pub fn chat(_key: &str) -> Option<ChatSnapshot> {
         None
     }

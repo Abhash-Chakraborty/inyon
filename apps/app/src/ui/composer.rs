@@ -321,9 +321,7 @@ pub fn Composer(
         move |e: FormEvent| set_text(e.value())
     };
 
-    // pastes, dropped files and typing with nothing focused, from anywhere on the page. The
-    // page's listener decides at once whether the app takes the event (so the browser's own
-    // handling can be stopped), and this task, inside the app, does the rest.
+    // the edit that waited for the socket goes out once the box can send
     {
         let (unsent, push_draft) = (unsent.clone(), push_draft.clone());
         use_effect(use_reactive!(|disabled| {
@@ -334,6 +332,9 @@ pub fn Composer(
             }
         }));
     }
+    // pastes, dropped files and typing with nothing focused, from anywhere on the page. The
+    // page's listener decides at once whether the app takes the event (so the browser's own
+    // handling can be stopped), and this task, inside the app, does the rest.
     let live = use_hook(|| Rc::new(RefCell::new((host.clone(), pane.clone()))));
     *live.borrow_mut() = (host.clone(), pane.clone());
     let listener = use_hook(|| {

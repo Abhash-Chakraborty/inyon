@@ -161,7 +161,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         all_tools: settings.tool_detail != ToolDetail::Compact,
     };
     // the pane's machine, or the machine by its id while the pane isn't listed
-    let machine_up = r.map(|r| &r.host).or(h.hosts.iter().find(|x| x.config.id == host)).is_none_or(|m| m.status == inyon_protocol::HostStatus::Online);
+    let machine_up = r.map(|r| r.host).or(h.hosts.iter().find(|x| x.config.id == host)).is_none_or(|m| m.status == inyon_protocol::HostStatus::Online);
     let connected = h.connected && machine_up;
     // what the chat says about it: nothing while the first connection is still opening
     let offline = h.offline() || !machine_up;

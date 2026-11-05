@@ -49,6 +49,8 @@ export const state = {
   subDelay: 0,
   /** while set, every sub waits for it: the hub hasn't answered yet */
   gate: undefined as undefined | Promise<void>,
+  /** the sessions' marks the organize stream sends (pins, parking, tags, notes) */
+  marks: [] as Item[],
   /** the sign-in check fails, as when the hub doesn't answer */
   sessionFail: false,
   /** sockets are refused, as when the hub is out of reach */
@@ -75,6 +77,7 @@ export function dropSockets() {
 
 function snapshot(stream: string) {
   if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { hosts: overview().hosts } }
+  if (stream === 'organize') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { sessions: state.marks, projects: [], groups: [], spaces: [] } }
   const c = streams.get(stream)
   if (!c) return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { items: [] }, state: { loaded: true, hasMore: false } }
   return { t: 'snapshot', stream, epoch: EPOCH, seq: c.seq, rows: { items: c.items, live: [], queue: [] }, state: c.state }
@@ -230,7 +233,7 @@ const server = Bun.serve({
       if (msg.t === 'sub') {
         ws.data.subs.add(msg.stream)
         const c = streams.get(msg.stream)
-        const seq = msg.stream === 'overview' ? 1 : (c?.seq ?? 1)
+        const seq = msg.stream === 'overview' || msg.stream === 'organize' ? 1 : (c?.seq ?? 1)
         if (msg.at?.epoch === EPOCH && msg.at.seq === seq) ws.send(JSON.stringify({ t: 'delta', stream: msg.stream, epoch: EPOCH, from: seq, seq }))
         else ws.send(JSON.stringify(snapshot(msg.stream)))
       }

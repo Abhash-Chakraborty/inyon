@@ -53,6 +53,7 @@ for (const [w, h] of SIZES)
     const { ctx, page } = await open(browser, w, h, scheme)
     await watchReconnecting(ctx)
     try {
+      state.marks = [{ id: 's-1', host: 'local', pane: '%11', live: true, seen: Date.now(), note: 'Check the coupon path before merging' }]
       // ---- the first visit: nothing kept yet, so the sign-in check shows the Overview's shape ----
       state.sessionDelay = 1500
       await page.goto(`${base}/next/`)
@@ -61,11 +62,13 @@ for (const [w, h] of SIZES)
       check((await page.locator('.opening .skeleton').count()) === 4, `${tag} first visit: four card shapes`)
       await page.screenshot({ path: path.join(shots, `reload-opening-${tag}.png`) })
       state.sessionDelay = 0
-      await page.getByText('Fix flaky checkout test').first().waitFor()
+      await page.getByText('Fix flaky checkout test').filter({ visible: true }).first().waitFor()
       check(!(await opening.count()), `${tag} first visit: the shape gives way to the Overview`)
       check(await until(async () => !!(await kept(page, 'inyon.overview.v1'))), `${tag} first visit: the overview is kept in the browser`)
       const ov = JSON.parse((await kept(page, 'inyon.overview.v1'))!)
       check(typeof ov.at === 'number' && Array.isArray(ov.data) && ov.data.some((h: { config: { name: string } }) => h.config.name === 'studio'), `${tag} first visit: kept as the web app keeps it ({at, data})`)
+      check(await until(async () => /coupon path/.test((await kept(page, 'inyon.organize.v1')) ?? '')), `${tag} first visit: how sessions are organised is kept too`)
+      check(JSON.parse((await kept(page, 'inyon.organize.v1'))!).data.main.sessions.length === 1, `${tag} first visit: organize kept by hub, as the web app keeps it`)
 
       // ---- links stay inside the app ----
       await page.evaluate(() => ((window as unknown as { stay?: number }).stay = 1))
@@ -139,15 +142,16 @@ for (const [w, h] of SIZES)
       // ---- the Overview from the kept copy: no answering a question that may be long gone ----
       const let_go3 = hold()
       await page.goto(`${base}/next/`)
-      await page.getByText('Migrate auth to passkeys').first().waitFor()
+      await page.getByText('Migrate auth to passkeys').filter({ visible: true }).first().waitFor()
       check(!(await page.locator('.answers').count()), `${tag} kept overview: no answer buttons until the hub answers`)
+      check(await page.locator('a.card-link[href="/next/m/local/p/11"]').locator('xpath=..').locator('[title="Check the coupon path before merging"]').isVisible(), `${tag} kept overview: the session's note from the kept copy`)
       let_go3()
       check(await page.locator('.answers').first().waitFor({ timeout: 5000 }).then(() => true, () => false), `${tag} kept overview: answer buttons once it has`)
 
       // ---- a sign-in check that fails keeps what was drawn ----
       state.sessionFail = true
       await page.reload()
-      await page.getByText('Migrate auth to passkeys').first().waitFor()
+      await page.getByText('Migrate auth to passkeys').filter({ visible: true }).first().waitFor()
       await page.waitForTimeout(1200)
       check(!(await page.getByLabel('Password', { exact: true }).count()), `${tag} check fails: the kept app stays, not the sign-in form`)
       state.sessionFail = false
@@ -168,7 +172,7 @@ for (const [w, h] of SIZES)
       state.authed = false
       await page.goto(`${base}/next/`)
       check(await page.getByLabel('Password', { exact: true }).waitFor({ timeout: 8000 }).then(() => true, () => false), `${tag} signed out: the sign-in form`)
-      check(await until(async () => !(await kept(page, 'inyon.overview.v1')) && !(await kept(page, 'inyon.chat.v1.local:%11')) && !(await kept(page, 'inyon.chats.v1'))), `${tag} signed out: the kept copies are gone`)
+      check(await until(async () => !(await kept(page, 'inyon.overview.v1')) && !(await kept(page, 'inyon.organize.v1')) && !(await kept(page, 'inyon.chat.v1.local:%11')) && !(await kept(page, 'inyon.chats.v1'))), `${tag} signed out: the kept copies are gone`)
       // the socket tried before the check answered, as the web app's does; the browser logs its refusal
       for (let i = errors.length - 1; i >= 0; i--) if (/HTTP Authentication failed/.test(errors[i]!)) errors.splice(i, 1)
     } catch (e) {
@@ -176,6 +180,7 @@ for (const [w, h] of SIZES)
       await page.screenshot({ path: path.join(shots, `reload-failed-${tag}.png`) }).catch(() => {})
     } finally {
       state.authed = true
+      state.marks = []
       state.sessionFail = false
       state.sessionDelay = 0
       state.refuseWs = false
