@@ -282,8 +282,12 @@ pub fn menu(op: MenuOp) {
             }
             MenuOp::Paste => {
                 dioxus::prelude::spawn(async move {
-                    if let Some(t) = crate::dom::paste().await.filter(|t| !t.is_empty()) {
-                        x.paste(&t);
+                    use crate::ui::toast::{toast, ToastTone};
+                    match crate::dom::paste().await {
+                        Ok(t) if !t.is_empty() => x.paste(&t),
+                        Ok(_) => toast("Nothing to paste", Some("Copy some text first, then tap Paste.".into()), ToastTone::Info),
+                        // no clipboard over plain HTTP, or the browser said no
+                        Err(()) => toast("Couldn't read the clipboard", Some("Long-press in the terminal and paste from the keyboard instead.".into()), ToastTone::Error),
                     }
                     x.focus();
                 });

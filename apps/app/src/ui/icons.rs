@@ -108,6 +108,9 @@ pub enum Icon {
     SquareCheck,
     Eye,
     Link2,
+    // the message box's Attach files and Take a photo
+    Paperclip,
+    Camera,
 }
 
 #[component]
@@ -392,6 +395,13 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                 Icon::ArrowLeft => rsx! {
                     path { d: "m12 19-7-7 7-7" }
                     path { d: "M19 12H5" }
+                },
+                Icon::Paperclip => rsx! {
+                    path { d: "m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" }
+                },
+                Icon::Camera => rsx! {
+                    path { d: "M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z" }
+                    circle { cx: "12", cy: "13", r: "3" }
                 },
                 Icon::RotateCw => rsx! {
                     path { d: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" }

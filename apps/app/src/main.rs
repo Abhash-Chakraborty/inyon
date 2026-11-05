@@ -10,9 +10,12 @@ mod android;
 // it), so elsewhere some goes unused until the desktop transport lands
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod api;
+mod attach;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod connect;
 mod dom;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod files;
 mod format;
 mod list;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -48,9 +51,15 @@ mod upgrade;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod term;
 mod ui;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod upload;
 
 #[cfg(not(target_os = "android"))]
 fn main() {
+    // a panic stops the whole page (wasm aborts); say where in the console, or a broken screen
+    // leaves nothing to go on
+    #[cfg(target_arch = "wasm32")]
+    std::panic::set_hook(Box::new(|info| web_sys::console::error_1(&format!("Inyon stopped: {info}").into())));
     platform::follow_theme();
     dioxus::launch(ui::App);
 }

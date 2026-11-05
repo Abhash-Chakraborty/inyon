@@ -28,7 +28,7 @@ mod intro;
 mod temp;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod terminal;
-mod toast;
+pub mod toast;
 
 use dioxus::prelude::*;
 use inyon_protocol::v2::{OVERVIEW, PAGES};
