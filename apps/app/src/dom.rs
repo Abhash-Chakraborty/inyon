@@ -373,6 +373,99 @@ mod imp {
         RESIZE.with(|r| r.borrow_mut().push(Box::new(f)));
     }
 
+    /// A Mac, by the browser: ⌘ rather than Ctrl in the shortcuts.
+    pub fn mac() -> bool {
+        user_agent().contains("Macintosh")
+    }
+
+    /// Whether `el` takes typing: a text box, a select, editable text or the terminal.
+    fn typing_in(el: Option<web_sys::Element>) -> bool {
+        let Some(el) = el else { return false };
+        let tag = el.tag_name();
+        matches!(tag.as_str(), "INPUT" | "TEXTAREA" | "SELECT")
+            || el.dyn_ref::<web_sys::HtmlElement>().is_some_and(|h| h.is_content_editable())
+            || el.closest(".xterm").ok().flatten().is_some()
+    }
+
+    fn in_terminal(el: Option<&web_sys::Element>) -> bool {
+        el.is_some_and(|el| el.closest(".xterm").ok().flatten().is_some())
+    }
+
+    /// The app-wide keys (lib/keys.ts in the classic app). `f` gets "p", "shift+p", "o" or "k" for
+    /// Ctrl (⌘ on a Mac) with that key, "new" for Alt N (⌥N), "escape" for Esc, and says whether it
+    /// took the key.
+    /// Ctrl keys leave the terminal alone, where the shell has its own use for them; ⌘ keys work
+    /// there too. Alt N works while typing, but not in the terminal; N alone starts a session only
+    /// while nothing takes typing and no sheet is open.
+    pub fn on_shortcut(f: impl Fn(&str) -> bool + 'static) {
+        let Some(win) = web_sys::window() else { return };
+        let key = Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
+            let mac = mac();
+            let target = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+            let focused = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element());
+            let cmd = if mac { e.meta_key() } else { e.ctrl_key() };
+            let other = if mac { e.ctrl_key() } else { e.meta_key() };
+            let name = if cmd && !e.alt_key() && !other {
+                let name = match (e.key().to_lowercase().as_str(), e.shift_key()) {
+                    ("p", false) => "p",
+                    ("p", true) => "shift+p",
+                    ("o", false) => "o",
+                    ("k", false) => "k",
+                    _ => return,
+                };
+                if !mac && (in_terminal(target.as_ref()) || in_terminal(focused.as_ref())) {
+                    return;
+                }
+                name
+            } else if e.alt_key() && !e.meta_key() && !e.ctrl_key() && e.code() == "KeyN" {
+                // by `code`: on a Mac ⌥N types a dead key, not "n"
+                if in_terminal(target.as_ref()) || in_terminal(focused.as_ref()) {
+                    return;
+                }
+                "new"
+            } else if e.key() == "Escape" && !e.meta_key() && !e.ctrl_key() && !e.alt_key() && !e.shift_key() {
+                // for a layer that closes on Esc wherever the focus is
+                "escape"
+            } else if !e.meta_key() && !e.ctrl_key() && !e.alt_key() && e.key().eq_ignore_ascii_case("n") && !e.repeat() {
+                let sheet = focused.as_ref().is_some_and(|el| el.closest("[role=dialog], [role=menu]").ok().flatten().is_some());
+                if typing_in(target) || typing_in(focused) || sheet {
+                    return;
+                }
+                "new"
+            } else {
+                return;
+            };
+            if f(name) {
+                e.prevent_default();
+                e.stop_propagation();
+            }
+        });
+        let _ = win.add_event_listener_with_callback_and_bool("keydown", key.as_ref().unchecked_ref(), true);
+        key.forget();
+    }
+
+    /// A right click that nothing in the app took (`contextmenu` left without preventDefault) on
+    /// a spot that isn't text, a text box, a link or the terminal: `f` gets where it was and says
+    /// whether it opened a menu. Shift keeps the browser's own menu.
+    pub fn on_page_menu(f: impl Fn(f64, f64) -> bool + 'static) {
+        let Some(win) = web_sys::window() else { return };
+        let menu = Closure::<dyn Fn(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| {
+            if e.default_prevented() || e.shift_key() {
+                return;
+            }
+            let target = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+            let Some(el) = target else { return };
+            if typing_in(Some(el.clone())) || el.closest("a[href], [data-native-menu], iframe").ok().flatten().is_some() {
+                return;
+            }
+            if f(e.client_x() as f64, e.client_y() as f64) {
+                e.prevent_default();
+            }
+        });
+        let _ = win.add_event_listener_with_callback("contextmenu", menu.as_ref().unchecked_ref());
+        menu.forget();
+    }
+
     // ---------- Settings, notices and the intro ----------
 
     /// The page may use what browsers keep to secure origins (notifications, the service worker).
@@ -653,6 +746,11 @@ mod imp {
     pub fn post_theme(_id: &str) {}
     pub fn answer_frames() {}
     pub fn slash_focuses(_id: Option<&str>) {}
+    pub fn mac() -> bool {
+        false
+    }
+    pub fn on_shortcut(_f: impl Fn(&str) -> bool + 'static) {}
+    pub fn on_page_menu(_f: impl Fn(f64, f64) -> bool + 'static) {}
     pub fn on_wake(_f: impl Fn() + 'static) {}
     pub fn on_resize(_f: impl Fn() + 'static) {}
     pub fn secure() -> bool {

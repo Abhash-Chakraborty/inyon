@@ -169,6 +169,31 @@ pub async fn pin_order(ids: &[String]) -> Result<(), ApiError> {
     request("PUT", "/api/organize/order", Some(serde_json::json!({ "pins": ids }).to_string())).await.map(drop)
 }
 
+/// The files in a session's folder (git's list, or a shallow walk), as the hub caches them.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct FileList {
+    pub cwd: String,
+    pub files: Vec<String>,
+}
+
+pub async fn files(host: &str, pane: &str) -> Result<FileList, ApiError> {
+    parse(&request("GET", &format!("{}/files", pane_path(host, pane)), None).await?)
+}
+
+/// Saves a prompt to send again: `POST /api/organize/prompts`.
+pub async fn add_prompt(name: &str, text: &str) -> Result<inyon_protocol::SavedPrompt, ApiError> {
+    parse(&request("POST", "/api/organize/prompts", Some(serde_json::json!({ "name": name, "text": text }).to_string())).await?)
+}
+
+/// Changes a saved prompt's fields (`starred`, `name`, `text`).
+pub async fn update_prompt(id: &str, patch: &serde_json::Value) -> Result<(), ApiError> {
+    request("PATCH", &format!("/api/organize/prompts/{}", inyon_chat_core::js::encode_uri_component(id)), Some(patch.to_string())).await.map(drop)
+}
+
+pub async fn remove_prompt(id: &str) -> Result<(), ApiError> {
+    request("DELETE", &format!("/api/organize/prompts/{}", inyon_chat_core::js::encode_uri_component(id)), None).await.map(drop)
+}
+
 pub async fn rename(host: &str, pane: &str, name: &str) -> Result<(), ApiError> {
     request("PUT", &format!("{}/name", pane_path(host, pane)), Some(serde_json::to_string(&Name { name }).unwrap())).await.map(drop)
 }

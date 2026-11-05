@@ -35,7 +35,7 @@ A pinned session that you park or snooze moves to the folded section and comes b
 
 A machine on a paired hub shows that hub's pins. A hub older than 0.24 doesn't keep them, so its sessions' menus don't offer these actions.
 
-Scripts can do the same with a signed-in session or a phone's token: `GET /api/organize` returns everything the hub keeps, and `PATCH /api/hosts/<machine>/panes/<pane>/organize` with a body such as `{"pinned": true}`, `{"parked": true}`, `{"snoozedUntil": 1793000000000, "snoozeNotice": true}`, `{"tags": ["review"]}`, `{"note": "…"}` or `{"closeWhenDone": true}` changes one session (`null` clears a field). `POST /api/hosts/<machine>/panes/<pane>/sends` with `{"text": "…", "at": 1793000000000}` keeps a [message to send later](sessions.md#sending-a-message-later), `POST /api/hosts/<machine>/sends/<id>/now` sends it at once, and `DELETE /api/hosts/<machine>/sends/<id>` cancels it. `PUT /api/organize/sleep` with `{"scope": "all", "minutes": 60}` sets [sleep](settings.md#live-numbers) for every session, or with a project's id as `scope` for that project's. Saved prompts, each with a name, the text, an optional project and a star, live under `/api/organize/prompts`; the apps don't show them yet. A machine's token can't use any of these. The hub keeps it all in `~/.inyon/organize.json`.
+Scripts can do the same with a signed-in session or a phone's token: `GET /api/organize` returns everything the hub keeps, and `PATCH /api/hosts/<machine>/panes/<pane>/organize` with a body such as `{"pinned": true}`, `{"parked": true}`, `{"snoozedUntil": 1793000000000, "snoozeNotice": true}`, `{"tags": ["review"]}`, `{"note": "…"}` or `{"closeWhenDone": true}` changes one session (`null` clears a field). `POST /api/hosts/<machine>/panes/<pane>/sends` with `{"text": "…", "at": 1793000000000}` keeps a [message to send later](sessions.md#sending-a-message-later), `POST /api/hosts/<machine>/sends/<id>/now` sends it at once, and `DELETE /api/hosts/<machine>/sends/<id>` cancels it. `PUT /api/organize/sleep` with `{"scope": "all", "minutes": 60}` sets [sleep](settings.md#live-numbers) for every session, or with a project's id as `scope` for that project's. Saved prompts, each with a name, the text, an optional project and a star, live under `/api/organize/prompts`; from 1.1 the new app lists them in [Quick access](#quick-access). A machine's token can't use any of these. The hub keeps it all in `~/.inyon/organize.json`.
 
 ## In the new app
 
@@ -81,6 +81,23 @@ With text selected, **Copy** comes first. From 0.17 the browser's own menu, with
 - **The sidebar** (tablet and desktop) shows every session in a tree: machine, then tmux session, then pane. Folding a branch is remembered, and a folded branch shows a dot when something inside it needs you. With more than eight panes, a filter box appears above the tree. From 0.22 the companion agent isn't in the tree: it has its own **Companion** item under **Overview**.
 - **Two machines with the same name**, such as two servers both called `ubuntu`, would look alike. From 0.15 the one you've had longer keeps its name, and the other, if it comes through a paired hub, shows that hub's address after it.
 
+## Quick access
+
+From 1.1 the new app has **Quick access**, one box for sessions, commands, saved prompts and files. Open it with **Search or jump to…** at the top of the sidebar, the search button on a phone's overview, **Search…** in the menu on empty space, or a key:
+
+| Keys | Opens on |
+|---|---|
+| `Ctrl K` or `Ctrl P` (`⌘ K`, `⌘ P`) | **Sessions** |
+| `Ctrl Shift P` (`⌘ ⇧ P`) | **Commands** |
+| `Ctrl O` (`⌘ O`) | **Files** |
+
+- **Sessions** lists every session on every machine. Type a few letters of its title, agent, machine, folder, tags or note; they only have to come in the right order. `Enter` opens the session, `Ctrl Enter` its terminal and, in a browser, `Alt Enter` a new tab.
+- **Commands** runs what a menu would. The open session's own actions come first (**Pin**, **Snooze: 1 hour**, **Rename…** and the rest), then the selected sessions', then **New session…**, the screens, **New session on** each machine, **Select every session** and **New saved prompt…**. Type `>` to get here from another list.
+- **Saved prompts** are the ones the hub keeps. With a session open, `Enter` sends the prompt to it as a message and `Ctrl Enter` copies it; elsewhere `Enter` copies it. The last row saves what you typed as a new prompt. A prompt's menu has **Star**, which lists it first, and **Remove**, with **Undo**.
+- **Files** lists the files in each session's folder, asked of the machines as the list opens; type `@` to get here. `Enter` copies the file's full path and `Ctrl Enter` opens its session.
+
+`Tab` and `Shift Tab` move between the lists, and `Ctrl 1` to `Ctrl 4` pick one. `Ctrl K` opens the highlighted row's menu, and so do a right click and the row's **⋯**. `Esc` closes the box. On a phone it takes the whole screen. In the terminal the `Ctrl` keys stay with the shell; `⌘` keys on a Mac still work there.
+
 ## Titles
 
 A session's title is, in order: the name you gave it, the agent's own title for the conversation, or the agent's name. Rename a session from its header; see [Sessions](sessions.md#renaming).
@@ -96,6 +113,8 @@ Tap **+** (or press `Alt N`, `⌥ N` on a Mac) for a new session:
 5. Choose whether to start a new tmux session or a new window in an existing one, and its name.
 
 **Start** opens the new session. If no machine is online, **+** offers to add one instead.
+
+From 1.1 the new app has the same ways in: **New session** in the sidebar, **+** in the middle of a phone's tab bar, `Alt N` (`⌥ N`), `N` when you aren't typing, and **New session…** in the menu on empty space. With no machine online they open **Add a machine**.
 
 ## Blueprints
 

@@ -17,6 +17,7 @@ mod overview;
 mod pages;
 mod phone;
 mod prompt;
+mod quick;
 mod rows;
 mod session;
 mod session_menu;

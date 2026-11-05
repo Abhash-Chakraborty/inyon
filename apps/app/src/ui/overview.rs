@@ -83,6 +83,13 @@ pub fn Overview() -> Element {
                             button { class: "help-link", r#type: "button", onclick: move |_| super::connect::open_connect_help(None), "Can't connect?" }
                         }
                     }
+                    button {
+                        class: "topbar-quick icon-button icon-button-lg press phone-only",
+                        r#type: "button",
+                        "aria-label": "Search",
+                        onclick: move |_| super::quick::open_fresh(crate::quick::Tab::Sessions),
+                        Glyph { icon: Icon::Search, size: 18 }
+                    }
                 }
             }
             div { class: "content",

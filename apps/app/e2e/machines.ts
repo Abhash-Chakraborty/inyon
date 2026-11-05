@@ -442,7 +442,7 @@ try {
     await sign.getByRole('button', { name: 'Done' }).click()
 
     // New session, with one of your own agents
-    await page.getByRole('button', { name: 'New session' }).click()
+    await page.getByRole('button', { name: 'New session', exact: true }).click()
     const ns = page.getByRole('dialog', { name: 'New session' })
     await ns.getByRole('radio', { name: /Reviewer/ }).click()
     check(await ns.getByRole('button', { name: 'Start Reviewer' }).isVisible(), 'new session: the button names the agent')

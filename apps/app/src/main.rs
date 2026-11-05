@@ -23,6 +23,7 @@ mod machines;
 mod markdown;
 mod model;
 mod organize;
+mod quick;
 // the Android side drives these; the host build only tests them
 #[cfg(feature = "phone")]
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
