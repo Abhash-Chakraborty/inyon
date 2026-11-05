@@ -65,6 +65,15 @@ pub fn haptic(kind: Haptic) {
     });
 }
 
+/// Takes a session's notification away (the browser's, or the phone's shade): the session is on
+/// screen.
+pub fn clear_notice(host: &str, pane: &str) {
+    let tag = inyon_chat_core::store::notify_tag(host, Some(pane));
+    dom::close_notice(&tag);
+    #[cfg(target_os = "android")]
+    crate::android::clear_notice(&tag);
+}
+
 /// A route as the notices compare it: without the base path.
 fn route_path(r: &Route) -> String {
     let href = r.href();

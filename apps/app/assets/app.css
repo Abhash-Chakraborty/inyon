@@ -273,6 +273,7 @@ input:focus-visible { outline: none; }
 .dot-waiting { background: var(--warn); }
 .dot-idle { background: var(--fg-3); }
 .dot-offline { background: color-mix(in srgb, var(--fg-3) 50%, transparent); }
+.dot-danger { background: var(--danger); }
 
 .host-dot { display: inline-block; width: 7px; height: 7px; flex-shrink: 0; border-radius: 9999px; transition: background-color var(--dur-small) var(--ease-out-soft); }
 .host-dot-online { background: var(--fg); }
@@ -553,6 +554,14 @@ input:focus-visible { outline: none; }
 .chat-loading-first { padding-top: 16px; }
 .skeleton-line { display: block; height: 14px; width: 100%; border-radius: 9999px; background: var(--raised); animation: pulse-soft 1.6s ease-in-out infinite; }
 .skeleton-short { width: 60%; }
+.chat-loading-label { margin-top: 2px; font-size: 12.5px; color: var(--fg-3); }
+/* after the list, which takes its last row's gap back */
+.chat-failure { margin-top: 20px; color: var(--fg-2); }
+.not-running { padding: 48px 8px; text-align: center; }
+.not-running-card { margin-top: 52px; padding: 20px; border-radius: 24px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--highlight); }
+.not-running-title { font-size: 15px; font-weight: 600; }
+.not-running-text { margin: 4px auto 0; max-width: 384px; font-size: 13.5px; line-height: 1.6; color: var(--fg-2); }
+.not-running-actions { margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 /* rows carry their gap below them, so a measured height includes it */
 .chat-list { margin-bottom: -20px; }
 .vrow { padding-bottom: 20px; }

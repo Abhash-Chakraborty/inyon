@@ -1,27 +1,98 @@
 //! The conversation (ChatView.tsx): a virtualized list of chat-core's rows with only the ones near
 //! the screen in the page, the message box or the agent's question under it, and ChatView's scroll
 //! rules (follow new output at the bottom, keep the row being read in place otherwise, fetch older
-//! messages before the reader reaches the top).
+//! messages before the reader reaches the top), and what it says when there's no conversation to
+//! show: nothing running, an agent read only in its terminal, a machine that's away.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use dioxus::prelude::*;
+use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use futures_util::StreamExt;
+use inyon_chat_core::overview::{pane_href, PaneView};
 use inyon_chat_core::pending::PendingStatus;
-use inyon_protocol::ClientMsg2;
+use inyon_protocol::{AgentKind, ClientMsg2, HostStatus};
 
 use super::composer::Composer;
-use super::icons::{Glyph, Icon};
+use super::icons::{AgentMark, Glyph, Icon};
 use super::prompt::PromptCard;
 use super::rows::{Ctx, RowView};
+use super::toast::{self, ToastTone};
 use super::{now, outbox};
 use crate::list::{Scroll, Window};
+use crate::route::BASE;
 use crate::socket::Outbox;
-use crate::state::{self, Chats};
-use crate::{dom, platform};
+use crate::state::{self, Chats, Hub};
+use crate::{api, dom, format, platform};
 
 const SCROLLER: &str = "chat-scroll";
 const LIST: &str = "chat-list";
+/// Away longer than this, coming back jumps to the latest message.
+const AWAY_MS: f64 = 5.0 * 60_000.0;
+/// How long a machine that isn't answering counts as reconnecting rather than offline.
+pub const RECONNECT_GRACE_MS: u32 = 15_000;
+
+thread_local! {
+    static LISTENING: Cell<bool> = const { Cell::new(false) };
+    /// the chats on screen, told how long the app was out of sight each time it comes back
+    static BACKS: RefCell<Vec<UnboundedSender<f64>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Hears the app coming back into view: how long it was out of sight, each time. A channel
+/// rather than a signal, so the chat's task wakes for it at once.
+fn listen() -> UnboundedReceiver<f64> {
+    if !LISTENING.with(|l| l.replace(true)) {
+        dom::on_wake(|| {
+            let gone = dom::away_ms();
+            // a chat that has closed drops its end
+            BACKS.with(|b| b.borrow_mut().retain(|tx| tx.unbounded_send(gone).is_ok()));
+        });
+    }
+    let (tx, rx) = unbounded();
+    BACKS.with(|b| b.borrow_mut().push(tx));
+    rx
+}
+
+/// Whether coming back after `away` ms shows the latest message rather than where you were.
+pub fn back_jumps(away: f64) -> bool {
+    away > AWAY_MS
+}
+
+/// What the line over the message box says about the connection, if anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkLine {
+    /// this page lost the hub
+    Hub,
+    /// the machine dropped a moment ago and is most likely coming back by itself
+    Machine(String),
+    /// the machine has been away a while
+    Offline(String),
+}
+
+/// `hub`: this page's link to the hub is up. `machine`: the machine's name and whether it's
+/// online, when the hub lists it. `fresh`: the chat opened, came back into view or lost the
+/// machine in the last few seconds.
+pub fn link_line(hub: bool, machine: Option<(&str, bool)>, fresh: bool) -> Option<LinkLine> {
+    match machine {
+        _ if !hub => Some(LinkLine::Hub),
+        Some((name, false)) if fresh => Some(LinkLine::Machine(name.to_string())),
+        Some((name, false)) => Some(LinkLine::Offline(name.to_string())),
+        _ => None,
+    }
+}
+
+/// The agents a pane at its shell offers to start: the ones on the machine (Claude Code when it
+/// lists none), each once.
+pub fn startable(installed: &[AgentKind]) -> Vec<AgentKind> {
+    let mut out: Vec<AgentKind> = Vec::new();
+    for k in if installed.is_empty() { &[AgentKind::Claude][..] } else { installed } {
+        if !out.contains(k) {
+            out.push(*k);
+        }
+    }
+    out
+}
 
 /// Asks the hub for the messages before the first one this chat has.
 fn load_more(chats: Signal<Chats>, key: &str, out: &Outbox) {
@@ -47,8 +118,30 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
     let key = ctx.key.clone();
     let scroll = use_hook(|| Rc::new(RefCell::new(Scroll::default())));
     let drawn = use_hook(|| Rc::new(Cell::new(Window { start: 0, end: 0, before: 0, after: 0 })));
+    let hub = use_context::<Signal<Hub>>();
     let mut layout = use_signal(|| 0u64);
     let mut away = use_signal(|| false);
+    // the chat opened, came back into view or lost its machine a moment ago: a machine that isn't
+    // answering is most likely on its way back, so the chat says it's reconnecting before it calls
+    // it offline
+    let mut fresh = use_signal(|| true);
+    let grace = use_hook(|| Rc::new(Cell::new(0u64)));
+    let restart = {
+        let grace = grace.clone();
+        move || {
+            let g = grace.get() + 1;
+            grace.set(g);
+            fresh.set(true);
+            let grace = grace.clone();
+            spawn(async move {
+                platform::sleep(RECONNECT_GRACE_MS).await;
+                if grace.get() == g {
+                    fresh.set(false);
+                }
+            });
+        }
+    };
+    let backs = use_hook(|| Rc::new(RefCell::new(Some(listen()))));
 
     // after each change: scroll to the bottom while following, else keep the row being read where
     // it was; and draw the rows that brings into view
@@ -75,6 +168,30 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
             settle();
         });
     }
+    // open, or back from somewhere else: this session's notification is read; back after a while
+    // (the phone in a pocket, another tab), the latest shows rather than where you left off
+    {
+        let (settle, scroll, restart) = (settle.clone(), scroll.clone(), restart.clone());
+        let (host, pane) = (ctx.host.clone(), ctx.pane.clone());
+        use_future(move || {
+            let (host, pane, scroll, backs) = (host.clone(), pane.clone(), scroll.clone(), backs.clone());
+            let (mut settle, mut restart) = (settle.clone(), restart.clone());
+            async move {
+                let Some(mut rx) = backs.borrow_mut().take() else { return };
+                super::notices::clear_notice(&host, &pane);
+                restart();
+                while let Some(gone) = rx.next().await {
+                    super::notices::clear_notice(&host, &pane);
+                    restart();
+                    if back_jumps(gone) {
+                        scroll.borrow_mut().follow();
+                        away.set(false);
+                        settle();
+                    }
+                }
+            }
+        });
+    }
     // a send that never landed says so after ten minutes; the web app checks every five seconds
     {
         let key = key.clone();
@@ -91,6 +208,48 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                 }
             }
         });
+    }
+
+    let (hub_up, machine) = {
+        let h = hub.read();
+        let m = h.hosts.iter().find(|m| m.config.id == ctx.host);
+        let pane = m.and_then(|m| m.sessions.iter().flat_map(|s| &s.windows).flat_map(|w| &w.panes).find(|p| p.id == ctx.pane));
+        let machine = m.map(|m| Machine {
+            name: m.config.name.clone(),
+            online: m.status == HostStatus::Online,
+            agents: m.agents.clone(),
+            running: pane.is_some_and(|p| p.agent.is_some()),
+            failure: pane.and_then(|p| p.agent.as_ref()?.failure.as_ref()).map(|f| format::failure_text(f, platform::clock())),
+        });
+        (h.connected, machine)
+    };
+    let online = machine.as_ref().is_none_or(|m| m.online);
+    {
+        let mut restart = restart.clone();
+        use_effect(use_reactive!(|online| {
+            if !online {
+                restart();
+            }
+        }));
+    }
+    // messages that failed only because the connection dropped go out by themselves once it's
+    // back, once: a failure that only looks like a dropped connection would otherwise resend on
+    // every reconnect
+    {
+        let (key, host, pane) = (key.clone(), ctx.host.clone(), ctx.pane.clone());
+        use_effect(use_reactive!(|connected| {
+            if !connected {
+                return;
+            }
+            let waiting: Vec<(String, String)> = chats
+                .peek()
+                .get(&key)
+                .map(|e| e.chat.pending.iter().filter(|p| p.status == PendingStatus::Failed && p.retryable && !p.remote).map(|p| (p.id.clone(), p.text.clone())).collect())
+                .unwrap_or_default();
+            for (id, text) in waiting {
+                super::composer::retry(chats, host.clone(), pane.clone(), id, text);
+            }
+        }));
     }
 
     let on_scroll = {
@@ -120,15 +279,42 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
         move |up: bool| scroll.borrow_mut().input(platform::clock().now, up)
     };
 
+    let terminal_href = format!("{BASE}{}", pane_href(&ctx.host, &ctx.pane, (super::session::home_view(ctx.agent) != PaneView::Terminal).then_some(PaneView::Terminal)));
+    // an agent Inyon doesn't read as chat has no conversation for the hub to load
+    let chat_capable = ctx.agent.is_none_or(|k| k.def().chat);
     let c = chats.read();
     let _ = layout();
-    let Some(e) = c.get(&key) else { return rsx! { Loading {} } };
+    let Some(e) = c.get(&key).filter(|_| chat_capable) else {
+        return rsx! {
+            div { class: "chat",
+                div { class: "chat-scroll",
+                    div { class: "chat-column",
+                        if !chat_capable {
+                            TerminalFirst { ctx: ctx.clone(), machine: machine.clone(), terminal_href }
+                        } else {
+                            Loading { done: None }
+                        }
+                    }
+                }
+            }
+        };
+    };
     let chat = &e.chat;
     let prompt = chat.screen.as_ref().and_then(|s| s.prompt.clone());
     let working = chat.screen.as_ref().is_some_and(|s| s.working);
     // Claude Code's panel for a background shell, open over its input box in the terminal
     let panel = chat.screen.as_ref().and_then(|s| s.dialog.clone()).filter(|_| ctx.agent == Some(inyon_protocol::AgentKind::Claude));
     let running = chat.info.as_ref().is_none_or(|i| i.running);
+    let catching_up = chat.catching_up;
+    let session_id = chat.info.as_ref().and_then(|i| i.session_id.clone());
+    // a question asked before the connection dropped (opened from its alert, say) keeps its
+    // buttons, held until the machine is back and its own screen takes over
+    let shown_prompt = prompt.clone().or_else(|| if connected { None } else { crate::asks::last(&ctx.host, &ctx.pane) });
+    let background = chat.screen.as_ref().is_some_and(|s| s.background.as_ref().is_some_and(|b| b.as_ref().is_some_and(|t| !t.is_empty())));
+    // why the last turn stopped, when it ended on an error (a rate limit, signed out)
+    let failure = machine.as_ref().and_then(|m| m.failure.clone()).filter(|_| !working && prompt.is_none() && !background);
+    let link = link_line(hub_up, machine.as_ref().map(|m| (m.name.as_str(), m.online)), fresh());
+    let installed = machine.as_ref().map(|m| m.agents.clone()).unwrap_or_default();
     let rows = chat.rows();
     let w = scroll.borrow().window(&e.list);
     drawn.set(w);
@@ -185,12 +371,9 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                 onkeydown: move |ev: KeyboardEvent| key_in(matches!(ev.key(), Key::PageUp | Key::ArrowUp | Key::Home)),
                 div { class: "chat-column",
                     if !first_loaded {
-                        Loading {}
+                        Loading { done: catching_up }
                     } else if rows.is_empty() && !running {
-                        div { class: "empty chat-empty",
-                            div { class: "empty-title", "No agent is running in this pane" }
-                            div { class: "empty-text", "The session ended or the pane is at a shell prompt. The terminal has it as it is." }
-                        }
+                        NotRunning { host: ctx.host.clone(), pane: ctx.pane.clone(), agent: ctx.agent, installed: installed.clone(), session_id: session_id.clone(), terminal_href: terminal_href.clone(), compact: false }
                     } else {
                         if has_more {
                             div { class: "chat-earlier",
@@ -225,6 +408,15 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                             }
                             div { style: "height:{w.after}px" }
                         }
+                        if let Some(text) = failure {
+                            div { class: "line-row chat-failure fade-in", role: "status",
+                                span { class: "line-mark", span { class: "dot dot-danger" } }
+                                "{text}"
+                            }
+                        }
+                        if !running {
+                            NotRunning { host: ctx.host.clone(), pane: ctx.pane.clone(), agent: ctx.agent, installed, session_id, terminal_href, compact: true }
+                        }
                     }
                 }
             }
@@ -240,12 +432,32 @@ pub fn ChatView(ctx: Ctx, connected: bool, controls: String) -> Element {
                 }
                 if running {
                     div { class: "chat-foot-column",
-                        if !connected {
-                            div { class: "chat-status fade-in", role: "status", "Reconnecting…" }
-                        } else if let Some(title) = panel.filter(|_| prompt.is_none()) {
-                            div { class: "chat-status fade-in", role: "status", {crate::format::panel_text(&title)} }
+                        match link {
+                            Some(LinkLine::Hub) => rsx! {
+                                div { class: "chat-status fade-in", role: "status", "Reconnecting…"
+                                    if !dom::coarse() {
+                                        HelpLink { id: None }
+                                    }
+                                }
+                            },
+                            Some(LinkLine::Machine(name)) => rsx! {
+                                div { class: "chat-status fade-in", role: "status", "Reconnecting to {name}…"
+                                    HelpLink { id: Some(ctx.host.clone()) }
+                                }
+                            },
+                            Some(LinkLine::Offline(name)) => rsx! {
+                                div { class: "chat-status fade-in",
+                                    "{name} is offline. This is the conversation as last seen; you can send again once it reconnects."
+                                    HelpLink { id: Some(ctx.host.clone()) }
+                                }
+                            },
+                            None => rsx! {
+                                if let Some(title) = panel.filter(|_| shown_prompt.is_none()) {
+                                    div { class: "chat-status fade-in", role: "status", {crate::format::panel_text(&title)} }
+                                }
+                            },
                         }
-                        if let Some(p) = prompt {
+                        if let Some(p) = shown_prompt {
                             PromptCard { prompt: p, host: ctx.host.clone(), pane: ctx.pane.clone(), disabled: !connected, agent: ctx.agent }
                             div { class: "prompt-why",
                                 "{ctx.agent_name} is asking you something. Answer it here, and the model, effort and mode controls come back."
@@ -289,13 +501,163 @@ fn Measured(id: String, chat: String, children: Element) -> Element {
     }
 }
 
+/// What the overview says about the chat's machine and pane.
+#[derive(Debug, Clone, PartialEq)]
+struct Machine {
+    name: String,
+    online: bool,
+    /// the agents installed there
+    agents: Vec<AgentKind>,
+    /// an agent runs in the pane
+    running: bool,
+    /// why the pane's last turn stopped, as a line
+    failure: Option<String>,
+}
+
+/// "Loading the conversation", with how far the hub is through reading it when it says.
 #[component]
-fn Loading() -> Element {
+fn Loading(done: Option<f64>) -> Element {
+    let label = match done {
+        Some(d) => format!("Loading the conversation · {}%", (d * 100.0).round()),
+        None => "Loading the conversation".into(),
+    };
     rsx! {
-        div { class: "chat-loading chat-loading-first", role: "status", "aria-label": "Loading the conversation",
+        div { class: "chat-loading chat-loading-first fade-in", role: "status",
             span { class: "skeleton-line" }
             span { class: "skeleton-line skeleton-short" }
             span { class: "skeleton-line" }
+            span { class: "chat-loading-label", "{label}" }
         }
+    }
+}
+
+/// "Can't connect?" after a line about the connection.
+#[component]
+fn HelpLink(id: Option<String>) -> Element {
+    rsx! {
+        button { class: "help-link", r#type: "button", onclick: move |_| super::connect::open_connect_help(id.clone()), "Can't connect?" }
+    }
+}
+
+/// An agent Inyon reads only in its terminal: what runs there, or the pane at its shell.
+#[component]
+fn TerminalFirst(ctx: Ctx, machine: Option<Machine>, terminal_href: String) -> Element {
+    // its chat info says nothing; the pane says whether it runs
+    if machine.as_ref().is_some_and(|m| !m.running) {
+        let installed = machine.map(|m| m.agents).unwrap_or_default();
+        return rsx! {
+            NotRunning { host: ctx.host, pane: ctx.pane, agent: ctx.agent, installed, session_id: None, terminal_href, compact: false }
+        };
+    }
+    let name = ctx.agent_name;
+    rsx! {
+        div { class: "empty chat-empty",
+            if let Some(kind) = ctx.agent {
+                div { class: "empty-icon", AgentMark { kind, size: 28 } }
+            }
+            div { class: "empty-title", "{name} runs in the terminal" }
+            div { class: "empty-text", "Inyon doesn't read {name}'s conversation files yet, so use the terminal view. Status and notifications still work." }
+            a { class: "button button-md button-primary press empty-action", href: "{terminal_href}",
+                Glyph { icon: Icon::SquareTerminal, size: 16 }
+                "Open terminal"
+            }
+        }
+    }
+}
+
+/// "No agent is running in this pane", with its way back: resume the conversation, start an
+/// agent, or the terminal. `compact`: a card under the conversation that ended.
+#[component]
+fn NotRunning(host: String, pane: String, agent: Option<AgentKind>, installed: Vec<AgentKind>, session_id: Option<String>, terminal_href: String, compact: bool) -> Element {
+    let mut busy = use_signal(|| None::<String>);
+    let start = move |kind: AgentKind, resume: Option<String>| {
+        let (host, pane) = (host.clone(), pane.clone());
+        busy.set(Some(if resume.is_some() { "resume".into() } else { kind.as_str().to_string() }));
+        spawn(async move {
+            if let Err(e) = api::start(&host, &pane, kind, resume.as_deref()).await {
+                toast::toast("Could not start", Some(e.message), ToastTone::Error);
+            }
+            // the pane says it runs a moment later; until then the button stays busy
+            platform::sleep(2500).await;
+            busy.set(None);
+        });
+    };
+    let resume = session_id.zip(agent);
+    let kinds = startable(&installed);
+    let is_busy = move |what: &str| busy().as_deref() == Some(what);
+    rsx! {
+        div { class: if compact { "not-running not-running-card" } else { "not-running" },
+            p { class: "not-running-title", "No agent is running in this pane" }
+            p { class: "not-running-text", "The session ended or the pane is at a shell prompt." }
+            div { class: "not-running-actions",
+                if let Some((id, kind)) = resume {
+                    button {
+                        class: "button button-md button-primary press",
+                        r#type: "button",
+                        disabled: busy().is_some(),
+                        onclick: {
+                            let mut start = start.clone();
+                            move |_| start(kind, Some(id.clone()))
+                        },
+                        if is_busy("resume") {
+                            super::kit::Busy { on: true }
+                        } else {
+                            Glyph { icon: Icon::History, size: 16 }
+                        }
+                        "Resume conversation"
+                    }
+                }
+                for kind in kinds {
+                    button {
+                        key: "{kind.as_str()}",
+                        class: "button button-md button-quiet press",
+                        r#type: "button",
+                        disabled: busy().is_some(),
+                        onclick: {
+                            let mut start = start.clone();
+                            move |_| start(kind, None)
+                        },
+                        if is_busy(kind.as_str()) {
+                            super::kit::Busy { on: true }
+                        } else {
+                            AgentMark { kind, size: 16, decorative: true }
+                        }
+                        "Start {kind.def().name}"
+                    }
+                }
+                a { class: "button button-md button-ghost press", href: "{terminal_href}",
+                    Glyph { icon: Icon::SquareTerminal, size: 16 }
+                    "Terminal"
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coming_back_after_five_minutes_jumps_to_the_latest() {
+        assert!(!back_jumps(0.0));
+        assert!(!back_jumps(AWAY_MS));
+        assert!(back_jumps(AWAY_MS + 1.0));
+    }
+
+    #[test]
+    fn a_machine_that_just_dropped_is_reconnecting_then_offline() {
+        assert_eq!(link_line(true, Some(("studio", true)), true), None);
+        assert_eq!(link_line(true, None, false), None);
+        assert_eq!(link_line(false, Some(("studio", true)), false), Some(LinkLine::Hub));
+        assert_eq!(link_line(false, Some(("studio", false)), true), Some(LinkLine::Hub));
+        assert_eq!(link_line(true, Some(("studio", false)), true), Some(LinkLine::Machine("studio".into())));
+        assert_eq!(link_line(true, Some(("studio", false)), false), Some(LinkLine::Offline("studio".into())));
+    }
+
+    #[test]
+    fn a_shell_offers_each_installed_agent_once_and_claude_code_when_none_is_listed() {
+        assert_eq!(startable(&[]), [AgentKind::Claude]);
+        assert_eq!(startable(&[AgentKind::Codex, AgentKind::Claude, AgentKind::Codex]), [AgentKind::Codex, AgentKind::Claude]);
     }
 }

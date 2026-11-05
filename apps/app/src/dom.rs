@@ -296,6 +296,8 @@ mod imp {
         static SLASH: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
         static WAKE: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
         static RESIZE: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
+        /// when the page went out of sight (ms since the epoch), until it's back; 0 while shown
+        static HIDDEN_AT: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
     }
 
     /// The page-wide listeners Pages needs, added once: a page frame asking for the theme (answered
@@ -336,9 +338,16 @@ mod imp {
         let _ = win.add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref());
         key.forget();
         let wake = Closure::<dyn Fn()>::new(|| {
-            if visible() {
-                WAKE.with(|w| w.borrow().iter().for_each(|f| f()));
+            if !visible() {
+                HIDDEN_AT.with(|h| {
+                    if h.get() == 0.0 {
+                        h.set(js_sys::Date::now());
+                    }
+                });
+                return;
             }
+            WAKE.with(|w| w.borrow().iter().for_each(|f| f()));
+            HIDDEN_AT.with(|h| h.set(0.0));
         });
         let _ = win.add_event_listener_with_callback("focus", wake.as_ref().unchecked_ref());
         if let Some(d) = win.document() {
@@ -365,6 +374,17 @@ mod imp {
     pub fn on_wake(f: impl Fn() + 'static) {
         listen();
         WAKE.with(|w| w.borrow_mut().push(Box::new(f)));
+    }
+
+    /// How long the page was out of sight before it came back (ms), for an [`on_wake`] callback;
+    /// 0 when it was only the window getting focus again.
+    pub fn away_ms() -> f64 {
+        let at = HIDDEN_AT.with(std::cell::Cell::get);
+        if at == 0.0 {
+            0.0
+        } else {
+            js_sys::Date::now() - at
+        }
     }
 
     /// Calls `f` whenever the window changes size.
@@ -752,6 +772,9 @@ mod imp {
     pub fn on_shortcut(_f: impl Fn(&str) -> bool + 'static) {}
     pub fn on_page_menu(_f: impl Fn(f64, f64) -> bool + 'static) {}
     pub fn on_wake(_f: impl Fn() + 'static) {}
+    pub fn away_ms() -> f64 {
+        0.0
+    }
     pub fn on_resize(_f: impl Fn() + 'static) {}
     pub fn secure() -> bool {
         true

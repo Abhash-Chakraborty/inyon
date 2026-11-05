@@ -51,7 +51,7 @@ From 0.22 a question that one line can't hold, such as a command of several line
 
 Codex can ask a question without stopping its turn: the terminal shows *1 question* with a hint to press `shift+←`. From 0.17.6, Inyon presses it for you as soon as nothing is being typed in the terminal, so the question shows here with its choices, and the session reads *A question is waiting for your answer* on the overview until you pick one. Codex's approvals say what they're for in the alert and on the overview: *Run `printf 'hi' > hello.txt`*, or *Edit notes.txt?*
 
-If the app has just woken up and is still reconnecting, the chat says *Reconnecting to* the machine, and a question you saw on the overview stays on screen with its buttons greyed out until the machine answers.
+If the app has just woken up and is still reconnecting, the chat says *Reconnecting to* the machine, and a question you saw on the overview stays on screen with its buttons greyed out until the machine answers. A machine still away after 15 seconds is called offline: the chat shows the conversation as it was last seen, and you can send again once it reconnects. **Can't connect?** next to either line opens [the checks](troubleshooting.md#cant-connect) for that machine.
 
 You can also answer straight from the [overview](overview.md#whats-on-it) or from a notification, without opening the session.
 

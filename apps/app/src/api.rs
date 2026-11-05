@@ -536,6 +536,18 @@ pub async fn end(host: &str, pane: &str) -> Result<(), ApiError> {
     request("POST", &format!("{}/end", pane_path(host, pane)), None).await.map(drop)
 }
 
+#[derive(Serialize)]
+struct StartBody<'a> {
+    agent: inyon_protocol::AgentKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resume: Option<&'a str>,
+}
+
+/// Starts an agent in a pane at its shell prompt, picking up the conversation `resume` names.
+pub async fn start(host: &str, pane: &str, agent: inyon_protocol::AgentKind, resume: Option<&str>) -> Result<(), ApiError> {
+    request("POST", &format!("{}/start", pane_path(host, pane)), json(&StartBody { agent, resume })).await.map(drop)
+}
+
 /// The agent exits to its shell; the pane stays.
 pub async fn exit(host: &str, pane: &str) -> Result<(), ApiError> {
     request("POST", &format!("{}/exit", pane_path(host, pane)), None).await.map(drop)
