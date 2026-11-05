@@ -69,6 +69,7 @@ pub struct Hub {
 
 impl Hub {
     pub fn set_hosts(&mut self, hosts: Vec<HostState>) {
+        crate::asks::note(&hosts);
         self.hosts = hosts;
         self.loaded = true;
     }

@@ -10,6 +10,7 @@ mod android;
 // it), so elsewhere some goes unused until the desktop transport lands
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod api;
+mod asks;
 mod attach;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod connect;

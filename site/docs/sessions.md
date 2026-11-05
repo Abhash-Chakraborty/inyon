@@ -51,7 +51,7 @@ From 0.22 a question that one line can't hold, such as a command of several line
 
 Codex can ask a question without stopping its turn: the terminal shows *1 question* with a hint to press `shift+←`. From 0.17.6, Inyon presses it for you as soon as nothing is being typed in the terminal, so the question shows here with its choices, and the session reads *A question is waiting for your answer* on the overview until you pick one. Codex's approvals say what they're for in the alert and on the overview: *Run `printf 'hi' > hello.txt`*, or *Edit notes.txt?*
 
-If the app has just woken up and is still reconnecting, the chat says *Reconnecting to* the machine, and a question you saw on the overview stays on screen with its buttons greyed out until the machine answers.
+If the app has just woken up and is still reconnecting, the chat says *Reconnecting to* the machine, and a question you saw on the overview stays on screen with its buttons greyed out until the machine answers. A machine still away after 15 seconds is called offline: the chat shows the conversation as it was last seen, and you can send again once it reconnects. **Can't connect?** next to either line opens [the checks](troubleshooting.md#cant-connect) for that machine.
 
 You can also answer straight from the [overview](overview.md#whats-on-it) or from a notification, without opening the session.
 
@@ -150,6 +150,8 @@ The list works for every machine, whether you reach it through your hub, a paire
 ## When nothing is running
 
 If the agent has exited, the session offers **Resume conversation**, **Past conversations** (to pick another one), **Start** for each installed agent, or **Terminal**. A pane that has closed says *This pane is gone*.
+
+In the [new app at `/next`](hub.md#the-new-app-at-next), from 0.25.4, the buttons wait while the machine is offline, and after you start one they stay busy until the agent comes up (15 seconds at most), so a second tap doesn't type the command twice. If the last turn stopped on an error, the line saying why shows above them.
 
 ## Signing in
 

@@ -771,9 +771,10 @@ pub fn Logo(#[props(default)] class: String, #[props(default)] connecting: bool,
 }
 
 /// An agent's mark, the web app's files (`/agents/<kind>.svg`, served by the hub next to it).
+/// `decorative`: beside text that names the agent already, so a screen reader skips it.
 #[component]
-pub fn AgentMark(kind: inyon_protocol::AgentKind, size: u32, #[props(default)] class: String) -> Element {
-    let name = kind.def().name.clone();
+pub fn AgentMark(kind: inyon_protocol::AgentKind, size: u32, #[props(default)] class: String, #[props(default)] decorative: bool) -> Element {
+    let name = if decorative { String::new() } else { kind.def().name.clone() };
     rsx! {
         img {
             class: "agent-mark {class}",

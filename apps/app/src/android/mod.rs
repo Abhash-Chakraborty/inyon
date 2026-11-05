@@ -122,6 +122,11 @@ impl Shade for AndroidShade {
     }
 }
 
+/// Takes a notification out of the shade (a session opened in the app).
+pub fn clear_notice(tag: &str) {
+    AndroidShade.clear(tag);
+}
+
 // ---------- staying connected in the background ----------
 
 /// The setting the web app keeps under the same name: on unless turned off.
