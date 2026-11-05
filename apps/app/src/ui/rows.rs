@@ -16,6 +16,7 @@ use serde_json::Value;
 use super::icons::{AgentMark, Glyph, Icon};
 use super::md::{CopyButton, Markdown};
 use super::menu::{self, Action, Item};
+use crate::diff::{self, Hunk, Row as DiffRow, Sign};
 use crate::platform;
 
 /// What every row of one chat shares.
@@ -422,36 +423,6 @@ fn input_str<'a>(call: &'a ToolCall, field: &str) -> Option<&'a str> {
     call.input.get(field).and_then(Value::as_str)
 }
 
-/// An edit's lines as a patch (`+`/`-`/` ` in front), from the hunks the agent recorded, else from
-/// the edit itself: the old text out, the new text in.
-pub fn edit_lines(call: &ToolCall) -> Vec<String> {
-    if let Some(patch) = call.meta().and_then(|m| m.patch.as_ref()).filter(|p| !p.is_empty()) {
-        let mut out = vec![];
-        for (i, h) in patch.iter().enumerate() {
-            if i > 0 {
-                out.push("⋯".into());
-            }
-            out.extend(h.lines.iter().filter(|l| !l.starts_with('\\')).cloned());
-        }
-        return out;
-    }
-    let one = |old: &str, new: &str, out: &mut Vec<String>| {
-        out.extend(old.split('\n').filter(|_| !old.is_empty()).map(|l| format!("-{l}")));
-        out.extend(new.split('\n').filter(|_| !new.is_empty()).map(|l| format!("+{l}")));
-    };
-    let mut out = vec![];
-    if let Some(edits) = call.input.get("edits").and_then(Value::as_array) {
-        for e in edits {
-            one(e.get("old_string").and_then(Value::as_str).unwrap_or(""), e.get("new_string").and_then(Value::as_str).unwrap_or(""), &mut out);
-        }
-    } else if call.input.get("old_string").is_some() {
-        one(input_str(call, "old_string").unwrap_or(""), input_str(call, "new_string").unwrap_or(""), &mut out);
-    } else if let Some(content) = input_str(call, "content") {
-        one("", content, &mut out);
-    }
-    out
-}
-
 #[component]
 fn Output(text: String, #[props(default)] label: String) -> Element {
     if text.trim().is_empty() {
@@ -467,16 +438,35 @@ fn Output(text: String, #[props(default)] label: String) -> Element {
     }
 }
 
+/// An edit's hunks as the web app draws them: each line with its number (the old file's for a
+/// removed line), its sign and its text, a ⋯ row between hunks, and past 400 lines a count of the rest.
 #[component]
-fn PatchView(lines: Vec<String>) -> Element {
+fn DiffView(hunks: Vec<Hunk>) -> Element {
+    let d = diff::rows(&hunks, diff::MAX_LINES);
     rsx! {
-        pre { class: "patch",
-            for (i , l) in lines.iter().enumerate() {
-                div {
-                    key: "{i}",
-                    class: if l.starts_with('+') && !l.starts_with("+++") { "diff-add" } else if l.starts_with('-') && !l.starts_with("---") { "diff-del" } else if l.starts_with("@@") || l == "⋯" { "diff-hunk" } else { "diff-same" },
-                    if l.is_empty() { " " } else { "{l}" }
+        div { class: "diff mono",
+            table { class: "diff-table",
+                tbody {
+                    for (i , r) in d.rows.into_iter().enumerate() {
+                        match r {
+                            DiffRow::Gap => rsx! {
+                                tr { key: "{i}",
+                                    td { class: "diff-gap", colspan: "3", "⋯" }
+                                }
+                            },
+                            DiffRow::Line { no, sign, text } => rsx! {
+                                tr { key: "{i}", class: match sign { Sign::Add => "diff-add", Sign::Del => "diff-del", Sign::Same => "diff-same" },
+                                    td { class: "diff-no", "{no}" }
+                                    td { class: "diff-sign", match sign { Sign::Add => "+", Sign::Del => "−", Sign::Same => " " } }
+                                    td { class: "diff-text", if text.is_empty() { " " } else { "{text}" } }
+                                }
+                            },
+                        }
+                    }
                 }
+            }
+            if d.hidden > 0 {
+                div { class: "diff-more", "{d.hidden} more lines" }
             }
         }
     }
@@ -486,6 +476,7 @@ fn PatchView(lines: Vec<String>) -> Element {
 fn Details(call: ToolCall) -> Element {
     let result = result_of(&call).map(|(t, e)| (t.to_string(), e));
     let meta = call.meta().cloned();
+    let hunks = diff::of_call(meta.as_ref().and_then(|m| m.patch.as_deref()), &call.input);
     let label = |error: bool, ok: &str| if error { "Error".to_string() } else { ok.to_string() };
     match call.name.as_str() {
         "Bash" => {
@@ -509,13 +500,13 @@ fn Details(call: ToolCall) -> Element {
                 }
             }
         }
-        "Edit" | "MultiEdit" | "Write" | "ApplyPatch" if !edit_lines(&call).is_empty() => {
+        "Edit" | "MultiEdit" | "Write" | "ApplyPatch" if !hunks.is_empty() => {
             let path = input_str(&call, "file_path").map(|p| inyon_chat_core::format::short_path(Some(p), 80));
             rsx! {
                 if let Some(p) = path {
                     div { class: "tool-path mono", "{p}" }
                 }
-                PatchView { lines: edit_lines(&call) }
+                DiffView { hunks }
                 if let Some((text, true)) = result {
                     Output { text }
                 }
@@ -1025,12 +1016,29 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_shows_as_a_patch_with_its_indentation() {
+    fn an_edit_shows_as_numbered_lines_with_their_indentation() {
+        let lines = |c: &ToolCall| {
+            let d = diff::rows(&diff::of_call(c.meta().and_then(|m| m.patch.as_deref()), &c.input), diff::MAX_LINES);
+            d.rows
+                .into_iter()
+                .map(|r| match r {
+                    DiffRow::Line { no, sign, text } => format!(
+                        "{no}{}{text}",
+                        match sign {
+                            Sign::Add => '+',
+                            Sign::Del => '-',
+                            Sign::Same => ' ',
+                        }
+                    ),
+                    DiffRow::Gap => "⋯".into(),
+                })
+                .collect::<Vec<_>>()
+        };
         let c = call("Edit", json!({ "file_path": "/a.py", "old_string": "def f():\n    return 1", "new_string": "def f():\n    return 2" }), None);
-        assert_eq!(edit_lines(&c), vec!["-def f():", "-    return 1", "+def f():", "+    return 2"]);
+        assert_eq!(lines(&c), ["1 def f():", "2-    return 1", "2+    return 2"]);
         let w = call("Write", json!({ "file_path": "/b.yml", "content": "a:\n  b: 1" }), None);
-        assert_eq!(edit_lines(&w), vec!["+a:", "+  b: 1"]);
-        assert!(edit_lines(&call("Read", json!({ "file_path": "/a" }), None)).is_empty());
+        assert_eq!(lines(&w), ["1+a:", "2+  b: 1"]);
+        assert!(lines(&call("Read", json!({ "file_path": "/a" }), None)).is_empty());
     }
 
     #[test]

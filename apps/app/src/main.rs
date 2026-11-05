@@ -13,6 +13,7 @@ mod api;
 mod attach;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod connect;
+mod diff;
 mod dom;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod files;

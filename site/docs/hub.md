@@ -179,7 +179,7 @@ From 0.20 the hub also serves the sites your agents make on its machine, such as
 
 From 0.24 the hub also serves an early copy of Inyon's next app, written in Rust, at `/next` on its own address (for example `https://hub.example/next`). It uses the same password and sign-in as the web app, and so far has the sign-in, the Overview, a session's chat and terminal, the Machines screen and, from 0.25, Blueprints, Settings and Temp files:
 
-- the conversation, with replies, tool calls and code blocks you can copy, and **Earlier messages** as you scroll up
+- the conversation, with replies, tool calls and code blocks you can copy, and **Earlier messages** as you scroll up. From 0.25.4 an edit opens as a diff with line numbers, as in the web app.
 - the message box: Enter sends, a message sent while the agent works waits in its queue, and Esc in an empty box stops the agent. It takes files as the web app does (see [Images and files](sessions.md#images-and-files)): paste a screenshot or a file, drop files on the box, **Attach files**, **Take a photo** on a phone, a paste over 40 lines as *Pasted text*, and pasting or typing anywhere on the page. Each file shows its progress, says *Reconnecting…* and carries on after a dropped connection, and can be tried again if it fails.
 - **Copy** buttons and the terminal's **Paste** on a hub reached over plain HTTP, such as a NetBird or LAN address, where the browser keeps the clipboard from the page: Copy still works, and Paste says *Couldn't read the clipboard* and to paste from the keyboard instead.
 - an agent's question or approval as a card you answer by tapping a choice or pressing its number, with the model, effort and mode line back once it's answered
