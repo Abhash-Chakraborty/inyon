@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 
 use inyon_chat_core::store::{Effect, Settings, Toast as StoreToast};
-use inyon_chat_core::v2::{decode, Overview2, Pages2};
+use inyon_chat_core::v2::{decode, Organize2, Overview2, Pages2};
 use inyon_chat_core::{Chat, Context, Store};
-use inyon_protocol::v2::{Zip, OVERVIEW, PAGES};
-use inyon_protocol::{ClientMsg, ClientMsg2, HostState, PageEntry, ServerMsg, ServerMsg2};
+use inyon_protocol::v2::{Zip, ORGANIZE, OVERVIEW, PAGES};
+use inyon_protocol::{ClientMsg, ClientMsg2, HostState, Organize, PageEntry, ServerMsg, ServerMsg2};
 
 use crate::pages::{self, Seen};
 
@@ -88,6 +88,7 @@ pub struct Feed {
     overview: Overview2,
     store: Store,
     pages: Pages2,
+    organize: Organize2,
 }
 
 impl Feed {
@@ -110,9 +111,20 @@ impl Feed {
         self.pages.apply(f)
     }
 
-    /// What to follow on a new connection: the overview and the pages, from where they were left.
-    pub fn subs(&self) -> [ClientMsg2; 2] {
-        [ClientMsg2::Sub { stream: OVERVIEW.into(), at: self.overview.cursor.at() }, ClientMsg2::Sub { stream: PAGES.into(), at: self.pages.cursor.at() }]
+    /// An organize frame (pins, parking, snoozes, tags and notes, from 0.24): all of it when it
+    /// changed, and a message for the hub when the stream needs bringing up to date.
+    pub fn organize(&mut self, f: &ServerMsg2) -> (Option<Organize>, Option<ClientMsg2>) {
+        self.organize.apply(f)
+    }
+
+    /// What to follow on a new connection: the overview, the pages and how sessions are organised,
+    /// from where they were left.
+    pub fn subs(&self) -> [ClientMsg2; 3] {
+        [
+            ClientMsg2::Sub { stream: OVERVIEW.into(), at: self.overview.cursor.at() },
+            ClientMsg2::Sub { stream: PAGES.into(), at: self.pages.cursor.at() },
+            ClientMsg2::Sub { stream: ORGANIZE.into(), at: self.organize.cursor.at() },
+        ]
     }
 
     /// A notice from the hub (`notify`, `page.notify`, `companion.reply`) under the app's settings
@@ -391,6 +403,22 @@ mod tests {
         list.drop_page("local", "site");
         assert_eq!(list.pages, Some(vec![]));
         assert_eq!(wire2(&feed.subs()[1]), r#"{"t":"sub","stream":"pages","at":{"epoch":2,"seq":2}}"#);
+    }
+
+    #[test]
+    fn the_organize_stream_keeps_the_marks() {
+        let mut feed = Feed::default();
+        assert_eq!(wire2(&feed.subs()[2]), r#"{"t":"sub","stream":"organize"}"#);
+        let snap = frame(json!({ "t": "snapshot", "stream": "organize", "epoch": 3, "seq": 1,
+            "rows": { "sessions": [{ "id": "s-1", "host": "box", "pane": "%1", "live": true, "pinned": 0 }], "projects": [], "groups": [], "spaces": [] } }));
+        let (org, resync) = feed.organize(&snap);
+        assert_eq!(resync, None);
+        assert_eq!(org.expect("the first frame").sessions[0].pinned, Some(0));
+        let parked = frame(json!({ "t": "delta", "stream": "organize", "epoch": 3, "from": 1, "seq": 2,
+            "replace": { "sessions": [{ "id": "s-1", "host": "box", "pane": "%1", "live": true, "parked": true }] } }));
+        let org = feed.organize(&parked).0.expect("a change");
+        assert_eq!((org.sessions[0].pinned, org.sessions[0].parked), (None, Some(true)));
+        assert_eq!(wire2(&feed.subs()[2]), r#"{"t":"sub","stream":"organize","at":{"epoch":3,"seq":2}}"#);
     }
 
     #[test]

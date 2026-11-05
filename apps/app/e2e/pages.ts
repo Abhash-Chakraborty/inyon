@@ -335,7 +335,7 @@ try {
     await page.screenshot({ path: path.join(shots, `pages-viewer-390-${scheme}.png`) })
     await layout(page, `${label} viewer`)
     // notes and parts from the header
-    await page.getByRole('button', { name: 'Notes' }).click()
+    await page.getByRole('button', { name: 'Notes', exact: true }).click()
     await page.getByRole('menuitemradio', { name: 'Field notes' }).click()
     await inside.getByRole('heading', { name: 'Note: Field notes.md' }).waitFor()
     check(await page.locator('.note-line').getByText('Field notes').isVisible(), `${label}: the open note's line`)
@@ -394,7 +394,7 @@ try {
       await page.screenshot({ path: path.join(shots, `pages-device-1440-${scheme}.png`) })
       await page.getByRole('radio', { name: 'Fit the pane' }).click()
       // notes
-      await page.getByRole('button', { name: 'Notes' }).click()
+      await page.getByRole('button', { name: 'Notes', exact: true }).click()
       await page.getByRole('menuitemradio', { name: 'Competitors' }).click()
       await inside.getByRole('heading', { name: 'Note: Competitors.md' }).waitFor()
       check((await page.locator('iframe.page-frame').getAttribute('src'))?.includes('research/Competitors.md?as=note&theme=light'), `${label}: a note's address`)

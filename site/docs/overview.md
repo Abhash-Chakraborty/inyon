@@ -37,6 +37,21 @@ A machine on a paired hub shows that hub's pins. A hub older than 0.24 doesn't k
 
 Scripts can do the same with a signed-in session or a phone's token: `GET /api/organize` returns everything the hub keeps, and `PATCH /api/hosts/<machine>/panes/<pane>/organize` with a body such as `{"pinned": true}`, `{"parked": true}`, `{"snoozedUntil": 1793000000000, "snoozeNotice": true}`, `{"tags": ["review"]}`, `{"note": "…"}` or `{"closeWhenDone": true}` changes one session (`null` clears a field). `POST /api/hosts/<machine>/panes/<pane>/sends` with `{"text": "…", "at": 1793000000000}` keeps a [message to send later](sessions.md#sending-a-message-later), `POST /api/hosts/<machine>/sends/<id>/now` sends it at once, and `DELETE /api/hosts/<machine>/sends/<id>` cancels it. `PUT /api/organize/sleep` with `{"scope": "all", "minutes": 60}` sets [sleep](settings.md#live-numbers) for every session, or with a project's id as `scope` for that project's. Saved prompts, each with a name, the text, an optional project and a star, live under `/api/organize/prompts`; the apps don't show them yet. A machine's token can't use any of these. The hub keeps it all in `~/.inyon/organize.json`.
 
+## In the new app
+
+From 1.1 the new app (at [`/next`](hub.md#the-new-app-at-next) on the hub, and the [Android app](android.md)) pins, parks, snoozes, tags and keeps notes too. It keeps them in the same place as the web app, so a change in one shows in the other.
+
+- **The sidebar** lists every session under **Pinned**, **Sessions**, **Parked** and **Snoozed**. Click a heading to fold it. **Parked** and **Snoozed** start folded, and the app remembers what you fold. A folded heading still shows a dot when a session in it is waiting for you or working. A row shows the session's first tag, a mark when it has a note, and when it was last active, or for a snoozed one when it wakes (`14:00`, `Wed 9:00`).
+- **The overview** shows pinned sessions under **Pinned**, and parked and snoozed ones in a folded **Parked and snoozed** section at the bottom.
+- **A session's menu** (right-click it, press and hold on a phone, or use the row's **⋯**) has **Open**, **Open terminal**, **Open in new tab** in a browser, **Rename…**, **Pin**, **Snooze**, **Park**, **Tag as**, **Copy**, **More**, **Select** and **End session…**. **Snooze** offers **1 hour**, **3 hours**, **Tomorrow morning** (9:00) and **Next week** (Monday, 9:00), each with the time it ends. **Tag as** lists the session's tags, the tags in use and **New tag…**. **Copy** has the **tmux target**, and the **Conversation ID** and **Folder path** when the session has them. **More** has **Note…** and **Close when done**. A submenu opens beside the menu when you point at it or press `→`, and `←` or `Esc` goes back; on a phone it takes the menu's place, with a back row at the top.
+- **A section heading's menu** has **Select all here**, and **Unpin all**, **Unpark all** or **Unsnooze all**.
+
+Parking, snoozing, **Close when done** and any change to several sessions at once show a notice with **Undo**. The new app doesn't offer **Tell me when it's back** yet.
+
+## Selecting several sessions
+
+From 1.1, in the new app, `Ctrl`-click (`⌘`-click on a Mac) sessions in the sidebar or on the overview to select them, and `Shift`-click to select everything in between. On a phone, choose **Select** in a session's menu, then tap others to add or take them out. A bar at the bottom says how many are selected, with **Pin**, **Park**, **Snooze**, **Tag** and **⋯**. Right-click a selected session for the same actions: **Pin selected**, **Park selected**, **Snooze selected**, **Tag selected as** and **Clear selection**. Each one becomes **Unpin**, **Unpark** or **Unsnooze** when every selected session already has it. A plain click or `Esc` clears the selection, and so does using it.
+
 ## Right-click menus
 
 Right-click a session card, long-press it on a phone, or use its **⋯** menu for **Open**, **Open terminal**, **Open in new tab**, from 0.24 **Pin**, **Park**, **Snooze…**, **Tags…** and **Note…** ([see above](#pinning-parking-and-snoozing)), **Rename…**, **Rename tmux session…** (from 0.22), **Past conversations…**, **Copy session ID** and **End session…**. Ending a session first says exactly what will close: the pane, its window, or the whole tmux session.
