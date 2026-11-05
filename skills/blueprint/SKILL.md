@@ -95,6 +95,15 @@ root names the site for Inyon. It's a dot file, so no server shows it.
    launchd job or any other service to keep a site up: Inyon serves pages for as long as its hub runs.
    Never hand over a `/v/...` link either, since those expire after 12 hours.
 
+   **Sharing with someone outside the network** (a product manager, a client). A blueprint stays on the
+   reader's private network unless they choose otherwise, so never serve it on a public address and never
+   change a proxy, firewall or DNS to make it public. From Inyon 0.25.4 the reader shares one blueprint
+   themselves: **Share…** in its menu makes a link for 1, 7 or 30 days that they can revoke, either for
+   **People on your network** (the default) or for **Anyone with the link**, which only works once they've
+   set an address for shared links and pointed a proxy at it (inyon.tech/docs/hub/#a-public-address-for-shared-blueprints).
+   The app makes these links, not agents: when asked to make a plan public, point the reader at
+   **Share…** and that page instead of doing it for them.
+
    **In a sandbox.** If `~/.inyon` can't be written from where you run (publish.mjs exits 4), don't look
    for a way around it. Show the reader the line the script prints and ask them to run it once from
    their own shell. It's `inyon pages add ...` with the installed program's full path, so it works where
