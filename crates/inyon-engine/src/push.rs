@@ -804,27 +804,42 @@ mod tests {
         let s = seen.clone();
         let stop = follow_events(move |l| s.lock().unwrap().push(l), log.clone(), Duration::from_millis(20));
         let tick = || tokio::time::sleep(Duration::from_millis(60));
+        // waits for the follower to have seen n lines, so a slow runner (the macOS x64 one) doesn't
+        // fail it on a fixed sleep; a missing line still fails, after 5 s
+        let seen_n = |n: usize| {
+            let seen = seen.clone();
+            async move {
+                for _ in 0..250 {
+                    if seen.lock().unwrap().len() >= n {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        };
         let append = |t: &str| {
             use std::io::Write;
             fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(t.as_bytes()).unwrap();
         };
         tick().await;
         append("one\ntw");
+        seen_n(1).await;
         tick().await;
         append("o\n");
-        tick().await;
+        seen_n(2).await;
         fs::rename(&log, &old).unwrap();
         fs::write(&log, "three\n").unwrap();
-        tick().await;
+        seen_n(3).await;
         // moved aside with nothing in its place for a while: no crash, and the next file is picked up
         fs::rename(&log, &old).unwrap();
         tick().await;
         tick().await;
         fs::write(&log, "four\n").unwrap();
-        tick().await;
+        seen_n(4).await;
         // the new file is already longer than the old one was read to: still from its top
         fs::rename(&log, &old).unwrap();
         fs::write(&log, format!("{}\nfive\n", "x".repeat(200))).unwrap();
+        seen_n(6).await;
         tick().await;
         stop.abort();
         assert_eq!(*seen.lock().unwrap(), ["one", "two", "three", "four", &"x".repeat(200), "five"]);
