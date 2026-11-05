@@ -6,6 +6,7 @@ use dioxus::prelude::*;
 use super::icons::{Glyph, Icon};
 use super::menu::{self, Item};
 use crate::dom;
+use crate::highlight;
 use crate::markdown::{self, El, Md, Picture};
 
 /// `font`: the reply font's class (`reply-serif`, `reply-mono`, or none for sans).
@@ -65,19 +66,41 @@ fn node(n: &Md) -> Element {
 }
 
 /// A fenced block: the language over it, a copy button, and the text exactly as written (leading
-/// spaces and tabs included).
+/// spaces and tabs included), coloured once its language has loaded.
 #[component]
 pub fn CodeBlock(lang: Option<String>, code: String) -> Element {
     let text = code.strip_suffix('\n').unwrap_or(&code).to_string();
     let copy = text.clone();
     let items = vec![Item::copy("Copy code", &text)];
+    let hl = highlight::wanted(lang.as_deref(), &text).map(str::to_string);
+    // bumped when a language arrives, so the block colours itself then
+    let mut arrived = use_signal(|| 0u32);
+    let lit = use_memo(use_reactive!(|hl, text| {
+        arrived();
+        hl.as_deref().and_then(|l| highlight::now(l, &text))
+    }));
+    use_effect(use_reactive!(|hl| {
+        if let Some(l) = hl.filter(|_| lit.peek().is_none()) {
+            spawn(async move {
+                if highlight::load(&l).await {
+                    arrived += 1;
+                }
+            });
+        }
+    }));
     rsx! {
         div { class: "code-block", oncontextmenu: menu::open(items),
             div { class: "code-head",
                 span { class: "code-lang mono", {lang.clone().unwrap_or_else(|| "text".into())} }
                 CopyButton { text: copy, label: "Copy code" }
             }
-            pre { class: "code-body", code { "{text}" } }
+            pre { class: "code-body",
+                if let (Some(l), Some(html)) = (hl.as_deref(), lit()) {
+                    code { class: "hljs language-{l}", dangerous_inner_html: "{html}" }
+                } else {
+                    code { "{text}" }
+                }
+            }
         }
     }
 }

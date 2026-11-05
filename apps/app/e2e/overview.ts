@@ -349,6 +349,19 @@ try {
       await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-diff.png`) })
       await page.getByText('expect(total).toBe(4200)').scrollIntoViewIfNeeded()
       await page.waitForTimeout(400)
+      // the reply's TypeScript block is coloured once its language arrives, in the scheme's colours
+      const keyword = page.locator('.code-body code.hljs.language-ts .hljs-keyword').first()
+      const lit = await keyword.waitFor({ timeout: 5000 }).then(() => true, () => false)
+      check(lit, `${label}: the code block is highlighted`)
+      if (lit) {
+        const colour = await keyword.evaluate((el) => getComputedStyle(el).color)
+        check(colour === (scheme === 'dark' ? 'rgb(255, 155, 133)' : 'rgb(181, 67, 44)'), `${label}: keywords in the theme's colour (${colour})`)
+        const shown = await page.locator('.code-body').first().textContent()
+        check(shown?.startsWith('export async function total(cart: Cart) {\n  const discounted'), `${label}: highlighting keeps the text (${JSON.stringify(shown?.slice(0, 60))})`)
+        await keyword.scrollIntoViewIfNeeded()
+        await page.waitForTimeout(300)
+        await page.locator('.code-block').first().screenshot({ path: path.join(shots, `session-${w}-${scheme}-code.png`) })
+      }
       await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-history.png`) })
 
       await page.goto(`${base}/next/m/local/p/12`)

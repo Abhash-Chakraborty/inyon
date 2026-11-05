@@ -750,6 +750,23 @@ input:focus-visible { outline: none; }
 /* every character as written, leading spaces and tabs included; long lines scroll */
 .code-body { margin: 0; overflow-x: auto; padding: 10px 12px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; white-space: pre; tab-size: 4; color: var(--fg); }
 .code-body code { font: inherit; background: none; border: 0; padding: 0; }
+/* highlight.js classes, in the web app's colours (styles.css) */
+.hljs { color: var(--fg); }
+.hljs-comment, .hljs-quote { color: var(--fg-3); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-type { color: #b5432c; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute { color: #3f7a2e; }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: #9a5b13; }
+.hljs-title, .hljs-section, .hljs-function .hljs-title { color: #2f5f9e; }
+.hljs-attr, .hljs-variable, .hljs-template-variable, .hljs-params { color: #7a4b9e; }
+.hljs-meta, .hljs-deletion { color: #b0413e; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+[data-theme='dark'] .hljs-keyword, [data-theme='dark'] .hljs-selector-tag, [data-theme='dark'] .hljs-built_in, [data-theme='dark'] .hljs-type { color: #ff9b85; }
+[data-theme='dark'] .hljs-string, [data-theme='dark'] .hljs-regexp, [data-theme='dark'] .hljs-addition, [data-theme='dark'] .hljs-attribute { color: #a5d6a7; }
+[data-theme='dark'] .hljs-number, [data-theme='dark'] .hljs-literal, [data-theme='dark'] .hljs-symbol, [data-theme='dark'] .hljs-bullet { color: #f2c27b; }
+[data-theme='dark'] .hljs-title, [data-theme='dark'] .hljs-section, [data-theme='dark'] .hljs-function .hljs-title { color: #8fb8f0; }
+[data-theme='dark'] .hljs-attr, [data-theme='dark'] .hljs-variable, [data-theme='dark'] .hljs-template-variable, [data-theme='dark'] .hljs-params { color: #cdb2f0; }
+[data-theme='dark'] .hljs-meta, [data-theme='dark'] .hljs-deletion { color: #ff9b94; }
 
 /* ---------- the message box ---------- */
 
