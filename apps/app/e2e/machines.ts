@@ -203,6 +203,15 @@ const check = (ok: unknown, what: string) => {
   if (!ok) problems.push(what)
 }
 
+async function until(ok: () => boolean | Promise<boolean>, ms = 6000) {
+  const end = Date.now() + ms
+  while (!(await ok()) && Date.now() < end) await Bun.sleep(50)
+  return ok()
+}
+
+/** The app's stylesheet is in: Dioxus adds it as the app starts, so the first screen can come before it. */
+const styled = (page: Page) => page.waitForFunction(() => getComputedStyle(document.querySelector('.shell') ?? document.body).display === 'flex')
+
 /** Text smaller than 12px, or a page wider than its window. */
 async function layout(page: Page, label: string) {
   const small: string[] = await page.evaluate(() => {
@@ -382,6 +391,41 @@ try {
   publish()
 
   // ---- a machine's tabs, a new session, removing ----
+  // a machine's tabs at 360px: the row scrolls, fades the end it hides, and the keys move along it
+  for (const scheme of ['light', 'dark'] as const) {
+    const ctx = await browser.newContext({ ...phone, viewport: { width: 360, height: 800 }, colorScheme: scheme })
+    const page = await ctx.newPage()
+    watch(page)
+    const label = `machine tabs 360 ${scheme}`
+    await page.goto(`${base}/next/machines/build-box`)
+    await styled(page)
+    const row = page.getByRole('radiogroup', { name: 'Machine' })
+    await row.waitFor()
+    const radios = row.getByRole('radio')
+    const count = await radios.count()
+    check(await row.evaluate((el) => el.scrollWidth > el.clientWidth), `${label}: the tabs overflow (the case this covers)`)
+    check(await until(async () => (await row.getAttribute('data-fade')) === 'end'), `${label}: the hidden end fades (${await row.getAttribute('data-fade')})`)
+    check((await radios.evaluateAll((els) => els.map((e) => e.getAttribute('tabindex')))).filter((t) => t === '0').length === 1, `${label}: one tab stop for the row`)
+    await radios.first().focus()
+    await page.keyboard.press('End')
+    const last = radios.nth(count - 1)
+    check(await until(async () => (await last.getAttribute('aria-checked')) === 'true'), `${label}: End picks the last tab`)
+    check(await page.evaluate(() => document.activeElement?.getAttribute('aria-checked') === 'true'), `${label}: and focuses it`)
+    const whole = async () => {
+      const [r, t] = await Promise.all([row.boundingBox(), last.boundingBox()])
+      return !!r && !!t && t.x >= r.x - 0.5 && t.x + t.width <= r.x + r.width + 0.5
+    }
+    check(await until(whole), `${label}: the last tab scrolled into view`)
+    check(await until(async () => (await row.getAttribute('data-fade')) === 'start'), `${label}: now the start fades (${await row.getAttribute('data-fade')})`)
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: path.join(shots, `machine-tabs-360-${scheme}.png`) })
+    await page.keyboard.press('Home')
+    check(await until(async () => (await radios.first().getAttribute('aria-checked')) === 'true'), `${label}: Home goes back to the first`)
+    await page.keyboard.press('ArrowLeft')
+    check(await until(async () => (await last.getAttribute('aria-checked')) === 'true'), `${label}: the arrows wrap round`)
+    await ctx.close()
+  }
+
   {
     const ctx = await browser.newContext({ ...desktop, colorScheme: 'light' })
     const page = await ctx.newPage()

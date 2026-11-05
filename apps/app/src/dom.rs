@@ -150,6 +150,46 @@ mod imp {
         Some((r.left(), r.top(), r.right(), r.bottom()))
     }
 
+    /// Marks which ends of a sideways-scrolling row hide more (`data-fade` holds `start` and or
+    /// `end`, which the stylesheet fades out), and the first time it's called for the row, lets a
+    /// mouse wheel scroll it sideways.
+    pub fn strip_edges(strip: &str) {
+        let Some(s) = el(strip) else { return };
+        let (left, width, shown) = (s.scroll_left(), s.scroll_width(), s.client_width());
+        let fade = [(left > 1).then_some("start"), (left + shown < width - 1).then_some("end")].into_iter().flatten().collect::<Vec<_>>().join(" ");
+        let _ = s.set_attribute("data-fade", &fade);
+        if s.get_attribute("data-wheel").is_none() {
+            let _ = s.set_attribute("data-wheel", "");
+            let target = s.clone();
+            let f = Closure::<dyn Fn(web_sys::Event)>::new(move |e: web_sys::Event| {
+                let Some(w) = e.dyn_ref::<web_sys::WheelEvent>() else { return };
+                let overflow = target.scroll_width() > target.client_width();
+                if overflow && w.delta_y().abs() > w.delta_x().abs() {
+                    e.prevent_default();
+                    target.set_scroll_left(target.scroll_left() + w.delta_y().round() as i32);
+                }
+            });
+            let opts = web_sys::AddEventListenerOptions::new();
+            opts.set_passive(false);
+            let _ = s.add_event_listener_with_callback_and_add_event_listener_options("wheel", f.as_ref().unchecked_ref(), &opts);
+            f.forget();
+        }
+    }
+
+    /// Scrolls a sideways row so its child `child` shows whole, clear of the faded ends.
+    pub fn strip_show(strip: &str, child: &str) {
+        let (Some(s), Some(c)) = (el(strip), el(child)) else { return };
+        const PAD: i32 = 28;
+        let (left, width) = (c.offset_left(), c.offset_width());
+        let (at, shown) = (s.scroll_left(), s.client_width());
+        if left - PAD < at {
+            s.set_scroll_left((left - PAD).max(0));
+        } else if left + width + PAD > at + shown {
+            s.set_scroll_left(left + width + PAD - shown);
+        }
+        strip_edges(strip);
+    }
+
     /// Moves focus into a sheet that just opened: to the element marked `data-autofocus`, or the
     /// sheet itself, unless focus is in it already.
     pub fn focus_into(id: &str) {
@@ -715,6 +755,8 @@ mod imp {
     pub fn rect(_id: &str) -> Option<(f64, f64, f64, f64)> {
         None
     }
+    pub fn strip_edges(_strip: &str) {}
+    pub fn strip_show(_strip: &str, _child: &str) {}
     pub fn focus_into(_id: &str) {}
     pub fn trap_tab(_id: &str, _back: bool) -> bool {
         false
