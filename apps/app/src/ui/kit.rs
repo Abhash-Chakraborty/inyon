@@ -143,8 +143,25 @@ pub fn Toggle(on: bool, label: String, on_change: EventHandler<bool>, #[props(de
     }
 }
 
+/// Where an arrow key, `Home` or `End` moves along a row of `count` tabs from `at`: the arrows wrap
+/// round, and any other key moves nowhere.
+pub fn arrow_step(key: &Key, at: usize, count: usize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    match key {
+        Key::ArrowRight => Some((at + 1) % count),
+        Key::ArrowLeft => Some((at + count - 1) % count),
+        Key::Home => Some(0),
+        Key::End => Some(count - 1),
+        _ => None,
+    }
+}
+
 /// One of a few choices side by side. `full` stretches it across its row; `icons`, when given, go
-/// before the labels in the same order.
+/// before the labels in the same order. When the choices don't fit, the row scrolls sideways with
+/// the hidden end faded, the one picked scrolls into view, and the arrow keys, `Home` and `End`
+/// move along it (one tab stop for the whole row).
 #[component]
 pub fn Segmented(
     value: String,
@@ -154,15 +171,46 @@ pub fn Segmented(
     #[props(default)] label: Option<String>,
     #[props(default)] icons: Vec<Icon>,
 ) -> Element {
+    let gid = use_hook(|| format!("seg-{}", dom::random_id()));
+    let at = options.iter().position(|(v, _)| *v == value);
+    {
+        let gid = gid.clone();
+        use_effect(use_reactive!(|at| {
+            match at {
+                Some(i) => dom::strip_show(&gid, &format!("{gid}-{i}")),
+                None => dom::strip_edges(&gid),
+            }
+        }));
+    }
+    let keys: Vec<String> = options.iter().map(|(v, _)| v.clone()).collect();
+    let g = gid.clone();
+    let on_key = move |e: KeyboardEvent| {
+        if let Some(next) = arrow_step(&e.key(), at.unwrap_or(0), keys.len()) {
+            e.prevent_default();
+            on_change.call(keys[next].clone());
+            dom::focus(&format!("{g}-{next}"));
+        }
+    };
+    let g2 = gid.clone();
+    let g3 = gid.clone();
     rsx! {
-        div { class: if full { "segmented segmented-inline segmented-full" } else { "segmented segmented-inline" }, role: "radiogroup", "aria-label": label,
+        div {
+            id: "{gid}",
+            class: if full { "segmented segmented-inline segmented-full" } else { "segmented segmented-inline" },
+            role: "radiogroup",
+            "aria-label": label,
+            onkeydown: on_key,
+            onscroll: move |_| dom::strip_edges(&g2),
+            onresize: move |_| dom::strip_edges(&g3),
             for (i , (v , l)) in options.into_iter().enumerate() {
                 button {
                     key: "{v}",
+                    id: "{gid}-{i}",
                     class: if v == value { "segment segment-on" } else { "segment" },
                     r#type: "button",
                     role: "radio",
                     "aria-checked": "{v == value}",
+                    tabindex: if at.unwrap_or(0) == i { "0" } else { "-1" },
                     onclick: { let v = v.clone(); move |_| on_change.call(v.clone()) },
                     if let Some(icon) = icons.get(i) {
                         Glyph { icon: *icon, size: 14 }
@@ -404,6 +452,18 @@ pub fn Select(value: String, options: Vec<Opt>, title: String, on_change: EventH
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arrows_home_and_end_move_along_a_row_of_tabs() {
+        assert_eq!(arrow_step(&Key::ArrowRight, 0, 6), Some(1));
+        assert_eq!(arrow_step(&Key::ArrowRight, 5, 6), Some(0));
+        assert_eq!(arrow_step(&Key::ArrowLeft, 0, 6), Some(5));
+        assert_eq!(arrow_step(&Key::ArrowLeft, 3, 6), Some(2));
+        assert_eq!(arrow_step(&Key::Home, 4, 6), Some(0));
+        assert_eq!(arrow_step(&Key::End, 1, 6), Some(5));
+        assert_eq!(arrow_step(&Key::Enter, 1, 6), None);
+        assert_eq!(arrow_step(&Key::End, 0, 0), None);
+    }
 
     #[test]
     fn a_list_opens_where_it_fits() {

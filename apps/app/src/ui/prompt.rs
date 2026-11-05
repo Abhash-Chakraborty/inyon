@@ -13,6 +13,7 @@ use crate::{api, dom, platform};
 
 const FREE: &str = "prompt-free";
 const CARD: &str = "prompt-card";
+const TABS: &str = "prompt-tabs";
 
 /// Focus on `id` once the screen has drawn it: the choices are disabled while an answer is on its
 /// way, and a disabled button can't take focus, so it tries again until it lands (a slow phone can
@@ -55,6 +56,13 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
             focus_soon(option_id(likely), true);
         }));
     }
+    // a question in a set of several: its tab scrolls into view in the row of tabs
+    let current_tab = prompt.tabs.as_ref().filter(|t| t.len() > 1).and_then(|t| t.iter().position(|x| x.current));
+    use_effect(use_reactive!(|current_tab| {
+        if let Some(i) = current_tab {
+            dom::strip_show(TABS, &format!("{TABS}-{i}"));
+        }
+    }));
     let locked = busy().is_some() || disabled;
     let (title, blocks) = rules::parse_body(&prompt.body);
     let question = rules::is_question(&prompt, &title);
@@ -128,10 +136,11 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
     rsx! {
         div { id: CARD, class: "prompt slide-up", role: "group", tabindex: "-1", "aria-label": "{title}", onkeydown: on_key,
             if !tabs.is_empty() {
-                div { class: "prompt-tabs", role: "tablist",
-                    for t in tabs.iter() {
+                div { id: TABS, class: "prompt-tabs", role: "tablist", onscroll: move |_| dom::strip_edges(TABS),
+                    for (i , t) in tabs.iter().enumerate() {
                         span {
                             key: "{t.label}",
+                            id: "{TABS}-{i}",
                             role: "tab",
                             "aria-selected": "{t.current}",
                             class: if t.current { "prompt-tab prompt-tab-on" } else if t.done { "prompt-tab prompt-tab-done" } else { "prompt-tab" },

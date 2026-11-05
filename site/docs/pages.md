@@ -41,7 +41,7 @@ From 0.25 a session's blueprints are the ones made in its tmux session, the way 
 - **On a desktop**, the side panel's **Blueprints** tab opens a page right there, beside the chat, with its name, tmux session and machine above it, its parts and notes, **Reload**, **Open full view** (from 0.25.3) and **Open in new tab**. The arrow back, **This session's blueprints**, returns to the list.
 - **On a phone**, the **Activity** sheet's **Blueprints** tab lists them. From 0.25.3 a page opens in the sheet, over the session, with the same controls; before, it opened full screen.
 - **Open full view** takes the page to the Blueprints screen, whose **Back** on a phone returns to the session. A page opened from the Blueprints list always opens there.
-- **In the [new app at `/next`](hub.md#the-new-app-at-next)**, the session's header has a **Blueprints** button with how many there are, and a dot when one changed since you opened it. It opens them beside the chat on a desktop, or the page itself when there's only one, and in a sheet on a phone.
+- **In the [new app at `/next`](hub.md#the-new-app-at-next)**, the session's header has a **Blueprints** button with how many there are, and a dot when one changed since you opened it. It opens them beside the chat on a desktop, or the page itself when there's only one, and in a sheet on a phone. From 0.25.4 a page opens inside that sheet too, and both places have **Reload**, **Open full view** and **Open in new tab**.
 
 ## Blueprints on your other computers
 

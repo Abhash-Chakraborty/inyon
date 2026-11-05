@@ -39,6 +39,7 @@ pub enum Icon {
     CornerDownLeft,
     Send,
     ExternalLink,
+    Maximize2,
     ClipboardList,
     MessageCircleQuestion,
     ListTodo,
@@ -274,6 +275,12 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     path { d: "M15 3h6v6" }
                     path { d: "M10 14 21 3" }
                     path { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" }
+                },
+                Icon::Maximize2 => rsx! {
+                    path { d: "M15 3h6v6" }
+                    path { d: "m21 3-7 7" }
+                    path { d: "m3 21 7-7" }
+                    path { d: "M9 21H3v-6" }
                 },
                 Icon::ClipboardList => rsx! {
                     rect { width: "8", height: "4", x: "8", y: "2", rx: "1", ry: "1" }

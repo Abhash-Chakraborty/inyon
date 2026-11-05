@@ -540,6 +540,48 @@ fn notes_menu(p: &PageEntry, part: Part, note: Option<&str>, linked: bool) -> Ve
     v
 }
 
+/// The phone viewer's ⋯ menu. Its top bar keeps only the way back, the name and this menu, so it
+/// fits a 360px phone: the parts, the notes, the other blueprints on the machine and the machine
+/// itself are all in here.
+fn phone_more(p: &PageEntry, parts: &[Part], part: Part, note: Option<&str>, linked: bool, siblings: &[PageEntry], machine: Option<(String, String)>) -> Vec<Item> {
+    fn group(items: Vec<Item>) -> Vec<Item> {
+        items.into_iter().enumerate().map(|(i, it)| if i == 0 { it.separated() } else { it }).collect()
+    }
+    let mut more = vec![
+        Item::new("Reload", Icon::RotateCw, Action::Page(Box::new(PageOp::Viewer(ViewerOp::Reload)))).disabled(!linked),
+        Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone(), Some((part, note.map(str::to_string)))))))
+            .hint(BROWSER_HINT)
+            .disabled(!linked),
+    ];
+    if parts.len() > 1 {
+        more.extend(group(
+            parts
+                .iter()
+                .map(|pt| {
+                    Item::new(pt.label(), part_icon(*pt), Action::Page(Box::new(PageOp::Viewer(ViewerOp::Part(*pt))))).checked(note.is_none() && part == *pt).disabled(!linked)
+                })
+                .collect(),
+        ));
+    }
+    // the note open has its own way back under the bar, so the menu lists only the notes
+    let notes: Vec<Item> = notes_menu(p, part, note, linked)
+        .into_iter()
+        .filter(|i| !i.label.starts_with("Back to "))
+        .map(|mut i| {
+            i.separated = false;
+            i
+        })
+        .collect();
+    more.extend(group(notes));
+    if siblings.len() > 1 {
+        more.extend(group(siblings.iter().map(|s| Item::new(s.name.clone(), Icon::FileText, Action::Go(page_route(s))).checked(s.slug == p.slug)).collect()));
+    }
+    if let Some((id, name)) = machine {
+        more.push(Item::new(format!("Open {name}"), Icon::Server, Action::Go(Route::Machine { id })).separated());
+    }
+    more
+}
+
 fn part_icon(p: Part) -> Icon {
     match p {
         Part::Plan => Icon::FileText,
@@ -992,7 +1034,7 @@ fn PhoneViewer(host: String, slug: String) -> Element {
     let parts = v.parts(&id);
     let part = v.part(&id);
     let note = page.as_ref().and_then(|p| v.note(p));
-    let (machine_id, more_id, notes_id) = use_hook(|| (format!("mach-{}", dom::random_id()), format!("more-{}", dom::random_id()), format!("notes-{}", dom::random_id())));
+    let more_id = use_hook(|| format!("more-{}", dom::random_id()));
     let Some(p) = page else {
         return rsx! {
             div { class: "viewer-phone",
@@ -1023,28 +1065,12 @@ fn PhoneViewer(host: String, slug: String) -> Element {
         };
     };
     let linked = link.is_some();
-    let mut more: Vec<Item> = vec![Item::new("Reload", Icon::RotateCw, Action::Page(Box::new(PageOp::Viewer(ViewerOp::Reload)))).disabled(!linked)];
-    if parts.len() > 1 {
-        for (i, pt) in parts.iter().enumerate() {
-            let item = Item::new(pt.label(), part_icon(*pt), Action::Page(Box::new(PageOp::Viewer(ViewerOp::Part(*pt))))).checked(note.is_none() && part == *pt).disabled(!linked);
-            more.push(if i == 0 { item.separated() } else { item });
-        }
-    }
-    more.push(
-        Item::new("Open in browser", Icon::ExternalLink, Action::Page(Box::new(PageOp::OpenInBrowser(p.clone(), Some((part, note.clone()))))))
-            .hint(BROWSER_HINT)
-            .separated()
-            .disabled(!linked),
-    );
-    let mut machine_items: Vec<Item> = siblings.iter().map(|s| Item::new(s.name.clone(), Icon::FileText, Action::Go(page_route(s))).checked(s.slug == p.slug)).collect();
-    if let Some((mid, _)) = &m.known {
-        machine_items.push(Item::new(format!("Open {}", m.name), Icon::Server, Action::Go(Route::Machine { id: mid.clone() })).separated());
-    }
-    let notes = notes_menu(&p, part, note.as_deref(), linked);
-    let has_notes = p.notes.as_ref().is_some_and(|n| !n.is_empty());
-    let kind = m.known.as_ref().map_or(MachineKind::Server, |k| k.1);
+    let more = phone_more(&p, &parts, part, note.as_deref(), linked, &siblings, m.known.as_ref().map(|(mid, _)| (mid.clone(), m.name.clone())));
     let group = pg::group_name(&p, &pg::Names::of(&hub.read().hosts));
-    let (a1, a2, a3) = (machine_id.clone(), more_id.clone(), notes_id.clone());
+    // the session, the machine and, when the site has several, the part on screen
+    let where_line = [Some(group), Some(m.name.clone()).filter(|n| !n.is_empty())].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    let part_line = (parts.len() > 1 && note.is_none()).then(|| format!(" · {}", part.label()));
+    let a2 = more_id.clone();
     let pr = p.clone();
     let mut v2 = v;
     let shows_frame = m.online;
@@ -1057,25 +1083,11 @@ fn PhoneViewer(host: String, slug: String) -> Element {
                     }
                     div { class: "viewer-titles",
                         h1 { class: "viewer-title truncate", "{p.name}" }
-                        p { class: "viewer-where mono truncate", "{group}" }
-                    }
-                    button {
-                        id: "{machine_id}",
-                        class: "machine-chip mono press",
-                        r#type: "button",
-                        "aria-label": "Machine: {m.name}",
-                        onclick: move |_| menu::drop_down(&mut menu_at, &a1, machine_items.clone()),
-                        MachineGlyph { kind, size: 14 }
-                        span { class: "truncate", "{m.name}" }
-                    }
-                    if has_notes {
-                        button {
-                            id: "{notes_id}",
-                            class: if note.is_some() { "icon-button icon-button-lg press icon-button-on" } else { "icon-button icon-button-lg press" },
-                            r#type: "button",
-                            "aria-label": if let Some(n) = &note { format!("Notes: {} open", pg::note_title(n)) } else { "Notes".to_string() },
-                            onclick: move |_| menu::drop_down(&mut menu_at, &a3, notes.clone()),
-                            Glyph { icon: Icon::NotebookText, size: 18 }
+                        p { class: "viewer-where-line mono truncate",
+                            span { class: "viewer-where", "{where_line}" }
+                            if let Some(pl) = &part_line {
+                                span { class: "viewer-part", "{pl}" }
+                            }
                         }
                     }
                     button { id: "{more_id}", class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "More",
@@ -1350,6 +1362,7 @@ fn DesktopViewer(
     let note_at = note.clone();
     let retry_p = p.clone();
     let reload_p = p.clone();
+    let full_route = page_route(&p);
     let mut vp = v;
     // the site's parts and notes: in the bar, or on a row of their own in the narrow panel
     let tools = rsx! {
@@ -1412,6 +1425,18 @@ fn DesktopViewer(
             button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Reload", title: "Reload", disabled: link.is_none(),
                 onclick: move |_| v.reload(&reload_p),
                 Glyph { icon: Icon::RotateCw, size: 16 }
+            }
+            // from a session's side view to the Blueprints screen; on a phone its Back returns here
+            if docked {
+                button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Open full view", title: "Open full view",
+                    onclick: move |_| {
+                        if !WIDE() {
+                            *BACK_TO.write() = Some(here.peek().clone());
+                        }
+                        route::go(&mut here, full_route.clone());
+                    },
+                    Glyph { icon: Icon::Maximize2, size: 16 }
+                }
             }
             // a fresh 12 h link each time; the tab sits at the hub's address, which is never a sign-in page
             button { class: "icon-button icon-button-lg press", r#type: "button", "aria-label": "Open in new tab", title: "Open in new tab. A 12 h link; never sign in there.", disabled: link.is_none(),
@@ -1772,14 +1797,15 @@ fn sections(list: pg::SessionList, tmux: Option<&str>) -> Vec<(Option<String>, V
 
 /// The session header's Pages button: the pages this session works on (see [`pg::session_pages`]),
 /// live from the pages stream. From tablet width up it opens them beside the chat ([`SessionSide`]);
-/// on a phone in a sheet, where a page opens in the viewer and back comes here. Nothing for a session
-/// with none.
+/// on a phone in a sheet, where a page opens right there over the session, with **Open full view**
+/// to the Blueprints screen. Nothing for a session with none.
 #[component]
 pub fn SessionPages(here: Here, side: Side) -> Element {
     use_hook(listen);
     let hub = use_context::<Signal<Hub>>();
-    let route_here = use_context::<Signal<Route>>();
     let mut sheet = use_signal(|| false);
+    // on a phone, the page picked in the sheet, shown right there over the session
+    let mut picked = use_signal(|| None::<(String, String)>);
     let list = here_pages(&here, &hub.read());
     let seen = PAGES.read().seen.clone();
     let wide = WIDE();
@@ -1791,7 +1817,9 @@ pub fn SessionPages(here: Here, side: Side) -> Element {
     let changed = list.all().any(|p| pg::is_changed(p, &seen));
     let only = (n == 1).then(|| list.all().next().map(|p| (p.host.clone(), p.slug.clone()))).flatten();
     let on = wide && open();
+    let in_sheet = picked().and_then(|(host, slug)| list.all().find(|p| p.host == host && p.slug == slug).cloned());
     let parts = sections(list, here.tmux.as_deref());
+    let h = hub.read();
     rsx! {
         button {
             class: if on { "button button-sm button-ghost press session-pages session-pages-on" } else { "button button-sm button-ghost press session-pages" },
@@ -1820,24 +1848,30 @@ pub fn SessionPages(here: Here, side: Side) -> Element {
             }
         }
         if !wide {
-            Sheet { open: sheet(), on_close: move |_| sheet.set(false), title: "Blueprints", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
-                if parts.is_empty() {
+            Sheet { open: sheet(), on_close: move |_| { sheet.set(false); picked.set(None); }, title: "Blueprints", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
+                if let Some(p) = in_sheet {
+                    div { class: "sheet-viewer",
+                        DesktopViewer { key: "{p.host}/{p.slug}", m: pg::machine_of(&h.hosts, &p.host), docked: true, on_list: move |_| picked.set(None), p }
+                    }
+                } else if parts.is_empty() {
                     p { class: "sheet-text",
                         "Sites an agent adds with "
                         code { class: "mono", "inyon blueprints add" }
                         " in this session show up here."
                     }
                 } else {
-                    div {
-                        onclick: move |_| {
-                            *BACK_TO.write() = Some(route_here.peek().clone());
-                            sheet.set(false);
-                        },
-                        for (label , pages) in parts {
-                            if let Some(l) = label {
-                                div { class: "side-label mono", "{l}" }
+                    for (label , pages) in parts {
+                        if let Some(l) = label {
+                            div { class: "side-label mono", "{l}" }
+                        }
+                        for p in pages {
+                            SideRow {
+                                key: "{p.host}/{p.slug}",
+                                changed: pg::is_changed(&p, &seen),
+                                m: pg::machine_of(&h.hosts, &p.host),
+                                on_pick: move |id| picked.set(Some(id)),
+                                p,
                             }
-                            PageRows { pages }
                         }
                     }
                 }
@@ -1995,6 +2029,29 @@ mod tests {
         assert!(m[1].separated && m[2].checked == Some(true) && m[1].checked == Some(false));
         // before the link comes, a note can't open
         assert!(notes_menu(&p, Part::Plan, None, false).iter().all(|i| i.disabled));
+    }
+
+    #[test]
+    fn the_phone_viewer_keeps_everything_but_back_and_the_name_in_its_menu() {
+        let p = entry();
+        let other = PageEntry { slug: "cart".into(), name: "Cart".into(), ..entry() };
+        let sibs = [p.clone(), other];
+        let m = phone_more(&p, &[Part::Plan, Part::Mockups], Part::Plan, None, true, &sibs, Some(("m1".into(), "studio".into())));
+        assert_eq!(labels(&m), ["Reload", "Open in browser", "Plan", "Mockups", "a", "b", "Plan", "Cart", "Open studio"]);
+        // each group starts after a line
+        assert!(!m[1].separated && m[2].separated && !m[3].separated && m[4].separated && !m[5].separated && m[6].separated && m[8].separated);
+        assert_eq!(m[2].checked, Some(true));
+        assert_eq!(m[6].checked, Some(true));
+        assert_eq!(m[8].action, Action::Go(Route::Machine { id: "m1".into() }));
+        // a note open: no part ticked, the note is, and its way back stays under the bar, not here
+        let m = phone_more(&p, &[Part::Plan, Part::Mockups], Part::Plan, Some("b.md"), true, &sibs, None);
+        assert_eq!(labels(&m), ["Reload", "Open in browser", "Plan", "Mockups", "a", "b", "Plan", "Cart"]);
+        assert!(m[2].checked == Some(false) && m[5].checked == Some(true) && m[4].separated);
+        // one part, no notes, alone on an unknown machine: just the two
+        let bare = PageEntry { notes: None, ..entry() };
+        let m = phone_more(&bare, &[Part::Plan], Part::Plan, None, false, std::slice::from_ref(&bare), None);
+        assert_eq!(labels(&m), ["Reload", "Open in browser"]);
+        assert!(m.iter().all(|i| i.disabled));
     }
 
     #[test]
