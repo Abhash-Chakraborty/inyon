@@ -21,9 +21,9 @@ use bytes::Bytes;
 use crate::http::Body;
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use inyon_core::features::pages_core::{
-    decide_view, gone_after_open, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, split_view_target, too_big, unique_slug, verify_token, view_origin,
-    view_segments, within, FileStat, VerifyContext, ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, CANT_WRITE_LIST, GIT_ENV, GIT_TIMEOUT_MS, LOCAL_HOST, NO_INDEX,
-    PAGES_LIST_MAX, TOKEN_TTL_MS,
+    decide_at, gone_after_open_at, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, split_target_at, too_big_at, unique_slug, verify_token,
+    view_origin, view_segments, within, FileStat, Mount, VerifyContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, CANT_WRITE_LIST, GIT_ENV, GIT_TIMEOUT_MS, LOCAL_HOST,
+    NO_INDEX, PAGES_LIST_MAX, SHARE_PREFIX, TOKEN_TTL_MS, VIEW_PREFIX,
 };
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::js::text::JsStr;
@@ -801,7 +801,7 @@ impl Pages {
         |host, records| self.listed.saw(host, records)
     }
 
-    async fn page(&self, host: &str, slug: &str) -> HubResult<Record> {
+    pub(crate) async fn page(&self, host: &str, slug: &str) -> HubResult<Record> {
         let r = if !is_slug(slug) {
             None
         } else if host == LOCAL_HOST {
@@ -1060,15 +1060,37 @@ pub struct ViewFile {
 /// sets a cookie: the token in the path is the only credential. The Host is checked against the
 /// names the hub answers to directly, since right_host() would let a signed-in cookie through.
 pub async fn view(req: Req) -> Resp {
+    serve(req, false).await
+}
+
+/// The answer to a `/share/` request: `view` with a shared link's token (crate::shares) in place
+/// of a signed one. On the public share address the CSP names that address, and only a link made
+/// for anyone opens there; elsewhere the Host is checked as `view` checks it. Opening a shared
+/// page's top is counted.
+pub async fn share_view(req: Req) -> Resp {
+    serve(req, true).await
+}
+
+async fn serve(req: Req, shared: bool) -> Resp {
     let c = crate::server::ctx();
     let host = req.header("host");
     let forwarded = req.header("x-forwarded-host");
-    let mut names: Vec<String> = host.iter().cloned().collect();
-    if let Some(f) = &forwarded {
-        names.extend(f.split(',').map(|h| h.trim().to_owned()));
-    }
-    let answered = !names.is_empty() && names.iter().all(|h| c.answers_to(h));
-    let origin = if answered { view_origin(forwarded.as_deref().or(host.as_deref()), crate::index::secure_request(&req)) } else { None };
+    let shares = if shared { crate::shares::current() } else { None };
+    let public_host = shared && crate::shares::on_share_host(&req);
+    let origin = if public_host {
+        shares.as_ref().and_then(|s| s.address())
+    } else {
+        let mut names: Vec<String> = host.iter().cloned().collect();
+        if let Some(f) = &forwarded {
+            names.extend(f.split(',').map(|h| h.trim().to_owned()));
+        }
+        let answered = !names.is_empty() && names.iter().all(|h| c.answers_to(h));
+        if answered {
+            view_origin(forwarded.as_deref().or(host.as_deref()), crate::index::secure_request(&req))
+        } else {
+            None
+        }
+    };
     let target = if req.query.is_empty() { req.path.clone() } else { format!("{}?{}", req.path, req.query) };
     let p = pages();
     let key = pages_key(&crate::password::session_secret());
@@ -1079,9 +1101,25 @@ pub async fn view(req: Req) -> Resp {
     p.registry.records();
     let inm = req.header("if-none-match");
     let method = req.method.as_str().to_owned();
-    let verify = VerifyContext { key: &key, now: (p.now)(), epoch_of: &epoch_of, phone_paired: &phone_paired };
+    let now = (p.now)();
+    let verify = VerifyContext { key: &key, now, epoch_of: &epoch_of, phone_paired: &phone_paired };
+    // the share a token opened, to count the open
+    let opened: RefCell<Option<String>> = RefCell::new(None);
+    let open = |t: &str| -> Option<(String, String)> {
+        if !shared {
+            return verify_token(t, &verify).ok().map(|c| (c.h, c.s));
+        }
+        let s = shares.as_ref()?.find(t, now, &epoch_of)?;
+        // a link for your network never opens on the public address
+        if public_host && !s.public {
+            return None;
+        }
+        *opened.borrow_mut() = Some(s.id.clone());
+        Some((s.host, s.slug))
+    };
+    let prefix = if shared { SHARE_PREFIX } else { VIEW_PREFIX };
     // a page on another machine: what its inyon says about this request, asked once, up front
-    let remote = remote_listing(&p, &method, &target, &verify, inm.as_deref()).await;
+    let remote = remote_listing(&p, &method, prefix, &target, &open, inm.as_deref()).await;
     let site_root = |h: &str, s: &str| match &remote {
         Some(r) => (r.host == h && r.slug == s).then(|| r.root.clone()),
         None if h == LOCAL_HOST => p.registry.find(s).map(|r| PathBuf::from(r.path)),
@@ -1091,9 +1129,14 @@ pub async fn view(req: Req) -> Resp {
         Some(r) => r.listing.as_ref(),
         None => p.fs.as_ref(),
     };
-    let ctx = ViewContext { verify, site_root: &site_root, fs };
     let vr = ViewRequest { method: &method, target: &target, origin: origin.as_deref(), if_none_match: inm.as_deref() };
-    let d = decide_view(&vr, &ctx).await;
+    let d = decide_at(&vr, &Mount { shared, open: &open }, &site_root, fs).await;
+    if let (Some(s), Some(id)) = (&shares, opened.borrow().as_ref()) {
+        let top = split_target_at(prefix, &target).is_some_and(|t| t.rest == "/");
+        if top && method == "GET" && (d.status == 200 || d.status == 304) {
+            s.opened(id, now);
+        }
+    }
     let head = req.method == Method::HEAD;
     let note = d.file.as_ref().is_some_and(|(path, size)| *size <= crate::notes::NOTE_MAX as u64 && crate::notes::wants_note(&req.query, path));
     if let Some(r) = &remote {
@@ -1101,18 +1144,18 @@ pub async fn view(req: Req) -> Resp {
         return match r.listing.bytes_for(path) {
             Some(bytes) if note => respond_note(d, head, bytes),
             Some(bytes) => respond_bytes(d, head, bytes.to_vec()),
-            None if r.listing.big => respond(too_big(&vr), head, None),
-            None => respond(gone_after_open(&vr), head, None),
+            None if r.listing.big => respond(too_big_at(&vr, shared), head, None),
+            None => respond(gone_after_open_at(&vr, shared), head, None),
         };
     }
     match (&d.file, &d.site) {
         (Some((path, _)), Some(site)) => match open_within(path, site).await {
             Some((file, size)) if note => match read_opened(file, size) {
                 Some(bytes) => respond_note(d, head, &bytes),
-                None => respond(gone_after_open(&vr), head, None),
+                None => respond(gone_after_open_at(&vr, shared), head, None),
             },
             Some(opened) => respond(d, head, Some(opened)),
-            None => respond(gone_after_open(&vr), head, None),
+            None => respond(gone_after_open_at(&vr, shared), head, None),
         },
         _ => respond(d, head, None),
     }
@@ -1140,7 +1183,13 @@ fn respond_note(mut d: ViewDecision, head: bool, md: &[u8]) -> Resp {
     respond_bytes(d, head, crate::notes::page(&name, &String::from_utf8_lossy(md)).into_bytes())
 }
 
-/// A `/v/` request for a page on another machine, with what that machine said about it.
+/// The site a token opens: its machine and slug.
+struct Claims {
+    h: String,
+    s: String,
+}
+
+/// A `/v/` or `/share/` request for a page on another machine, with what that machine said about it.
 struct RemoteView {
     host: String,
     slug: String,
@@ -1153,12 +1202,13 @@ struct RemoteView {
 /// there: asks that machine about it, once. None for anything else, which decide_view then answers
 /// as it does (403, 404, 405, 301). While the machine's `pages watch` runs, a file it already sent
 /// is answered from the hub's copy until its site's stamp moves on, without asking again.
-async fn remote_listing(p: &Pages, method: &str, target: &str, verify: &VerifyContext<'_>, if_none_match: Option<&str>) -> Option<RemoteView> {
+async fn remote_listing(p: &Pages, method: &str, prefix: &str, target: &str, open: &dyn Fn(&str) -> Option<(String, String)>, if_none_match: Option<&str>) -> Option<RemoteView> {
     if method != "GET" && method != "HEAD" {
         return None;
     }
-    let t = split_view_target(target)?;
-    let claims = verify_token(&t.token, verify).ok()?;
+    let t = split_target_at(prefix, target)?;
+    let (h, s) = open(&t.token)?;
+    let claims = Claims { h, s };
     if claims.h == LOCAL_HOST || t.rest.is_empty() {
         return None;
     }

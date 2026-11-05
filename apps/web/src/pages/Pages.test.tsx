@@ -86,12 +86,12 @@ describe('the list on a phone', () => {
     expect(updatedLine(entry('odd', { added: NOW - 60_000, progress: { done: 0, total: 1, updated: 'soon' } }), NOW)).toBe('added 1 min ago')
   })
 
-  test('one menu on a card: open, open in browser with a 12 h link, revoke, show folder, remove', async () => {
+  test('one menu on a card: open, open in browser with a 12 h link, share, revoke, show folder, remove', async () => {
     const user = userEvent.setup()
     await at('/blueprints')
     await user.click(screen.getByRole('button', { name: 'More for Inyon plan' }))
     const items = screen.getAllByRole('menuitem').map((m) => m.textContent)
-    expect(items).toEqual(['Open', 'Open in browserA 12 h link. Never sign in there', 'Revoke links', 'Show folder', 'Remove'])
+    expect(items).toEqual(['Open', 'Open in browserA 12 h link. Never sign in there', 'Share…', 'Revoke links', 'Show folder', 'Remove'])
     await user.click(screen.getByRole('menuitem', { name: /Open$/ }))
     expect(screen.getByTestId('where').textContent).toBe('/blueprints/local/ghostex')
   })

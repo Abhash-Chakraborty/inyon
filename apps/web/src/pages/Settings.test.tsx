@@ -393,3 +393,61 @@ describe('Put idle agents to sleep', () => {
     act(() => emit({ t: 'overview', hosts: [] }))
   })
 })
+
+describe('Settings › Blueprints › shared links', () => {
+  const link = { id: 'a1', host: 'box', slug: 'plan', public: true, created: Date.now() - 86_400_000, expires: Date.now() + 6 * 86_400_000 + 3_600_000, opens: 4 }
+  test('the address is empty by default and saved as the hub keeps it', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: null, fromEnv: false, links: [] })
+    api.setShareAddress.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [] })
+    await render(page())
+    const input = field('https://share.example.com')
+    expect(input.value).toBe('')
+    expect(screen.getByText('None live. Share a blueprint from its ⋯ menu.')).toBeTruthy()
+    await user.type(input, 'Share.Example.com')
+    await user.click(screen.getByRole('button', { name: 'Save the address for shared links' }))
+    expect(api.setShareAddress.mock.calls).toEqual([['Share.Example.com']])
+    expect(input.value).toBe('https://share.example.com')
+    expect((screen.getByRole('button', { name: 'Save the address for shared links' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  test("a refused address says why under the field", async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: null, fromEnv: false, links: [] })
+    api.setShareAddress.mockRejectedValue(new Error("That's the address you're using Inyon at."))
+    await render(page())
+    await user.type(field('https://share.example.com'), 'hub.test')
+    await user.click(screen.getByRole('button', { name: 'Save the address for shared links' }))
+    expect(screen.getByRole('alert').textContent).toBe("That's the address you're using Inyon at.")
+  })
+
+  test('an address set by INYON_SHARE_ORIGIN is shown, not changed here', async () => {
+    api.shares.mockResolvedValue({ address: 'https://share.example.com', fromEnv: true, links: [] })
+    await render(page())
+    expect(field('https://share.example.com').readOnly).toBe(true)
+    expect(screen.getByText('Set by INYON_SHARE_ORIGIN on the hub.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Save the address for shared links' })).toBeNull()
+  })
+
+  test('every live link with Revoke, and Revoke all after asking', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [link, { ...link, id: 'b2', public: false, slug: 'other' }] })
+    await render(
+      <MemoryRouter>
+        <Settings />
+        <ConfirmHost />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/^Anyone with the link · ends in 6 days · 4 opens/)).toBeTruthy()
+    expect(screen.getByText('other')).toBeTruthy()
+    await user.click(screen.getAllByRole('button', { name: 'Revoke' })[0]!)
+    await flush()
+    expect(api.revokeShare.mock.calls).toEqual([['a1']])
+    expect(screen.getAllByRole('button', { name: 'Revoke' }).length).toBe(1)
+    await user.click(screen.getByRole('button', { name: 'Revoke all' }))
+    await user.click(within(screen.getByRole('dialog', { name: 'Revoke the shared link?' })).getByRole('button', { name: 'Revoke all' }))
+    await flush()
+    expect(api.revokeAllShares.mock.calls.length).toBe(1)
+    expect(screen.getByText('None live. Share a blueprint from its ⋯ menu.')).toBeTruthy()
+  })
+})

@@ -173,7 +173,113 @@ The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash
 
 ## Blueprints
 
-From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else. [Security](security.md#blueprints) says how a page is kept away from your sign-in.
+From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else, and from 0.25.3 `/share/` too, for [shared links](pages.md#share-a-blueprint). [Security](security.md#blueprints) says how a page is kept away from your sign-in.
+
+## A public address for shared blueprints
+
+From 0.25.3 your hub can stay private and still hand a blueprint to someone outside your network, such as a product manager. You give the hub a second address that is used only for shared links, and put a reverse proxy in front of it that forwards only `/share/`. Until you do both, every shared link stays on your network.
+
+1. Pick an address that isn't the one you open the app at, such as `https://share.example.com`, and point its DNS at the proxy.
+2. Tell the hub. Either set **Address for shared links** in [Settings › Blueprints](settings.md#blueprints), or put it in `~/.inyon/hub.env` and restart the hub:
+
+   ```sh
+   INYON_SHARE_ORIGIN=https://share.example.com
+   ```
+
+   The variable wins over Settings, which then shows it without letting you change it.
+3. Point the proxy at the hub for `/share/` only, keeping the `Host` header the visitor sent. Caddy and Traefik keep it by default; nginx needs `proxy_set_header Host $host`.
+
+The hub walls that address off by itself. A request whose `Host` or `X-Forwarded-Host` names it reaches only `/share/` links made for **Anyone with the link**. The app, the API, `/ws`, `/ws2`, `/node`, sign-in and the app's `/v/` links answer 404 there, even when the proxy forwards the whole host and even with a sign-in cookie, and a link made for your network gets **Link expired**. Keep both walls: the proxy forwarding only `/share/` and the hub's own 404. Don't add the share address to `INYON_ALLOWED_HOSTS`. If it's listed there too, the hub still answers only shared links on it, and says so in its log as it starts. The address you open the app at is refused in Settings, since the app would stop opening there.
+
+A shared page's Content-Security-Policy names the share address, so give it the scheme visitors use, which is `https://` behind a proxy with a certificate.
+
+### Caddy
+
+```
+share.example.com {
+	handle /share/* {
+		reverse_proxy 127.0.0.1:4777
+	}
+	handle {
+		respond 404
+	}
+}
+```
+
+### Traefik, with the file provider
+
+In a dynamic configuration file. The `url` is the hub as Traefik reaches it; from a container that's the host's address, not `127.0.0.1`.
+
+```yaml
+http:
+  routers:
+    inyon-share:
+      rule: "Host(`share.example.com`) && PathPrefix(`/share/`)"
+      entryPoints: [websecure]
+      service: inyon-share
+      tls:
+        certResolver: letsencrypt
+  services:
+    inyon-share:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:4777"
+```
+
+Any other path on that host matches no router, and Traefik answers 404.
+
+### nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name share.example.com;
+    ssl_certificate     /etc/letsencrypt/live/share.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/share.example.com/privkey.pem;
+
+    location /share/ {
+        proxy_pass http://127.0.0.1:4777;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        return 404;
+    }
+}
+```
+
+### More controls on the proxy
+
+The hub's link, expiry and revoke are the controls Inyon gives you. The proxy can add more in front of them, and the hub doesn't need to know:
+
+| Control | Caddy | Traefik | nginx |
+|---|---|---|---|
+| A password | `basic_auth` with a hash from `caddy hash-password` | a `basicAuth` middleware, users from `htpasswd -nB` | `auth_basic` and `auth_basic_user_file` |
+| Only some addresses | a `remote_ip` matcher in front of `handle /share/*` | an `ipAllowList` middleware (`ipWhiteList` before Traefik 3) | `allow 203.0.113.0/24;` then `deny all;` in `location /share/` |
+| A rate limit | the `caddy-ratelimit` plugin | a `rateLimit` middleware | `limit_req_zone` in `http`, `limit_req` in `location /share/` |
+
+In Traefik, list the middlewares on the router:
+
+```yaml
+http:
+  routers:
+    inyon-share:
+      middlewares: [share-ips, share-password, share-rate]
+  middlewares:
+    share-ips:
+      ipAllowList:
+        sourceRange: ["203.0.113.0/24"]
+    share-password:
+      basicAuth:
+        users: ["pm:$2y$05$..."]
+    share-rate:
+      rateLimit:
+        average: 20
+        burst: 40
+```
+
+A shared link never reads a password or a cookie, so a proxy's sign-in in front of it changes nothing on the hub.
 
 ## The new app at /next
 
