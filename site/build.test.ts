@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stampInstaller } from "../installers/installers.ts";
-import { CSP, checkReleaseFile, downloadTable, mb, oldSiteLinks, parseSums, securityTxt } from "./build.ts";
+import { CSP, checkReleaseFile, download, downloadTable, mb, oldSiteLinks, parseSums, securityTxt } from "./build.ts";
 
 // /download said the APK was 2.7 MB while Chrome said 2.88 MB: sizes are decimal, as browsers count
 test("sizes read as a browser shows them", () => {
@@ -133,4 +133,30 @@ test("each system's row offers inyon alone, and the engine files for older versi
   }
   for (const n of ["SHA256SUMS", "inyon-0.23.0.apk", "inyon-web.tar.gz"]) expect(rest).toContain(`<code>${n}</code>`);
   expect(rest).not.toContain("<code>inyon-linux-x64</code>");
+});
+
+// the 0.25.3 deploy failed on one 504 from GitHub's download host and the site stayed on 0.25.2
+test("a release file is fetched again after a server error, but not after a 404", async () => {
+  let hits = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/missing") return new Response("no", { status: 404 });
+      hits++;
+      return hits < 3 ? new Response("busy", { status: 504 }) : new Response("payload");
+    },
+  });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    expect((await download("a", `${base}/a`, 4, 1)).toString()).toBe("payload");
+    expect(hits).toBe(3);
+    hits = -10;
+    await expect(download("a", `${base}/a`, 2, 1)).rejects.toThrow("download a: 504 after 2 tries");
+    const before = hits;
+    await expect(download("m", `${base}/missing`, 4, 1)).rejects.toThrow("download m: 404");
+    expect(hits).toBe(before);
+  } finally {
+    server.stop(true);
+  }
 });

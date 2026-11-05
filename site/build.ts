@@ -444,6 +444,27 @@ export function checkReleaseFile(
   if (!copy.equals(data)) throw new Error(`${name}: not in SHA256SUMS, and not the copy in the release's tagged commit`);
 }
 
+/** One release file. GitHub's download host sometimes answers 5xx or drops the connection, and one
+ *  such answer used to fail the whole deploy and leave the site on the old release (0.25.3), so a
+ *  server error or a network error is tried again; a 4xx is not. */
+export async function download(name: string, url: string, tries = 4, waitMs = 5000): Promise<Buffer> {
+  for (let i = 1; ; i++) {
+    let why: string;
+    try {
+      const r = await fetch(url, { redirect: "follow" });
+      if (r.ok) return Buffer.from(await r.arrayBuffer());
+      if (r.status < 500) throw new Error(`download ${name}: ${r.status}`);
+      why = String(r.status);
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith(`download ${name}:`)) throw e;
+      why = e instanceof Error ? e.message : String(e);
+    }
+    if (i >= tries) throw new Error(`download ${name}: ${why} after ${tries} tries`);
+    console.log(`  ${name}: ${why}, trying again`);
+    await Bun.sleep(waitMs * i);
+  }
+}
+
 /** Downloads every mirrored file of the release and refuses to publish one that doesn't match the
  *  release's SHA256SUMS, so the domain can never serve something the release didn't sign off. */
 async function mirror(release: Release, raw: GhRelease) {
@@ -452,9 +473,7 @@ async function mirror(release: Release, raw: GhRelease) {
   const fetchAsset = async (name: string) => {
     const a = raw.assets.find((x) => x.name === name);
     if (!a) throw new Error(`release has no ${name}`);
-    const r = await fetch(a.browser_download_url, { redirect: "follow" });
-    if (!r.ok) throw new Error(`download ${name}: ${r.status}`);
-    return Buffer.from(await r.arrayBuffer());
+    return download(name, a.browser_download_url);
   };
   const sumsBytes = await fetchAsset("SHA256SUMS");
   const sums = sumsBytes.toString("utf8");
