@@ -6,16 +6,20 @@ description: Build a plan site for a product or feature, a static HTML page you 
 # Blueprint
 
 A blueprint is a folder of plain HTML, CSS and JS with no build step. Publish it to Inyon, or serve it on
-a private address, and open it on a phone. It has four parts that link to each other:
+a private address, and open it on a phone. It has these parts, and every page reaches every other one
+through the site bar:
 
 | Page | What it is |
 |---|---|
 | `index.html` | The plan: a short lede, the live progress board, a contents box, numbered sections, a screen gallery, releases you can open, risks and decisions |
 | `mockups/index.html` | The viewer: every screen framed at 390×844 or 1440×900, light or dark, with design notes |
 | `mockups/screens/*.html` | One clickable screen per page, built on the kit (menus, right-click and long-press, sheets, toasts, tooltips) |
+| `<topic>.html` | One page per topic the plan only summarises: research on one subject, a release in depth, a build or wiring guide, a shopping list. Made with `scripts/add-page.mjs` |
 | `matrix.html` | One row per item (a feature, a part, a task): what's wanted, what exists today, its status and its release, with search and filters. Statuses, labels and columns come from `matrix-data.js`, so it also fits a parts list or a task list |
 
-`progress.json` drives the board on the plan page. The page polls it every 20 seconds, so updating it with
+`site.js` lists the pages in reading order. `kit/nav.js` draws the site bar from it on every page (Back,
+the pages, a Pages sheet on a phone), the crumbs and the previous/next links, so the reader can always get
+back and move on. `progress.json` drives the board on the plan page. The page polls it every 20 seconds, so updating it with
 `scripts/progress.py` while you work is how the reader follows along. `.inyon-page.json` in the site's
 root names the site for Inyon. It's a dot file, so no server shows it.
 
@@ -40,8 +44,13 @@ root names the site for Inyon. It's a dot file, so no server shows it.
      `K.shell.mount`.
    - *(screens only)* Put shared menus in `kit/menus.js`. Each object gets one menu, used by right-click,
      long-press and its ⋯ button.
-3. **Write the plan** in `index.html`. Read `references/plan.md` for the section order, the release format
-   and the writing rules. Number the h2s to match the contents box.
+3. **Write the plan, then one page per topic.** The plan in `index.html` is the way in: the lede, the
+   board, the short version, the decisions and a card for each page. Give every topic a reader would want
+   on its own a page: `node <skill>/scripts/add-page.mjs <dir> <id> --title "Battery tests" --group
+   Research --blurb "Runtime on one charge."`. It writes `<id>.html` from `_page.html` and lists it in
+   `site.js`; don't link pages to each other by hand for navigation. Replace the sample `offline.html`.
+   Read `references/plan.md` for the section order, when to split a page, the release format and the
+   writing rules. Number the h2s to match the contents box.
 4. **Build the screens** *(screens only)*. List them in `mockups/screens.js`, copy `mockups/screens/_template.html` for
    each, and follow `references/kit.md`. Every visible control has to do something. For more than about
    six screens, split them across parallel workers using `references/builders.md`.
@@ -51,11 +60,15 @@ root names the site for Inyon. It's a dot file, so no server shows it.
    can be a store or a phase) and set a label to `''` to drop its column, such as `today`.
    `references/plan.md` lists the keys.
 6. **Figures.** Use a still WebP, or an animated SVG with the still inside it, in `figures/`. Take labels
-   from the real system. Use Mermaid only if nothing better is available.
-7. **Check it.** *(screens only)* `node <skill>/scripts/stills.mjs <dir> --audit` writes gallery stills to
+   from the real system. Use Mermaid only if nothing better is available. Never crop a picture into a
+   thumbnail: render it at the tile's shape and show it whole with `object-fit: contain`, captions lined
+   up underneath (Oct 2026: tiles that cut off the robot and showed only its middle were rejected).
+7. **Check it.** `node <skill>/scripts/check-site.mjs <dir>` must pass: every page listed in `site.js`,
+   every entry's file there, the bar on every page. *(screens only)* `node <skill>/scripts/stills.mjs <dir> --audit` writes gallery stills to
    `shots/` and flags console errors and dead controls on every screen at both sizes. Open the plan, the
-   viewer *(screens only)* and the matrix with `scripts/shoot.mjs` at 390×844 and 1440×900 in light and dark, and look at every picture
-   (`FULL=1` takes the whole page; lazy images load first). Fix what you see, then check once more.
+   viewer *(screens only)*, the matrix and each added page with `scripts/shoot.mjs` at 390×844 and 1440×900 in light and dark, and look at every picture
+   (`FULL=1` takes the whole page; lazy images load first). Open the Pages sheet at 390 too. Fix what you
+   see, then check once more.
 8. **Publish it** where the reader can open it. Take the first of these that works:
    - **Inyon's command.** If `command -v inyon` finds it, run `inyon pages add <dir> --name "Product plan"`.
      It prints where the page sits in the app (`Pages > <machine> > <project>`; from Inyon 0.22.5 the app
@@ -94,6 +107,9 @@ root names the site for Inyon. It's a dot file, so no server shows it.
 
 ## Rules that make it good
 
+- **A way back from everywhere.** Every page is in `site.js` and loads `kit/nav.js`. Split a long plan into
+  pages rather than growing one page, group them, and keep the bar's top level to five or six entries. An
+  older site gets the bar with `add-page.mjs <dir> --adopt`.
 - **True or nothing.** Numbers, names and statuses come from the code or the research notes. Mark
   estimates as estimates and say how they'll be measured.
 - **Phone first.** Every page works at 390 px with no sideways scroll. Menus turn into bottom sheets,
@@ -106,18 +122,23 @@ root names the site for Inyon. It's a dot file, so no server shows it.
 - **Everything local, every URL relative.** Pages open inside Inyon in a sandbox that blocks other
   sites, so fonts, icons, scripts and pictures live in the folder and links say `kit/kit.js`, never
   `/kit/kit.js` or `https://...`. Task links on the board may point anywhere over http(s).
+- **Hardware and craft plans** follow the extra rules in `references/plan.md` (*Physical builds*): no
+  promised feature without its part and pin, units on every number, beginner wiring guides, shopping
+  lists that remember.
 - **It's a page, not a chat artifact.** Ship it as files the reader opens in Inyon or on a server they
   control.
 
 ## Files in this skill
 
-- `assets/site/`: the template site (kit, viewer, sample screens, matrix, progress board)
-- `scripts/new-site.mjs`, `publish.mjs`, `serve.mjs`, `shoot.mjs`, `stills.mjs`, `progress.py`, plus
-  `lib.mjs` and `pages.mjs`, which they share
+- `assets/site/`: the template site (kit, site bar, page list, a sample detail page, viewer, sample screens,
+  matrix, progress board)
+- `scripts/new-site.mjs`, `add-page.mjs`, `check-site.mjs`, `publish.mjs`, `serve.mjs`, `shoot.mjs`,
+  `stills.mjs`, `progress.py`, plus `lib.mjs`, `pages.mjs` and `site.mjs`, which they share
 - `tests/`: checks for the scripts. From this folder, run `bun test ./tests` and
   `python3 tests/test_progress.py`
 - `references/kit.md`: the `window.K` API, CSS classes and data shapes
-- `references/plan.md`: plan page structure, releases, matrix rows, progress.json
+- `references/plan.md`: one topic per page, plan page structure, releases, physical builds, matrix rows,
+  progress.json
 - `references/builders.md`: a brief to hand parallel screen builders
 
 The scripts need Node 18+ (or Bun) and Playwright with Chromium: `bun add -d playwright` (or npm) in the

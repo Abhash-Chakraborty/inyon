@@ -1,15 +1,41 @@
-# The plan page, matrix and progress board
+# The plan page, its pages, the matrix and the progress board
+
+## One topic per page
+
+The plan page is the way in: the lede, the board, the short version, the decisions and a card for every
+other page. Anything a reader would want on its own goes on its own page, made with
+`scripts/add-page.mjs <dir> <id> --title "..." --group <Group> --blurb "..."`:
+
+- research findings on one subject, a comparison, an audit
+- a release or phase in depth (scope, checks, the work list)
+- a build guide, a wiring guide, a cut list, a shopping list
+- anything over about three screens of reading, or with its own table of contents
+
+Rules for pages:
+- Every page is in `site.js`, in reading order. `kit/nav.js` gives each one the site bar (Back to its
+  parent, the pages, a Pages sheet on a phone), the crumbs and the previous/next links, so a reader can
+  always get back and move on. A page you can only reach from one inline link is a dead end.
+- Group related pages (`group: 'Research'`); a group is one menu in the bar. Keep the top level to five or
+  six entries. Set `parent` when Back should go somewhere other than the plan.
+- Start each page with `<div data-crumbs>`, a lede and a contents box, and end it with `<div data-pager>`.
+- Run `node <skill>/scripts/check-site.mjs <dir>` after adding pages. It fails on a page missing from
+  `site.js`, an entry with no file, a page without the bar and an entry that leaves the folder.
+- Sites made before the site bar: `add-page.mjs <dir> --adopt` writes `site.js` from the pages it finds,
+  copies `kit/nav.js` and puts the bar on every page that loads the kit. Then give the pages real groups,
+  titles and blurbs, and remove the back links and page buttons they drew themselves.
 
 ## index.html, top to bottom
 
-1. **Top bar**: logo, name, links to Screens and Feature matrix, theme button. Keep it as is.
-   Parts that link to the screens sit between `<!-- mockups -->` markers; `new-site.mjs --no-mockups`
-   removes them and renumbers the sections.
+1. **Site bar**: `<header class="site-bar"></header>`, drawn by `kit/nav.js` from `site.js`. Don't hand-write
+   links to other pages here. Parts that link to the screens sit between `<!-- mockups -->` markers;
+   `new-site.mjs --no-mockups` removes them and renumbers the sections.
 2. **Eyebrow**: `Plan · <date> · from <current version>`.
 3. **h1**: the outcome in under eight words. No product name, no colon.
 4. **Lede**: two sentences. The first says what's wrong today, the second says what the plan does about it.
 5. **Buttons**: Open the screens, Feature by feature.
 6. **Where it stands**: the progress board. It's driven by `progress.json`, so don't edit its HTML.
+   Under it, **Pages in this plan**: `<div data-page-cards>` fills itself with a card for every other page,
+   using each page's `blurb` from `site.js`.
 7. **Contents**: one link per numbered h2.
 8. **Sections**, numbered `01`, `02` and so on. Pick from these and keep the order:
    - *Short version*: three or four `.short` items (icon, a bold sentence, one more line), then four `.stats`
@@ -22,11 +48,34 @@
    - *Bugs we won't ship*, *Compatibility*, *Risks*: tables. Use risks only if they're real, each with what you'll do.
    - *Decisions*: `.dec` cards tagged `Decided`, `Question`, `Trade-off`, `Flag` or `Gap`. Put open questions here, so
      the reader can answer them.
-9. **Footer**: name and links.
+9. **Footer**: name and links. Detail pages end with `<div data-pager>` instead.
 
 Writing: plain words, sentences of 8 to 18 words, real numbers with units, sentence-case headings, at most one em dash
 on the page. Cut every sentence that doesn't change what the reader knows. Leave out "seamless", "robust", "leverage",
 "unlock" and similar words.
+
+## Physical builds
+
+Robots, electronics, craft: what Abhash asked for on his cardboard and mop robot plans (Oct and Nov 2026).
+
+- **No promises without parts.** Every feature names the part, pin or code that does it, ideally in one
+  feature → part → pin table. Keep the list small for hobby or unpaid builds; extra "dance, tunes,
+  explore" features were called fake promises. When he asks for more himself, add them only on parts he
+  already has, each with its part and pin, and say plainly what was tested and how (simulator or the real
+  build).
+- **Units on every number.** "14 × 29 cm (width × height)", never a bare "14×29". Hand-built craft
+  (cardboard, paper, ruler and cutter) uses centimetres, not millimetres. Give a build guide a beginner can
+  follow: part codes, dimensioned drawings, one to-scale cutting slide per sheet, and step slides showing
+  where each part goes. No printable PDF templates unless he asks.
+- **Wiring guides for a beginner.** One full diagram of everything connected, then one per part in the same
+  layout with only that part's wires highlighted. Never move a part between pictures. Real pin names, every
+  wire numbered, breadboard holes named. Show only the setup he has (no battery in a test run on a
+  charger), and mark pictures of other setups "for later".
+- **Shopping lists remember.** A "need" tick and a "got it" tick per row, saved in `localStorage` (wrapped
+  in try/catch, since a sandbox may have none) with a reset button, and totals for still to buy and spent.
+  Every tick is his to undo, and defaults come from data. Don't strike bought rows through: Got it hides
+  that row's Need tick and buy link. Spent uses the real receipt, tax included. Drop controls with nothing
+  left to do. Each of these is its own page (`add-page.mjs`), not a section of the plan.
 
 ## matrix-data.js
 

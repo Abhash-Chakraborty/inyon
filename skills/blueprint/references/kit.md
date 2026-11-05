@@ -6,6 +6,18 @@ plan page and the matrix use. Every screen loads these in order:
 `kit/blueprint.css`, `kit/lucide.min.js`, `kit/data.js`, `kit/kit.js`, `kit/menus.js`, `kit/shell.js`.
 Copy `mockups/screens/_template.html` to `mockups/screens/<id>.html` and add the id to `mockups/screens.js`.
 
+## The site bar (kit/nav.js, site.js)
+
+Every page of the site (the plan, the matrix, added pages; not the mockup screens) loads `site.js` and
+`kit/nav.js` after `kit/kit.js`, with `<header class="site-bar"></header>` first in the body. `site.js` is
+`window.SITE = { pages: [{ id, title, href, icon, group, blurb, parent, hidden }] }` in reading order, with
+`href` relative to the site's root (a page in a subfolder loads `../site.js` and `../kit/nav.js`). Add
+`.static` to the bar on a page with its own sticky toolbar. The bar is as wide as `.doc` (960px); a wider page
+sets `.site-bar { --page-max: 1440px; --page-pad: 24px; }` so the bar lines up with it, as the matrix does. nav.js fills, wherever they appear:
+`header.site-bar`, `[data-crumbs]`, `[data-pager]` and `[data-page-cards]`, and any `[data-site-pages]`
+button opens the Pages sheet. `K.site` gives `{ pages, current, home, open(), url(page) }`. The theme
+button sends `bp:theme`, like the viewer does.
+
 ## Tokens (kit/blueprint.css)
 
 Swap the `:root` and `[data-theme='dark']` blocks for a product's palette. Everything else reads tokens:
@@ -18,6 +30,8 @@ Fonts: Geist and Geist Mono ship in `kit/fonts/` (OFL). Replace them with the pr
 
 ## CSS classes
 
+- Site: `.site-bar` (+ `.static`), `.crumbs`, `.pager`, `.page-cards`, and the doc page classes `.doc .eyebrow
+  .lede .toc .tw .fig .cap .call .tag .stats .foot`
 - Buttons: `.btn` (+ `.primary .ghost .danger .sm`), `.icon-btn` (+ `.sm .on`), `.chip` (+ `.solid .btn-like`), `.kbd`, `.label`
 - Status dots: `.dot.live|info|ask|warn|bad|idle|off`. `live` pulses. Only attention states get colour.
 - Surfaces: `.card` (+ `.sm`), `.row` (+ `.active`), `.hair`, `.menu`/`.mi`/`.sep`/`.hd`, `.sheet`, `.toast`, `.tip`
