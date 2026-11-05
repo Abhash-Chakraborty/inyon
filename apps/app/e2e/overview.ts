@@ -469,6 +469,12 @@ try {
     await link.getByRole('button', { name: 'Copy link' }).click()
     await page.getByText('Link copied').waitFor()
     check((await page.evaluate(() => navigator.clipboard.readText())) === 'https://github.com/login/device', `${label}: the link is on the clipboard`)
+    // Enter on the focused button copies again; it doesn't answer with the focused choice
+    const answered = state.answers.length
+    await link.getByRole('button', { name: 'Copy link' }).focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(400)
+    check(state.answers.length === answered, `${label}: Enter on Copy link sends no answer`)
     await page.screenshot({ path: path.join(shots, `session-390-${scheme}-link-question.png`) })
     await layout(page, label)
     // the machine doesn't take the answer: a toast says so, and the card stays for another try

@@ -64,6 +64,7 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
         move |id: String, call: Call| {
             busy.set(Some(id));
             let (host, pane) = (host.clone(), pane.clone());
+            let tick = call.answers();
             spawn(async move {
                 let result = match &call {
                     Call::Answer { key, n, text } => api::answer(&host, &pane, &rules::answer(key, *n, text.as_deref())).await,
@@ -73,7 +74,9 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
                 match result {
                     // the screen replaces this card once the agent moves on
                     Ok(()) => {
-                        super::notices::haptic(inyon_chat_core::store::Haptic::Select);
+                        if tick {
+                            super::notices::haptic(inyon_chat_core::store::Haptic::Select);
+                        }
                         platform::sleep(2500).await;
                         busy.set(None);
                     }
@@ -170,7 +173,15 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
                         for u in links.iter() {
                             div { key: "{u}", class: "prompt-link",
                                 div { class: "prompt-link-url mono", "{u}" }
-                                div { class: "prompt-link-actions",
+                                div {
+                                    class: "prompt-link-actions",
+                                    // Enter on Open or Copy link is that button's, not a pick of the
+                                    // focused choice
+                                    onkeydown: move |e: KeyboardEvent| {
+                                        if e.key() == Key::Enter {
+                                            e.stop_propagation();
+                                        }
+                                    },
                                     a { class: "button button-sm button-primary", href: "{u}", target: "_blank", rel: "noreferrer",
                                         Glyph { icon: Icon::ExternalLink, size: 14 }
                                         "Open"
@@ -352,6 +363,14 @@ enum Call {
     Input(String),
 }
 
+impl Call {
+    /// An answer given (a choice or typed text), rather than a key pressed to move around the
+    /// question or cancel it: only an answer gives a tick.
+    fn answers(&self) -> bool {
+        !matches!(self, Call::Keys(_))
+    }
+}
+
 /// A command or a file's text, kept exactly as framed; an edit's diff in the diff colours.
 #[component]
 fn CodeLines(lines: Vec<String>) -> Element {
@@ -408,5 +427,18 @@ fn InputForm(label: String, locked: bool, on_submit: EventHandler<String>) -> El
                 Glyph { icon: Icon::Send, size: 16 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_answer_ticks_not_a_key_that_moves_or_cancels() {
+        assert!(Call::Answer { key: "k".into(), n: 1, text: None }.answers());
+        assert!(Call::Input("ab12".into()).answers());
+        assert!(!Call::Keys(vec!["Escape".into()]).answers());
+        assert!(!Call::Keys(vec!["Down".into()]).answers());
     }
 }
