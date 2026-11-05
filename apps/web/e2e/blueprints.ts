@@ -101,7 +101,7 @@ async function open(kind: 'phone' | 'desktop', scheme: 'light' | 'dark', width?:
       if (r.request().method() === 'PUT') state.settings = r.request().postDataJSON()
       return r.fulfill({ json: state.settings })
     }
-    // shared links, as a hub from 0.25.3 answers them
+    // shared links, as a hub from 0.25.4 answers them
     const method = r.request().method()
     const sh = /^\/api\/pages\/([^/]+)\/([^/]+)\/shares(?:\/([^/]+))?$/.exec(u.pathname)
     if (sh) {

@@ -57,7 +57,7 @@ Tap a card to open the page full screen. The bar on top has:
 
 - **Back**, which returns to the list, or from 0.25 to the session you opened the page from. The phone's own back button does the same, even after you've clicked around inside the page.
 - The page's name, and from 0.25 its tmux session under it. From 0.25.3 the machine and the part on screen follow the session's name.
-- **⋯** with **Reload**, **Open in browser** (not for a page on a computer paired with the phone directly), which from 0.25 opens the part or note on screen, **Plan**, **Mockups** and **Matrix** when the site has them, the site's [notes](#notes), the other pages on that machine, **Share…** (from 0.25.3) and **Open** the machine. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
+- **⋯** with **Reload**, **Open in browser** (not for a page on a computer paired with the phone directly), which from 0.25 opens the part or note on screen, **Plan**, **Mockups** and **Matrix** when the site has them, the site's [notes](#notes), the other pages on that machine, **Share…** (from 0.25.4) and **Open** the machine. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
 
 Before 0.25.3 the machine and **Notes** had buttons of their own in the bar, which left little room for the name on a narrow phone.
 
@@ -65,7 +65,7 @@ Under the bar, a line says **Sandboxed page: never sign in here**. It stays on s
 
 If the phone loses a hub for a moment (a weak signal, the VPN dropping, the hub restarting), its pages stay on the list, shown as offline, and an open page stays on screen with **Can't reach *hub* now** under the bar. Both catch up when the hub answers again. A hub that answers but refuses the phone, because the phone was forgotten there, is different: its pages leave the list and the app says ***hub* forgot this phone** until you pair it again.
 
-Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Share…** (from 0.25.3, see [Share a blueprint](#share-a-blueprint)), **Revoke links**, **Show folder** and **Remove**. **Show folder** lists the folder's path, the machine, the project and which agent added the page.
+Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Share…** (from 0.25.4, see [Share a blueprint](#share-a-blueprint)), **Revoke links**, **Show folder** and **Remove**. **Show folder** lists the folder's path, the machine, the project and which agent added the page.
 
 The Android app lists the pages of every hub you paired, all together, and from 0.24 also those on the computers paired with the phone directly.
 
@@ -95,7 +95,7 @@ Above the page:
 | **Fit**, **Phone**, **Tablet**, **Desktop** | Show the page filling the pane, or at 390 × 844, 820 × 1180 or 1440 × 900, scaled down to fit |
 | Reload | Load the page again, with a new link |
 | Open in new tab | The page on its own in a browser tab, with a new 12-hour link. From 0.25 it opens the part or note on screen |
-| **⋯** | **Share…** (from 0.25.3), **Revoke links**, **Copy folder path**, **Show folder** and **Remove** |
+| **⋯** | **Share…** (from 0.25.4), **Revoke links**, **Copy folder path**, **Show folder** and **Remove** |
 
 A machine's own page lists its pages too, under **Blueprints on this machine**.
 
@@ -128,7 +128,7 @@ A blueprint only goes when Inyon can tell its session is over:
 
 ## Share a blueprint
 
-From 0.25.3 you can hand a blueprint to someone who doesn't use Inyon, such as a product manager or a teammate, with a link of its own. Pick **Share…** in the blueprint's **⋯** menu or the viewer's **⋯**. The sheet asks two things:
+From 0.25.4 you can hand a blueprint to someone who doesn't use Inyon, such as a product manager or a teammate, with a link of its own. Pick **Share…** in the blueprint's **⋯** menu or the viewer's **⋯**. The sheet asks two things:
 
 | Choice | Options | Default |
 |---|---|---|
@@ -186,6 +186,6 @@ For the same reason, a session's **Preview** tab won't show Inyon's own address.
 | **Couldn't revoke the links**, because the hub couldn't write to its data folder | The hub's disk is full or read-only. The old links stay closed only until the hub restarts. Free some space, then revoke again |
 | **Link expired** inside the page | An old link, or the page's links were revoked. Press **Reload**, or open the page from the list again |
 | **Anyone with the link** is greyed out in **Share…** | The hub has no address for shared links yet. Set one in [Settings › Blueprints](settings.md#blueprints), or with `INYON_SHARE_ORIGIN`, and point a [reverse proxy](hub.md#a-public-address-for-shared-blueprints) at it |
-| **This hub can't share blueprints yet. Update it first.** | The page's hub is older than 0.25.3. Update it |
+| **This hub can't share blueprints yet. Update it first.** | The page's hub is older than 0.25.4. Update it |
 | A shared link opens on your network but not on the share address | It was made for **People on your network**. Make one for **Anyone with the link**. If none opens there, check that the proxy keeps the `Host` header |
 | A blank or unstyled page | It loads something from the internet. Copy those files into the folder and link them relatively |

@@ -514,7 +514,7 @@ export const api = {
   addPage: (host: string, b: PageRegister) => request<PageEntry>('POST', pg(host), b, 20_000),
   /** takes a page off the list; its folder stays */
   removePage: (host: string, slug: string) => request<{ ok: true }>('DELETE', pg(host, slug)),
-  // ---- shared links to a blueprint, for someone outside the app (hubs from 0.25.3) ----
+  // ---- shared links to a blueprint, for someone outside the app (hubs from 0.25.4) ----
   /** the page's live shared links, and the hub's public address for them */
   pageShares: (host: string, slug: string) => request<ShareList>('GET', `${pg(host, slug)}/shares`),
   /** a new shared link; `url` is shown this once (a path on the hub for your network, a full address for anyone) */

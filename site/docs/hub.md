@@ -173,11 +173,11 @@ The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash
 
 ## Blueprints
 
-From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else, and from 0.25.3 `/share/` too, for [shared links](pages.md#share-a-blueprint). [Security](security.md#blueprints) says how a page is kept away from your sign-in.
+From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else, and from 0.25.4 `/share/` too, for [shared links](pages.md#share-a-blueprint). [Security](security.md#blueprints) says how a page is kept away from your sign-in.
 
 ## A public address for shared blueprints
 
-From 0.25.3 your hub can stay private and still hand a blueprint to someone outside your network, such as a product manager. You give the hub a second address that is used only for shared links, and put a reverse proxy in front of it that forwards only `/share/`. Until you do both, every shared link stays on your network.
+From 0.25.4 your hub can stay private and still hand a blueprint to someone outside your network, such as a product manager. You give the hub a second address that is used only for shared links, and put a reverse proxy in front of it that forwards only `/share/`. Until you do both, every shared link stays on your network.
 
 1. Pick an address that isn't the one you open the app at, such as `https://share.example.com`, and point its DNS at the proxy.
 2. Tell the hub. Either set **Address for shared links** in [Settings › Blueprints](settings.md#blueprints), or put it in `~/.inyon/hub.env` and restart the hub:
