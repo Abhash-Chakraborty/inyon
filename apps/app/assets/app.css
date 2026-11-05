@@ -632,18 +632,25 @@ input:focus-visible { outline: none; }
 .tool-more { display: flex; width: 100%; align-items: center; gap: 10px; border-radius: 12px; padding: 7px 10px; text-align: left; font-size: 13.5px; color: var(--fg-3); }
 .tool-more:hover { background: var(--hover); }
 .tool-output-label { padding: 8px 12px 0; font-size: 12.5px; font-weight: 500; color: var(--fg-3); }
-.tool-output pre, .command-out, .patch { margin: 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: break-word; padding: 8px 12px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; color: var(--fg-2); }
+.tool-output pre, .command-out { margin: 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: break-word; padding: 8px 12px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; color: var(--fg-2); }
 .tool-command { display: flex; align-items: flex-start; gap: 8px; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); padding: 8px 12px; }
 .tool-command pre { margin: 0; min-width: 0; flex: 1; white-space: pre-wrap; overflow-wrap: break-word; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; }
 .tool-prompt { -webkit-user-select: none; user-select: none; font-size: 12.5px; color: var(--fg-3); }
 .tool-empty { padding: 8px 12px; font-size: 12px; color: var(--fg-3); }
 .tool-path { border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); padding: 6px 12px; font-size: 12px; color: var(--fg-3); }
-.patch { max-height: 384px; white-space: pre; font-size: 12px; line-height: 1.6; }
-.patch > div { margin: 0 -12px; padding: 0 12px; }
+/* an edit's diff: line number, sign, text; a ⋯ row between hunks */
+.diff { max-height: 384px; overflow: auto; padding: 6px 0; font-size: 12.5px; line-height: 1.55; }
+.diff-table { width: 100%; border-collapse: collapse; }
+.diff-no { width: 1%; padding: 0 8px; text-align: right; white-space: nowrap; color: color-mix(in srgb, var(--fg-3) 80%, transparent); -webkit-user-select: none; user-select: none; }
+.diff-sign { width: 1%; padding-left: 4px; color: var(--fg-3); -webkit-user-select: none; user-select: none; }
+.diff-text { padding: 0 16px 0 6px; white-space: pre; color: var(--fg-2); }
+.diff-gap { padding: 2px 12px; text-align: center; font-size: 12px; color: var(--fg-3); background: color-mix(in srgb, var(--raised) 60%, transparent); -webkit-user-select: none; user-select: none; }
+.diff-more { border-top: 1px solid var(--line); padding: 6px 12px; font-family: var(--font-sans); font-size: 12px; color: var(--fg-3); }
 .diff-add { background: var(--diff-add); color: var(--fg); }
 .diff-del { background: var(--diff-del); color: var(--fg); }
-.diff-hunk { font-weight: 500; color: var(--fg-2); }
-.diff-same { color: var(--fg-3); }
+.diff-add .diff-sign { color: var(--ok); }
+.diff-del .diff-sign { color: var(--danger); }
+.diff-add .diff-text, .diff-del .diff-text { color: var(--fg); }
 .tool-agent { padding: 10px 12px; }
 .tool-agent .tool-output-label { padding: 0 0 4px; }
 .tool-agent-prompt { white-space: pre-wrap; font-size: 13px; line-height: 1.6; color: var(--fg-2); }

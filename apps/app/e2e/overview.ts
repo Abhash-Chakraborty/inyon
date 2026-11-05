@@ -340,6 +340,13 @@ try {
       await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}.png`) })
       // the reply's code block, open tool details and the indented message, from closer up
       await page.getByRole('button', { name: /Edited|Edit/ }).last().click()
+      // the edit as numbered lines: the old file's numbers on removed lines, the new one's on added
+      const diff = page.locator('.diff').last()
+      await diff.waitFor()
+      const lines = await diff.locator('tr').evaluateAll((trs) => trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent).join('|')))
+      check(lines.join(' / ') === '1|−|export function total(cart: Cart) { / 2|−|  applyDiscount(cart) / 1|+|export async function total(cart: Cart) { / 2|+|  const discounted = await applyDiscount(cart)', `${label}: the edit's diff, numbered (${lines.join(' / ')})`)
+      await diff.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-diff.png`) })
       await page.getByText('expect(total).toBe(4200)').scrollIntoViewIfNeeded()
       await page.waitForTimeout(400)
       await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-history.png`) })
