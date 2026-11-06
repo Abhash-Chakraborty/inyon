@@ -163,8 +163,11 @@ for (const [w, h] of SIZES)
       state.refuseWs = true
       dropSockets()
       check(await page.getByRole('status').filter({ hasText: 'Reconnecting…' }).waitFor({ timeout: 6000 }).then(() => true, () => false), `${tag} drop: the chat says Reconnecting…`)
+      // a note changed elsewhere while this page was away comes in with the reconnect
+      state.marks = [{ ...state.marks[0]!, note: 'Merged after the coupon fix' }]
       state.refuseWs = false
       check(await page.getByRole('status').filter({ hasText: 'Reconnecting…' }).waitFor({ state: 'detached', timeout: 15000 }).then(() => true, () => false), `${tag} drop: and stops once it's back`)
+      check(await until(async () => /Merged after the coupon fix/.test((await kept(page, 'inyon.organize.v1')) ?? '')), `${tag} drop: marks changed meanwhile arrive with the reconnect`)
       // the refused tries are in the browser's log
       for (let i = errors.length - 1; i >= 0; i--) if (/Unexpected response code: 503/.test(errors[i]!)) errors.splice(i, 1)
 

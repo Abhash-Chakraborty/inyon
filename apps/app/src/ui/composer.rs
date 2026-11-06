@@ -244,13 +244,19 @@ pub fn Composer(
         });
     }
     let typed = use_hook(|| Rc::new(Cell::new(0u32)));
+    // your edit: shown at once, sent to the hub once typing pauses, or once the socket is up when
+    // that's later (a message for a socket not yet open is dropped)
+    let unsent = use_hook(|| Rc::new(RefCell::new(None::<String>)));
 
     // a draft from the terminal or another device
     {
-        let synced = synced.clone();
+        let (synced, unsent, typed) = (synced.clone(), unsent.clone(), typed.clone());
         use_effect(use_reactive!(|draft| {
             let Some((server, _, terminal)) = draft else { return };
             if adopt(&server, &synced.borrow(), &text.peek(), *focused.peek()) {
+                // an edit still waiting to go would put the old text back over it
+                unsent.borrow_mut().take();
+                typed.set(typed.get() + 1);
                 *synced.borrow_mut() = server.clone();
                 text.set(server);
                 from_terminal.set(terminal);
@@ -278,9 +284,6 @@ pub fn Composer(
             }
         }
     };
-    // your edit: shown at once, sent to the hub once typing pauses, or once the socket is up when
-    // that's later (a message for a socket not yet open is dropped)
-    let unsent = use_hook(|| Rc::new(RefCell::new(None::<String>)));
     let off = use_hook(|| Rc::new(Cell::new(disabled)));
     off.set(disabled);
     let set_text = {
@@ -307,12 +310,17 @@ pub fn Composer(
     let _leaving = use_hook(|| {
         let (typed, synced, unsent, out, host, pane) = (typed.clone(), synced.clone(), unsent.clone(), out.clone(), host.clone(), pane.clone());
         Rc::new(dom::on_leave(move || {
-            let Some(value) = unsent.borrow_mut().take() else { return };
-            // the timer's push is then stale
-            typed.set(typed.get() + 1);
-            if *synced.borrow() != value {
-                *synced.borrow_mut() = value.clone();
-                out.send_now(state::wire(&ClientMsg::Draft { host: host.clone(), pane: pane.clone(), text: value }));
+            let Some(value) = unsent.borrow().clone() else { return };
+            if *synced.borrow() == value {
+                unsent.borrow_mut().take();
+                return;
+            }
+            // with no socket open it stays unsent, for the timer or the reconnect to send
+            if out.send_now(state::wire(&ClientMsg::Draft { host: host.clone(), pane: pane.clone(), text: value.clone() })) {
+                unsent.borrow_mut().take();
+                // the timer's push is then stale
+                typed.set(typed.get() + 1);
+                *synced.borrow_mut() = value;
             }
         }))
     });

@@ -148,7 +148,9 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     // only the hub's own overview can say a pane is gone, not the copy a reload draws first
     // a chat page kept in the browser doesn't keep a pane alive; one the hub sends does
     let kept = c.get(&key).is_some_and(|e| e.chat.stale);
-    let gone = h.confirmed() && r.is_none() && (info.is_none() || kept);
+    // and only a machine that's online can say its pane closed
+    let reporting = h.hosts.iter().any(|x| x.config.id == host && x.status == inyon_protocol::HostStatus::Online);
+    let gone = h.confirmed() && reporting && r.is_none() && (info.is_none() || kept);
     let machine = h.hosts.iter().find(|x| x.config.id == host).map(|x| x.config.name.clone());
     let skin = agent.filter(|_| settings.agent_skins);
     let ctx = Ctx {
@@ -162,7 +164,10 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     };
     // the pane's machine, or the machine by its id while the pane isn't listed
     let machine_up = r.map(|r| r.host).or(h.hosts.iter().find(|x| x.config.id == host)).is_none_or(|m| m.status == inyon_protocol::HostStatus::Online);
-    let connected = h.connected && machine_up;
+    // and nothing goes to a pane until the hub's own overview says it's this one: a pane id kept
+    // from before a reload may belong to another session by now (drafts wait meanwhile)
+    let connected = h.connected && h.confirmed() && machine_up;
+    let confirmed = h.confirmed();
     // what the chat says about it: nothing while the first connection is still opening
     let offline = h.offline() || !machine_up;
     let home = home_view(agent);
@@ -213,7 +218,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                             "{s.label()}"
                         }
                     }
-                    if has_pane {
+                    if has_pane && confirmed {
                         button {
                             id: "session-more",
                             class: "icon-button icon-button-lg press",

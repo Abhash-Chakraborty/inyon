@@ -69,6 +69,18 @@ export function resetChats() {
 }
 resetChats()
 const EPOCH = 1
+// the organize stream's place moves on whenever the marks change, so a socket that comes back
+// with an older place gets them again instead of an empty delta
+let marksSeen = '[]'
+let marksSeq = 1
+function organizeSeq() {
+  const now = JSON.stringify(state.marks)
+  if (now !== marksSeen) {
+    marksSeen = now
+    marksSeq++
+  }
+  return marksSeq
+}
 const sockets = new Set<Socket>()
 /** Closes every socket, as a hub restarting does. */
 export function dropSockets() {
@@ -77,7 +89,7 @@ export function dropSockets() {
 
 function snapshot(stream: string) {
   if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { hosts: overview().hosts } }
-  if (stream === 'organize') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { sessions: state.marks, projects: [], groups: [], spaces: [] } }
+  if (stream === 'organize') return { t: 'snapshot', stream, epoch: EPOCH, seq: organizeSeq(), rows: { sessions: state.marks, projects: [], groups: [], spaces: [] } }
   const c = streams.get(stream)
   if (!c) return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { items: [] }, state: { loaded: true, hasMore: false } }
   return { t: 'snapshot', stream, epoch: EPOCH, seq: c.seq, rows: { items: c.items, live: [], queue: [] }, state: c.state }
@@ -233,7 +245,7 @@ const server = Bun.serve({
       if (msg.t === 'sub') {
         ws.data.subs.add(msg.stream)
         const c = streams.get(msg.stream)
-        const seq = msg.stream === 'overview' || msg.stream === 'organize' ? 1 : (c?.seq ?? 1)
+        const seq = msg.stream === 'overview' ? 1 : msg.stream === 'organize' ? organizeSeq() : (c?.seq ?? 1)
         if (msg.at?.epoch === EPOCH && msg.at.seq === seq) ws.send(JSON.stringify({ t: 'delta', stream: msg.stream, epoch: EPOCH, from: seq, seq }))
         else ws.send(JSON.stringify(snapshot(msg.stream)))
       }

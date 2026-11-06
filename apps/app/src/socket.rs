@@ -46,13 +46,19 @@ impl Outbox {
     }
 
     /// Sends now, on the open socket, for a page going away: the queue behind [`Outbox::send`]
-    /// would only be read after the page is gone. Queued as usual when no socket is open.
-    pub fn send_now(&self, json: String) {
+    /// would only be read after the page is gone. False when no socket is open in the browser,
+    /// where nothing is sent and the caller keeps the message to send once it can; the phone's
+    /// queue doesn't go away with a page, so there it's queued.
+    pub fn send_now(&self, json: String) -> bool {
         #[cfg(target_arch = "wasm32")]
-        if imp::send_now(&json) {
-            return;
+        {
+            imp::send_now(&json)
         }
-        self.send(json);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.send(json);
+            true
+        }
     }
 }
 
