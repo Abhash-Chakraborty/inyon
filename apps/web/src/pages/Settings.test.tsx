@@ -396,37 +396,125 @@ describe('Put idle agents to sleep', () => {
 
 describe('Settings › Blueprints › shared links', () => {
   const link = { id: 'a1', host: 'box', slug: 'plan', public: true, created: Date.now() - 86_400_000, expires: Date.now() + 6 * 86_400_000 + 3_600_000, opens: 4 }
-  test('the address is empty by default and saved as the hub keeps it', async () => {
+  const passed = { address: 'https://share.example.com', dns: { ok: true, addresses: ['203.0.113.4'] }, reach: { ok: true }, wall: { ok: true, open: [] } }
+  test('off by default; Set up walks through the name, DNS and proxy, then saves and checks', async () => {
     const user = userEvent.setup()
-    api.shares.mockResolvedValue({ address: null, fromEnv: false, links: [] })
-    api.setShareAddress.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [] })
+    api.shares.mockResolvedValue({ address: null, fromEnv: false, upstream: '127.0.0.1:4777', links: [] })
+    api.setShareAddress.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, upstream: '127.0.0.1:4777', links: [] })
+    api.checkShareAddress.mockResolvedValue(passed)
     await render(page())
-    const input = field('https://share.example.com')
-    expect(input.value).toBe('')
+    expect(screen.getByText('Off. Links stay on your network until you set one up.')).toBeTruthy()
     expect(screen.getByText('None live. Share a blueprint from its ⋯ menu.')).toBeTruthy()
-    await user.type(input, 'Share.Example.com')
-    await user.click(screen.getByRole('button', { name: 'Save the address for shared links' }))
-    expect(api.setShareAddress.mock.calls).toEqual([['Share.Example.com']])
-    expect(input.value).toBe('https://share.example.com')
-    expect((screen.getByRole('button', { name: 'Save the address for shared links' }) as HTMLButtonElement).disabled).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Set up' }))
+    const sheet = screen.getByRole('dialog', { name: 'Address for shared links' })
+    // a main domain gets the subdomain advice
+    const input = within(sheet).getByRole('textbox', { name: 'Name for shared links' }) as HTMLInputElement
+    await user.type(input, 'example.com')
+    expect(within(sheet).getByRole('status').textContent).toMatch(/main domain.*share\.example\.com/)
+    await user.clear(input)
+    await user.type(input, 'share.example.com')
+    expect(within(sheet).queryByRole('status')).toBeNull()
+    // the record and the proxy example follow the name, with the hub's own port
+    expect(within(sheet).getByRole('cell', { name: 'share' })).toBeTruthy()
+    expect(within(sheet).getByText(/handle \/share\/\*/).textContent).toContain('reverse_proxy 127.0.0.1:4777')
+    await user.click(within(sheet).getByRole('radio', { name: 'nginx' }))
+    expect(within(sheet).getByText(/proxy_set_header Host \$host;/)).toBeTruthy()
+    await user.click(within(sheet).getByRole('button', { name: 'Save and check' }))
+    expect(api.setShareAddress.mock.calls).toEqual([['https://share.example.com']])
+    expect(api.checkShareAddress).toHaveBeenCalledTimes(1)
+    expect(within(sheet).getByText('Links reach this hub')).toBeTruthy()
+    expect(within(sheet).getByText('Nothing else answers there')).toBeTruthy()
   })
 
-  test("a refused address says why under the field", async () => {
+  test("a refused address says why in the sheet, and a failed check says what to fix", async () => {
     const user = userEvent.setup()
     api.shares.mockResolvedValue({ address: null, fromEnv: false, links: [] })
     api.setShareAddress.mockRejectedValue(new Error("That's the address you're using Inyon at."))
     await render(page())
-    await user.type(field('https://share.example.com'), 'hub.test')
-    await user.click(screen.getByRole('button', { name: 'Save the address for shared links' }))
-    expect(screen.getByRole('alert').textContent).toBe("That's the address you're using Inyon at.")
+    await user.click(screen.getByRole('button', { name: 'Set up' }))
+    const sheet = screen.getByRole('dialog', { name: 'Address for shared links' })
+    await user.type(within(sheet).getByRole('textbox', { name: 'Name for shared links' }), 'hub.test')
+    await user.click(within(sheet).getByRole('button', { name: 'Save and check' }))
+    expect(within(sheet).getByRole('alert').textContent).toBe("That's the address you're using Inyon at.")
+  })
+
+  test('a saved address shows on the row even when its check fails, and a check hides once the name changes', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: null, fromEnv: false, links: [] })
+    api.setShareAddress.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [] })
+    api.checkShareAddress.mockRejectedValueOnce(new Error('The hub took too long to answer.'))
+    await render(page())
+    await user.click(screen.getByRole('button', { name: 'Set up' }))
+    const sheet = screen.getByRole('dialog', { name: 'Address for shared links' })
+    const input = within(sheet).getByRole('textbox', { name: 'Name for shared links' })
+    await user.type(input, 'share.example.com')
+    await user.click(within(sheet).getByRole('button', { name: 'Save and check' }))
+    expect(within(sheet).getByRole('alert').textContent).toBe('The hub took too long to answer.')
+    expect(screen.getByText('Links for anyone open here.', { exact: false })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Turn off' })).toBeTruthy()
+    // the saved name now only needs a check, and its result goes once the name is edited
+    api.checkShareAddress.mockResolvedValue(passed)
+    await user.click(within(sheet).getByRole('button', { name: 'Check' }))
+    expect(within(sheet).getByText('Links reach this hub')).toBeTruthy()
+    await user.type(input, 'x')
+    expect(within(sheet).queryByText('Links reach this hub')).toBeNull()
+    expect(within(sheet).queryByRole('button', { name: 'Done' })).toBeNull()
+  })
+
+  test('Change keeps an http address or a port as saved, and a name no certificate fits is not saved', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: 'http://share.example.com:8080', fromEnv: false, links: [] })
+    await render(page())
+    await user.click(screen.getByRole('button', { name: 'Change' }))
+    const sheet = screen.getByRole('dialog', { name: 'Address for shared links' })
+    const input = within(sheet).getByRole('textbox', { name: 'Name for shared links' }) as HTMLInputElement
+    expect(input.value).toBe('http://share.example.com:8080')
+    expect(within(sheet).getByRole('button', { name: 'Check' })).toBeTruthy()
+    await user.clear(input)
+    await user.type(input, 'share{{.example.com')
+    expect(within(sheet).getByRole('status').textContent).toMatch(/letters, digits and hyphens/)
+    expect((within(sheet).getByRole('button', { name: 'Save and check' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(sheet).getByText(/handle \/share\/\*/).textContent).toContain('share.example.com {')
+  })
+
+  test('Check on the row shows what the hub found', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [] })
+    api.checkShareAddress.mockResolvedValue({ ...passed, reach: { ok: false, fault: 'not-hub', status: 421 }, wall: { ok: false, open: [] } })
+    await render(page())
+    expect(screen.getByText('share.example.com')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Check' }))
+    expect(screen.getByText('share.example.com answered 421, but not from this hub')).toBeTruthy()
+    expect(screen.getByText('The last check found something to fix.', { exact: false })).toBeTruthy()
   })
 
   test('an address set by INYON_SHARE_ORIGIN is shown, not changed here', async () => {
+    const user = userEvent.setup()
     api.shares.mockResolvedValue({ address: 'https://share.example.com', fromEnv: true, links: [] })
     await render(page())
-    expect(field('https://share.example.com').readOnly).toBe(true)
-    expect(screen.getByText('Set by INYON_SHARE_ORIGIN on the hub.')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Save the address for shared links' })).toBeNull()
+    expect(screen.getByText(/Set by INYON_SHARE_ORIGIN\./)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Turn off' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Guide' }))
+    const sheet = screen.getByRole('dialog', { name: 'Address for shared links' })
+    expect((within(sheet).getByRole('textbox', { name: 'Name for shared links' }) as HTMLInputElement).readOnly).toBe(true)
+    expect(within(sheet).getByRole('button', { name: 'Check' })).toBeTruthy()
+  })
+
+  test('Turn off asks first, then clears the address', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [] })
+    api.setShareAddress.mockResolvedValue({ address: null, fromEnv: false, links: [] })
+    await render(
+      <MemoryRouter>
+        <Settings />
+        <ConfirmHost />
+      </MemoryRouter>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Turn off' }))
+    await user.click(within(screen.getByRole('dialog', { name: 'Turn off the public address?' })).getByRole('button', { name: 'Turn off' }))
+    await flush()
+    expect(api.setShareAddress.mock.calls).toEqual([['']])
+    expect(screen.getByText('Off. Links stay on your network until you set one up.')).toBeTruthy()
   })
 
   test('every live link with Revoke, and Revoke all after asking', async () => {

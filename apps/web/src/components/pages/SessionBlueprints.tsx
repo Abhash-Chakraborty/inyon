@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ChevronLeft, ExternalLink, Maximize2, PanelsTopLeft, RotateCw, ShieldCheck } from 'lucide-react'
+import { ChevronLeft, ExternalLink, Maximize2, PanelsTopLeft, RotateCw, Share2, ShieldCheck } from 'lucide-react'
 import { PART_LABEL, browserPath, noteTitle, pageHref, sessionCount, sessionPages, tmuxOf, usePages, type Page, type Part, type SessionList } from '../../lib/pages.ts'
 import { Empty, IconButton, Menu, Segmented } from '../ui/primitives.tsx'
 import type { SessionModel } from '../session/useSession.ts'
-import { PageFrame, PageRows, SANDBOX_NOTE, openInBrowser, useMachines, useNames } from './shared.tsx'
+import { PageFrame, PageRows, SANDBOX_NOTE, openInBrowser, openPageSheet, useMachines, useNames } from './shared.tsx'
 import { notesMenu, useViewer } from './viewer.tsx'
 
 /** A session's blueprints (see sessionPages), live from the list, with the tmux session it runs in. */
@@ -70,7 +70,7 @@ export function SessionBlueprints({ list, tmux, from, inline, viewerClass }: { l
 
 /**
  * One blueprint open beside the session: which it is, its session and machine, its parts, the
- * frame, and the viewer's own controls in small (reload, a new tab, the full view).
+ * frame, and the viewer's own controls in small (reload, share, a new tab, the full view).
  */
 function SideViewer({ page, onBack, className }: { page: Page; onBack: () => void; className?: string }) {
   const v = useViewer(page)
@@ -88,6 +88,7 @@ function SideViewer({ page, onBack, className }: { page: Page; onBack: () => voi
           <div className="viewer-where truncate font-mono text-[12px] text-fg-3">{where}</div>
         </div>
         <IconButton label="Reload" disabled={!v.link} onClick={v.reload}><RotateCw className="size-4" /></IconButton>
+        {!v.bridged && <IconButton label="Share…" onClick={() => openPageSheet({ kind: 'share', page })}><Share2 className="size-4" /></IconButton>}
         {/* the Blueprints screen, whose back comes here again */}
         <IconButton label="Open full view" onClick={() => nav(pageHref(page.host, page.slug), { state: { from: here.pathname + here.search } })}><Maximize2 className="size-4" /></IconButton>
         {!v.bridged && (

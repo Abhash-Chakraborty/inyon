@@ -112,7 +112,20 @@ export interface ShareList {
   address: string | null
   /** set by INYON_SHARE_ORIGIN on the hub, so Settings can't change it */
   fromEnv: boolean
+  /** where a proxy on the hub's machine reaches it, such as 127.0.0.1:4777 (from 0.25.5) */
+  upstream?: string
   links: ShareLink[]
+}
+
+/** What the hub found checking its public address for shared links (from 0.25.5). */
+export interface ShareCheck {
+  address: string
+  /** the name looked up, and the addresses it points at */
+  dns: { ok: boolean; addresses: string[]; error?: string }
+  /** a request there reached this hub: the name, the certificate and the proxy all lead here */
+  reach: { ok: boolean; fault?: 'dns' | 'tls' | 'refused' | 'timeout' | 'not-hub' | 'other'; status?: number; error?: string }
+  /** nothing but /share/ answers there; `open` lists the paths that did, `unsure` those that didn't answer at all */
+  wall: { ok: boolean; open: { path: string; status: number }[]; unsure?: string[] }
 }
 
 /** What PATCH …/organize changes on a session; a field left out stays as it is. */
@@ -526,6 +539,7 @@ export const api = {
   revokeAllShares: () => request<{ revoked: number }>('DELETE', '/api/shares'),
   /** the public address for shared links ("" clears it) */
   setShareAddress: (address: string) => request<ShareList>('PUT', '/api/share-address', { address }),
+  checkShareAddress: () => request<ShareCheck>('POST', '/api/share-address/check', undefined, 45_000),
   /** a file of a page on a computer paired with the phone: the core answers `/v/<token>/…` itself (lib/pageBridge.ts) */
   pageFile: (path: string, method: 'GET' | 'HEAD') => send(new Request(new URL(path, location.href), { method, credentials: 'omit' })),
 

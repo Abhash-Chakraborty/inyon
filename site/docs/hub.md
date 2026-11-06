@@ -179,7 +179,9 @@ From 0.20 the hub also serves the sites your agents make on its machine, such as
 
 From 0.25.4 your hub can stay private and still hand a blueprint to someone outside your network, such as a product manager. You give the hub a second address that is used only for shared links, and put a reverse proxy in front of it that forwards only `/share/`. Until you do both, every shared link stays on your network.
 
-1. Pick an address that isn't the one you open the app at, such as `https://share.example.com`, and point its DNS at the proxy.
+From 0.25.5 **Set up** in [Settings › Blueprints](settings.md#blueprints) walks through these steps with your own name filled in, and checks the result. The steps by hand:
+
+1. Pick a subdomain you keep for this, such as `share.example.com`, not your main domain and not the address you open the app at. Point its DNS at the proxy with an A record (AAAA for IPv6). On Cloudflare, set the record to **DNS only** so your proxy gets the certificate, or keep Cloudflare's proxy on with SSL set to **Full (strict)**.
 2. Tell the hub. Either set **Address for shared links** in [Settings › Blueprints](settings.md#blueprints), or put it in `~/.inyon/hub.env` and restart the hub:
 
    ```sh
@@ -190,6 +192,8 @@ From 0.25.4 your hub can stay private and still hand a blueprint to someone outs
 3. Point the proxy at the hub for `/share/` only, keeping the `Host` header the visitor sent. Caddy and Traefik keep it by default; nginx needs `proxy_set_header Host $host`.
 
 The hub walls that address off by itself. A request whose `Host` or `X-Forwarded-Host` names it reaches only `/share/` links made for **Anyone with the link**. The app, the API, `/ws`, `/ws2`, `/node`, sign-in and the app's `/v/` links answer 404 there, even when the proxy forwards the whole host and even with a sign-in cookie, and a link made for your network gets **Link expired**. Keep both walls: the proxy forwarding only `/share/` and the hub's own 404. Don't add the share address to `INYON_ALLOWED_HOSTS`. If it's listed there too, the hub still answers only shared links on it, and says so in its log as it starts. The address you open the app at is refused in Settings, since the app would stop opening there.
+
+To check it, use **Check** in Settings. The hub looks the name up, then asks the address for a one-time answer that only it knows, through your proxy, so a pass means links really arrive at this hub and not somewhere else. It also asks for `/` and `/api/session` there and fails if either answers, or says it couldn't tell if one doesn't answer at all. Those two stand in for the rest: the proxy example forwards only `/share/`. A failed line names the cause: no DNS record yet, a bad certificate (often Cloudflare's proxy without Full (strict)), nothing listening, or a proxy that answered but didn't reach this hub or didn't keep the `Host` header.
 
 A shared page's Content-Security-Policy names the share address, so give it the scheme visitors use, which is `https://` behind a proxy with a certificate.
 

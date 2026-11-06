@@ -38,6 +38,13 @@ pub const MAX_LINKS: usize = 500;
 const OPENS_SAVE_MS: u64 = 30_000;
 /// A token: 16 random bytes as base64url, no padding.
 const TOKEN_LEN: usize = 22;
+/// Where the hub answers its own check of the public address (`check`). A token never starts with
+/// a dot, so this can't be a shared link.
+pub const CHECK_PREFIX: &str = "/share/.inyon-check/";
+/// How long a check's probe is answered.
+const PROBE_MS: u64 = 30_000;
+/// How many checks can run at once, each with its own probe.
+const MAX_PROBES: usize = 8;
 
 pub const NO_ADDRESS: &str = "Set an address for shared links in Settings › Blueprints first.";
 pub const BAD_DAYS: &str = "A shared link lasts from 1 to 30 days.";
@@ -107,6 +114,8 @@ pub struct Shares {
     env_address: Option<String>,
     saved_at: Cell<u64>,
     unsaved_opens: Cell<bool>,
+    /// the check in progress: the nonce in its path, the answer only this hub knows, and until when
+    probe: RefCell<Vec<(String, String, u64)>>,
 }
 
 impl Shares {
@@ -124,7 +133,14 @@ impl Shares {
             }
             None => None,
         };
-        Shares { links: RefCell::new(links), saved_address: RefCell::new(saved_address), env_address, saved_at: Cell::new(0), unsaved_opens: Cell::new(false) }
+        Shares {
+            links: RefCell::new(links),
+            saved_address: RefCell::new(saved_address),
+            env_address,
+            saved_at: Cell::new(0),
+            unsaved_opens: Cell::new(false),
+            probe: RefCell::new(Vec::new()),
+        }
     }
 
     /// The public share address (an origin such as `https://share.example.com`), if there is one.
@@ -256,6 +272,38 @@ impl Shares {
         Ok(())
     }
 
+    /// A new probe for `check`: the nonce to put in the path, and the answer this hub gives it. The
+    /// answer isn't in the request, so only this hub can give it: a proxy that echoes the path, or
+    /// another server on that name, can't.
+    /// Checks that overlap each keep their own probe, up to a few at once.
+    pub fn start_probe(&self, now: u64) -> (String, String) {
+        let (nonce, answer) = (crate::http::random_hex(16), crate::http::random_hex(16));
+        let mut probes = self.probe.borrow_mut();
+        probes.retain(|(_, _, until)| now < *until);
+        if probes.len() >= MAX_PROBES {
+            probes.remove(0);
+        }
+        probes.push((nonce.clone(), answer.clone(), now + PROBE_MS));
+        (nonce, answer)
+    }
+
+    /// The answer to a probe's nonce while it's live; None for anything else.
+    pub fn probe_answer(&self, nonce: &str, now: u64) -> Option<String> {
+        let probes = self.probe.borrow();
+        probes.iter().find(|(n, _, until)| now < *until && crate::http::same(n, nonce)).map(|(_, answer, _)| answer.clone())
+    }
+
+    /// Ends a probe once its check has its answer.
+    pub fn end_probe(&self, nonce: &str) {
+        self.probe.borrow_mut().retain(|(n, _, _)| n != nonce);
+    }
+
+    /// Whether a page has a link that hasn't run out, without touching the file (for cleanup, which
+    /// asks again right before it takes a page off, in case a link was made meanwhile).
+    pub fn shares_page(&self, host: &str, slug: &str, now: u64) -> bool {
+        self.links.borrow().iter().any(|s| s.host == host && s.slug == slug && s.expires > now)
+    }
+
     /// Saves opens counted since the last save (the hub stopping).
     pub fn flush(&self, now: u64) {
         if self.unsaved_opens.get() {
@@ -367,7 +415,101 @@ fn link_of(s: &Shares, share: &Share, token: &str) -> String {
 }
 
 fn listing(s: &Shares, links: Vec<Share>) -> Value {
-    json!({ "address": s.address(), "fromEnv": s.address_from_env(), "links": links.iter().map(Share::to_json).collect::<Vec<_>>() })
+    json!({ "address": s.address(), "fromEnv": s.address_from_env(), "upstream": upstream(), "links": links.iter().map(Share::to_json).collect::<Vec<_>>() })
+}
+
+/// Where a proxy on this machine reaches the hub, for the setup's examples: its port on loopback
+/// when it listens on every address, else the address it listens on.
+fn upstream() -> String {
+    let c = crate::server::ctx();
+    let host = match c.bind.as_str() {
+        "" | "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_owned(),
+        b if b.contains(':') && !b.starts_with('[') => format!("[{b}]"),
+        b => b.to_owned(),
+    };
+    format!("{host}:{}", c.port)
+}
+
+/// The answer on the public address to a probe from `check`: 200 with the answer while it's live,
+/// else the same 404 as any other path there.
+pub fn probe_reply(nonce: &str, head: bool) -> Resp {
+    let answer = current().and_then(|s| s.probe_answer(nonce.trim_end_matches('/'), now()));
+    let Some(answer) = answer else { return not_here(head) };
+    let headers = view_headers(&ViewHeaderInput { no_store: true, content_type: Some("text/plain;charset=utf-8"), shared: true, ..Default::default() });
+    let mut res = Resp::new(if head { Body::empty() } else { Body::from(answer) });
+    for (k, v) in &headers {
+        if let Ok(v) = HeaderValue::from_str(v) {
+            res.headers_mut().append(HeaderName::from_static(k), v);
+        }
+    }
+    res
+}
+
+/// What went wrong reaching the public address, from the HTTP client's message.
+pub fn fault_of(message: &str) -> &'static str {
+    let m = message.to_ascii_lowercase();
+    if ["certificate", "tls", "handshake", "unknownissuer", "notvalidforname"].iter().any(|k| m.contains(k)) {
+        "tls"
+    } else if ["dns", "resolve", "lookup", "no such host", "name or service", "nodename"].iter().any(|k| m.contains(k)) {
+        "dns"
+    } else if m.contains("refused") {
+        "refused"
+    } else if ["timeout", "timed out", "couldn't connect"].iter().any(|k| m.contains(k)) {
+        "timeout"
+    } else {
+        "other"
+    }
+}
+
+/// POST /api/share-address/check: whether links for anyone open at the public address. Looks the
+/// name up, then asks `/share/.inyon-check/<nonce>` there and expects the answer only this hub
+/// knows, which proves the name, the certificate and the proxy all lead here; then asks `/` and
+/// `/api/session`, which the proxy shouldn't forward. Only the saved address is checked, and only
+/// by the signed-in app.
+pub async fn check(_req: Req) -> HubResult<Resp> {
+    let s = shares()?;
+    let address = s.address().ok_or_else(|| http(409, NO_ADDRESS))?;
+    let u = url::Url::parse(&address).map_err(|_| http(400, BAD_ADDRESS))?;
+    let name = u.host_str().unwrap_or_default().trim_start_matches('[').trim_end_matches(']').to_owned();
+    let port = u.port_or_known_default().unwrap_or(443);
+    let timeout = std::time::Duration::from_secs(10);
+
+    let dns = match tokio::time::timeout(timeout, tokio::net::lookup_host((name.as_str(), port))).await {
+        Ok(Ok(addrs)) => {
+            let mut ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
+            ips.sort();
+            ips.dedup();
+            json!({ "ok": !ips.is_empty(), "addresses": ips })
+        }
+        Ok(Err(e)) => json!({ "ok": false, "addresses": [], "error": e.to_string() }),
+        Err(_) => json!({ "ok": false, "addresses": [], "error": "the lookup timed out" }),
+    };
+    if dns["ok"] != json!(true) {
+        return Ok(ok_json(&json!({ "address": address, "dns": dns, "reach": { "ok": false, "fault": "dns" }, "wall": { "ok": false, "open": [], "unsure": [] } })));
+    }
+
+    let (nonce, answer) = s.start_probe(now());
+    let reach = match inyon_engine::http::fetch("GET", format!("{address}{CHECK_PREFIX}{nonce}"), vec![], None, timeout).await {
+        Ok(r) if r.status == 200 && String::from_utf8_lossy(&r.body).trim() == answer => json!({ "ok": true }),
+        Ok(r) => json!({ "ok": false, "fault": "not-hub", "status": r.status }),
+        Err(e) => json!({ "ok": false, "fault": fault_of(&e), "error": e }),
+    };
+    s.end_probe(&nonce);
+
+    // what else answers there: nothing but /share/ should. One that doesn't answer at all proves
+    // nothing either way, so it's reported as unsure rather than closed.
+    let (mut open, mut unsure) = (Vec::new(), Vec::new());
+    if reach["ok"] == json!(true) {
+        for path in ["/", "/api/session"] {
+            match inyon_engine::http::fetch("GET", format!("{address}{path}"), vec![], None, timeout).await {
+                Ok(r) if (200..400).contains(&r.status) => open.push(json!({ "path": path, "status": r.status })),
+                Ok(_) => {}
+                Err(_) => unsure.push(json!(path)),
+            }
+        }
+    }
+    let wall = json!({ "ok": reach["ok"] == json!(true) && open.is_empty() && unsure.is_empty(), "open": open, "unsure": unsure });
+    Ok(ok_json(&json!({ "address": address, "dns": dns, "reach": reach, "wall": wall })))
 }
 
 /// GET /api/pages/:host/:slug/shares: the page's live links and the public address.
@@ -454,6 +596,7 @@ pub fn add(r: &mut Routes) {
     guarded(r, "/api/shares", vec![(Method::GET, h(all)), (Method::DELETE, h(revoke_all))]);
     guarded(r, "/api/shares/:id", vec![(Method::DELETE, h(unshare))]);
     guarded(r, "/api/share-address", vec![(Method::PUT, h(set_address))]);
+    guarded(r, "/api/share-address/check", vec![(Method::POST, h(check))]);
     guarded(r, "/api/pages/:host/:slug/shares", vec![(Method::GET, h(page_shares)), (Method::POST, h(share_page))]);
     guarded(r, "/api/pages/:host/:slug/shares/:id", vec![(Method::DELETE, h(unshare))]);
 }

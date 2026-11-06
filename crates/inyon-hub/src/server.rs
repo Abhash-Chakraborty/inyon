@@ -310,6 +310,10 @@ pub async fn dispatch(mut req: Req) -> Resp {
     // front forwards: no app, API, WebSocket or sign-in there (the path as fetch reads it)
     if crate::shares::on_share_host(&req) {
         req.path = inyon_core::features::pages_core::normalize_target(&req.path).0;
+        // the setup's check of this address (crate::shares::check)
+        if let Some(nonce) = req.path.strip_prefix(crate::shares::CHECK_PREFIX) {
+            return crate::shares::probe_reply(nonce, req.method == Method::HEAD);
+        }
         if req.path.starts_with(inyon_core::features::pages_core::SHARE_PREFIX) {
             return crate::pages::share_view(req).await;
         }
