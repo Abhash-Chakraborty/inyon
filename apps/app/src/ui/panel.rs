@@ -509,7 +509,7 @@ fn EditDiff(e: Edit, file: String, review: String) -> Element {
 #[component]
 pub fn DiffView(hunks: Vec<Hunk>, file: String, #[props(default)] review: Option<String>, #[props(default = 400)] max: usize) -> Element {
     let (rows, hidden) = changes::rows(&hunks, max);
-    let marked: Vec<(u64, bool)> =
+    let marked: Vec<(u32, bool)> =
         review.as_ref().map_or(vec![], |k| REVIEW.read().get(k).map_or(vec![], |l| l.iter().filter(|n| n.file == file).map(|n| (n.line, n.removed)).collect()));
     rsx! {
         div { class: "diff mono",
@@ -879,7 +879,7 @@ fn TreeDiff(host: String, pane: String, path: String) -> Element {
                 } else if diff.hunks.is_empty() {
                     div { class: "pp-note", "No line changes (only its mode or an empty file)." }
                 } else {
-                    DiffView { hunks: diff.hunks.clone(), file: path.clone(), review: Some(review) }
+                    DiffView { hunks: diff.hunks.iter().map(Hunk::from).collect::<Vec<_>>(), file: path.clone(), review: Some(review) }
                 }
             }
         }

@@ -3,7 +3,7 @@
 //! hunks, a diff's numbered lines, comments on diff lines, the dev servers the chat mentions, and
 //! what's running. Plain data, so it's tested natively.
 
-use inyon_protocol::{AssistantBlock, ChatInfo, ChatItem, PatchHunk, SubagentStatus, TaskStatus, TaskType, ToolResultMeta};
+use inyon_protocol::{AssistantBlock, ChatInfo, ChatItem, SubagentStatus, TaskStatus, TaskType, ToolResultMeta};
 use serde_json::Value;
 
 /// The tools whose calls change a file.
@@ -106,139 +106,14 @@ pub fn edit_word(e: &Edit) -> &'static str {
     }
 }
 
-// ---------- hunks ----------
+// ---------- diff lines ----------
 
-/// One stretch of a diff: where it starts in the old and the new file, and its lines with `+`, `-`
-/// or a space in front.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Hunk {
-    pub old_start: u64,
-    pub new_start: u64,
-    pub lines: Vec<String>,
-}
+pub use crate::diff::Hunk;
+use crate::diff::Sign;
 
-impl From<&PatchHunk> for Hunk {
-    fn from(h: &PatchHunk) -> Self {
-        Hunk { old_start: h.old_start.0.max(0.0) as u64, new_start: h.new_start.0.max(0.0) as u64, lines: h.lines.clone() }
-    }
-}
-
-/// The lines of context a computed hunk keeps around a change, as `structuredPatch` does.
-const CONTEXT: usize = 3;
-/// Past this many lines on a side, an edit shows as all out and all in instead of a line diff.
-const DIFF_MAX: usize = 2000;
-
-/// An edit's hunks: those the agent recorded, else worked out from the edit itself (the old and
-/// new text of each change, or a whole file written).
+/// An edit's hunks, as the chat's own diffs draw them (diff.rs).
 pub fn hunks(meta: Option<&ToolResultMeta>, input: &Value) -> Vec<Hunk> {
-    if let Some(p) = meta.and_then(|m| m.patch.as_ref()).filter(|p| !p.is_empty()) {
-        return p.iter().map(Hunk::from).collect();
-    }
-    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    let edits: Vec<(String, String)> = if let Some(list) = input.get("edits").and_then(Value::as_array) {
-        list.iter().map(|e| (s(e, "old_string"), s(e, "new_string"))).collect()
-    } else if input.get("old_string").is_some() {
-        vec![(s(input, "old_string"), s(input, "new_string"))]
-    } else {
-        vec![]
-    };
-    if !edits.is_empty() {
-        return edits.iter().flat_map(|(a, b)| line_diff(a, b)).collect();
-    }
-    if let Some(content) = input.get("content").and_then(Value::as_str) {
-        return vec![Hunk { old_start: 0, new_start: 1, lines: content.split('\n').map(|l| format!("+{l}")).collect() }];
-    }
-    vec![]
-}
-
-/// A text's lines as a diff counts them: a last newline ends the last line rather than starting one.
-fn split(s: &str) -> Vec<&str> {
-    if s.is_empty() {
-        return vec![];
-    }
-    let mut v: Vec<&str> = s.split('\n').collect();
-    if s.ends_with('\n') {
-        v.pop();
-    }
-    v
-}
-
-/// The hunks between two texts, with three lines of context.
-pub fn line_diff(old: &str, new: &str) -> Vec<Hunk> {
-    let (a, b) = (split(old), split(new));
-    let ops = ops(&a, &b);
-    group(&ops)
-}
-
-/// The longest common run of lines, as a list of kept, removed and added lines.
-fn ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(char, &'a str)> {
-    // the same start and end need no table
-    let pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-    let suf = a[pre..].iter().rev().zip(b[pre..].iter().rev()).take_while(|(x, y)| x == y).count();
-    let (am, bm) = (&a[pre..a.len() - suf], &b[pre..b.len() - suf]);
-    let mut out: Vec<(char, &str)> = a[..pre].iter().map(|l| (' ', *l)).collect();
-    if am.len() > DIFF_MAX || bm.len() > DIFF_MAX {
-        out.extend(am.iter().map(|l| ('-', *l)));
-        out.extend(bm.iter().map(|l| ('+', *l)));
-    } else {
-        let (n, m) = (am.len(), bm.len());
-        // lcs[i][j]: the longest common run of am[i..] and bm[j..]
-        let mut lcs = vec![vec![0u32; m + 1]; n + 1];
-        for i in (0..n).rev() {
-            for j in (0..m).rev() {
-                lcs[i][j] = if am[i] == bm[j] { lcs[i + 1][j + 1] + 1 } else { lcs[i + 1][j].max(lcs[i][j + 1]) };
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < n || j < m {
-            if i < n && j < m && am[i] == bm[j] {
-                out.push((' ', am[i]));
-                i += 1;
-                j += 1;
-            } else if i < n && (j == m || lcs[i + 1][j] >= lcs[i][j + 1]) {
-                out.push(('-', am[i]));
-                i += 1;
-            } else {
-                out.push(('+', bm[j]));
-                j += 1;
-            }
-        }
-    }
-    out.extend(a[a.len() - suf..].iter().map(|l| (' ', *l)));
-    out
-}
-
-/// Changed lines with their context, split where more than twice the context lies between.
-fn group(ops: &[(char, &str)]) -> Vec<Hunk> {
-    let changed: Vec<usize> = ops.iter().enumerate().filter(|(_, o)| o.0 != ' ').map(|(i, _)| i).collect();
-    let mut out = vec![];
-    let mut k = 0;
-    while k < changed.len() {
-        let start = changed[k].saturating_sub(CONTEXT);
-        let mut end = changed[k];
-        while k + 1 < changed.len() && changed[k + 1] - end <= 2 * CONTEXT + 1 {
-            k += 1;
-            end = changed[k];
-        }
-        let end = (end + CONTEXT + 1).min(ops.len());
-        let (mut o, mut n) = (1u64, 1u64);
-        for op in &ops[..start] {
-            if op.0 != '+' {
-                o += 1;
-            }
-            if op.0 != '-' {
-                n += 1;
-            }
-        }
-        let lines: Vec<String> = ops[start..end].iter().map(|(c, l)| format!("{c}{l}")).collect();
-        let olds = lines.iter().filter(|l| !l.starts_with('+')).count();
-        let news = lines.iter().filter(|l| !l.starts_with('-')).count();
-        // a side with no lines starts before where it would be, as unified diffs write it
-        out.push(Hunk { old_start: if olds == 0 { o - 1 } else { o }, new_start: if news == 0 { n - 1 } else { n }, lines });
-        k += 1;
-    }
-    out
+    crate::diff::of_call(meta.and_then(|m| m.patch.as_deref()), input)
 }
 
 /// A row of a drawn diff: a line, or the gap between two hunks.
@@ -252,43 +127,24 @@ pub enum Row {
 /// it was added or taken out, and its text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
-    pub no: u64,
+    pub no: u32,
     pub add: bool,
     pub removed: bool,
     pub text: String,
 }
 
-/// The rows a diff draws, at most `max` lines, and how many more there are.
+/// The rows a diff draws (diff.rs numbers them), at most `max` lines, and how many more there are.
 pub fn rows(hunks: &[Hunk], max: usize) -> (Vec<Row>, usize) {
-    let (mut out, mut shown, mut hidden) = (vec![], 0, 0);
-    for (hi, h) in hunks.iter().enumerate() {
-        let (mut o, mut n) = (h.old_start, h.new_start);
-        if hi > 0 {
-            out.push(Row::Gap);
-        }
-        for l in &h.lines {
-            // "\ No newline at end of file" is not a line of the file
-            if l.starts_with('\\') {
-                continue;
-            }
-            if shown >= max {
-                hidden += 1;
-                continue;
-            }
-            shown += 1;
-            let (add, del) = (l.starts_with('+'), l.starts_with('-'));
-            let text = l.get(1..).unwrap_or("").to_string();
-            let no = if del { o } else { n };
-            if !add {
-                o += 1;
-            }
-            if !del {
-                n += 1;
-            }
-            out.push(Row::Line(Line { no, add, removed: del, text }));
-        }
-    }
-    (out, hidden)
+    let d = crate::diff::rows(hunks, max);
+    let rows = d
+        .rows
+        .into_iter()
+        .map(|r| match r {
+            crate::diff::Row::Gap => Row::Gap,
+            crate::diff::Row::Line { no, sign, text } => Row::Line(Line { no, add: sign == Sign::Add, removed: sign == Sign::Del, text }),
+        })
+        .collect();
+    (rows, d.hidden)
 }
 
 // ---------- comments ----------
@@ -297,7 +153,7 @@ pub fn rows(hunks: &[Hunk], max: usize) -> (Vec<Row>, usize) {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Note {
     pub file: String,
-    pub line: u64,
+    pub line: u32,
     /// the line was taken out (its number is in the old file)
     pub removed: bool,
     pub code: String,
@@ -305,7 +161,7 @@ pub struct Note {
 }
 
 impl Note {
-    pub fn on(&self, file: &str, line: u64, removed: bool) -> bool {
+    pub fn on(&self, file: &str, line: u32, removed: bool) -> bool {
         self.file == file && self.line == line && self.removed == removed
     }
 }
@@ -447,6 +303,7 @@ pub fn running(info: Option<&ChatInfo>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inyon_protocol::PatchHunk;
     use serde_json::json;
 
     fn call(seq: i64, id: &str, name: &str, input: Value) -> ChatItem {
@@ -513,17 +370,10 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_without_a_recorded_patch_gets_a_line_diff() {
+    fn an_edit_without_a_recorded_patch_is_worked_out() {
         let h = hunks(None, &json!({ "old_string": "a\nb\nc\nd\ne\nf\ng\nh\ni\nj", "new_string": "a\nb\nc\nd\nE\nf\ng\nh\ni\nj" }));
         assert_eq!(h.len(), 1);
-        assert_eq!((h[0].old_start, h[0].new_start), (2, 2));
         assert_eq!(h[0].lines, [" b", " c", " d", "-e", "+E", " f", " g", " h"]);
-        // two changes far apart are two hunks
-        let old = (1..=20).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
-        let new = old.replace("\n2\n", "\ntwo\n").replace("\n19\n", "\nnineteen\n");
-        let h = line_diff(&old, &new);
-        assert_eq!(h.len(), 2);
-        assert_eq!((h[1].old_start, h[1].new_start), (16, 16));
         // a file written whole is all added
         let h = hunks(None, &json!({ "content": "x\ny" }));
         assert_eq!(h, [Hunk { old_start: 0, new_start: 1, lines: vec!["+x".into(), "+y".into()] }]);
@@ -539,8 +389,9 @@ mod tests {
         let nos: Vec<_> = rows.iter().map(|r| if let Row::Line(l) = r { (l.no, l.removed) } else { (0, false) }).collect();
         assert_eq!(nos, [(12, false), (11, true), (13, false), (14, false), (0, false), (42, false)]);
         assert_eq!(hidden, 0);
+        // past the limit: no gap before a hunk that shows nothing
         let (rows, hidden) = super::rows(&h, 2);
-        assert_eq!((rows.len(), hidden), (3, 3));
+        assert_eq!((rows.len(), hidden), (2, 3));
     }
 
     #[test]

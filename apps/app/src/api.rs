@@ -1176,7 +1176,7 @@ pub struct GitDiff {
     #[serde(default)]
     pub binary: bool,
     #[serde(default)]
-    pub hunks: Vec<crate::changes::Hunk>,
+    pub hunks: Vec<inyon_protocol::PatchHunk>,
 }
 
 pub async fn git_diff(host: &str, pane: &str, path: &str) -> Result<GitDiff, ApiError> {
