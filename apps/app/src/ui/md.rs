@@ -86,17 +86,16 @@ pub fn CodeBlock(lang: Option<String>, code: String) -> Element {
         items
     };
     let hl = highlight::wanted(lang.as_deref(), &text).map(str::to_string);
-    // bumped when a language arrives, so the block colours itself then
-    let mut arrived = use_signal(|| 0u32);
+    // read again whenever a grammar arrives, so the block colours itself then
     let lit = use_memo(use_reactive!(|hl, text| {
-        arrived();
+        highlight::ARRIVED();
         hl.as_deref().and_then(|l| highlight::now(l, &text))
     }));
     use_effect(use_reactive!(|hl| {
         if let Some(l) = hl.filter(|_| lit.peek().is_none()) {
             spawn(async move {
                 if highlight::load(&l).await {
-                    arrived += 1;
+                    *highlight::ARRIVED.write() += 1;
                 }
             });
         }

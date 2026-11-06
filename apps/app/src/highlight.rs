@@ -3,12 +3,19 @@
 //! the first time a block in it shows. A block in a language that isn't shipped, or one that's too
 //! big, stays plain, and so does every block until its language is here.
 
+use dioxus::prelude::*;
+
 /// Above this many characters a block stays plain: highlighting it would hold up the page.
 const MAX_CHARS: usize = 200_000;
 
+/// How many grammars have arrived. Every block reads it, so one left plain because its own load
+/// failed is coloured when another block brings the same language in, without fetching again.
+pub static ARRIVED: GlobalSignal<u32> = Signal::global(|| 0);
+
 /// The fence's language when a block of `code` in it should be coloured.
 pub fn wanted<'a>(lang: Option<&'a str>, code: &str) -> Option<&'a str> {
-    lang.map(str::trim).filter(|l| !l.is_empty() && !code.is_empty() && code.len() < MAX_CHARS)
+    // characters, not bytes, so a block in another script gets the same room
+    lang.map(str::trim).filter(|l| !l.is_empty() && !code.is_empty() && code.chars().count() <= MAX_CHARS)
 }
 
 /// The block's markup (escaped text in `hljs-*` spans) when highlight.js and the language are
@@ -71,6 +78,11 @@ mod js {
                 s.set_type("module");
                 s.set_src(&src);
                 let _ = s.set_attribute("data-inyon-hl", "");
+                // a script that fails is taken out by the page itself, so the next block tries
+                // again even if the block that added it is gone before the error comes
+                let gone = s.clone();
+                let drop_it = wasm_bindgen::closure::Closure::once_into_js(move || gone.remove());
+                let _ = s.add_event_listener_with_callback("error", drop_it.unchecked_ref());
                 doc.head()?.append_child(&s).ok()?;
                 s
             }
@@ -82,13 +94,8 @@ mod js {
             let _ = script.add_event_listener_with_callback("load", &resolve);
             let _ = script.add_event_listener_with_callback("error", &reject);
         });
-        let loaded = wasm_bindgen_futures::JsFuture::from(done).await;
-        let a = api();
-        // a script that failed is taken out, so the next block tries again
-        if loaded.is_err() && a.is_none() {
-            script.remove();
-        }
-        a
+        let _ = wasm_bindgen_futures::JsFuture::from(done).await;
+        api()
     }
 
     pub async fn load(lang: &str) -> bool {
@@ -110,7 +117,10 @@ mod tests {
         assert_eq!(wanted(None, "plain"), None);
         assert_eq!(wanted(Some(""), "plain"), None);
         assert_eq!(wanted(Some("rust"), ""), None);
-        assert_eq!(wanted(Some("json"), &"1".repeat(MAX_CHARS)), None);
+        assert_eq!(wanted(Some("json"), &"1".repeat(MAX_CHARS)), Some("json"));
+        assert_eq!(wanted(Some("json"), &"1".repeat(MAX_CHARS + 1)), None);
+        // counted in characters: 200,000 of a 3-byte one still fit
+        assert_eq!(wanted(Some("text"), &"語".repeat(MAX_CHARS)), Some("text"));
         // nothing loads outside a browser, so a block there stays plain
         assert_eq!(now("rust", "fn main() {}"), None);
     }
