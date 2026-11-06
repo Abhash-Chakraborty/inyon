@@ -438,6 +438,45 @@ describe('Settings › Blueprints › shared links', () => {
     expect(within(sheet).getByRole('alert').textContent).toBe("That's the address you're using Inyon at.")
   })
 
+  test('a saved address shows on the row even when its check fails, and a check hides once the name changes', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: null, fromEnv: false, links: [] })
+    api.setShareAddress.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [] })
+    api.checkShareAddress.mockRejectedValueOnce(new Error('The hub took too long to answer.'))
+    await render(page())
+    await user.click(screen.getByRole('button', { name: 'Set up' }))
+    const sheet = screen.getByRole('dialog', { name: 'Address for shared links' })
+    const input = within(sheet).getByRole('textbox', { name: 'Name for shared links' })
+    await user.type(input, 'share.example.com')
+    await user.click(within(sheet).getByRole('button', { name: 'Save and check' }))
+    expect(within(sheet).getByRole('alert').textContent).toBe('The hub took too long to answer.')
+    expect(screen.getByText('Links for anyone open here.', { exact: false })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Turn off' })).toBeTruthy()
+    // the saved name now only needs a check, and its result goes once the name is edited
+    api.checkShareAddress.mockResolvedValue(passed)
+    await user.click(within(sheet).getByRole('button', { name: 'Check' }))
+    expect(within(sheet).getByText('Links reach this hub')).toBeTruthy()
+    await user.type(input, 'x')
+    expect(within(sheet).queryByText('Links reach this hub')).toBeNull()
+    expect(within(sheet).queryByRole('button', { name: 'Done' })).toBeNull()
+  })
+
+  test('Change keeps an http address or a port as saved, and a name no certificate fits is not saved', async () => {
+    const user = userEvent.setup()
+    api.shares.mockResolvedValue({ address: 'http://share.example.com:8080', fromEnv: false, links: [] })
+    await render(page())
+    await user.click(screen.getByRole('button', { name: 'Change' }))
+    const sheet = screen.getByRole('dialog', { name: 'Address for shared links' })
+    const input = within(sheet).getByRole('textbox', { name: 'Name for shared links' }) as HTMLInputElement
+    expect(input.value).toBe('http://share.example.com:8080')
+    expect(within(sheet).getByRole('button', { name: 'Check' })).toBeTruthy()
+    await user.clear(input)
+    await user.type(input, 'share{{.example.com')
+    expect(within(sheet).getByRole('status').textContent).toMatch(/letters, digits and hyphens/)
+    expect((within(sheet).getByRole('button', { name: 'Save and check' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(sheet).getByText(/handle \/share\/\*/).textContent).toContain('share.example.com {')
+  })
+
   test('Check on the row shows what the hub found', async () => {
     const user = userEvent.setup()
     api.shares.mockResolvedValue({ address: 'https://share.example.com', fromEnv: false, links: [] })

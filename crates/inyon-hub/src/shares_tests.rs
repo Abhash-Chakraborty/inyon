@@ -442,9 +442,33 @@ fn the_setups_probe_is_answered_on_the_share_address_with_an_answer_only_this_hu
         let on_hub = ask("GET", &format!("{CHECK_PREFIX}{nonce}"), &[("host", HOST)], None).await;
         assert_ne!(on_hub.body, answer);
         assert_ne!(on_hub.status, 200);
+        // two checks at once each keep their own; one that ends leaves the other
+        let (other, other_answer) = s.start_probe(clock.get());
+        assert_eq!(ask("GET", &format!("{CHECK_PREFIX}{nonce}"), &[("host", SHARE)], None).await.body, answer);
+        s.end_probe(&nonce);
+        assert_eq!(on_share_address(&format!("{CHECK_PREFIX}{nonce}")).await, 404);
+        assert_eq!(ask("GET", &format!("{CHECK_PREFIX}{other}"), &[("host", SHARE)], None).await.body, other_answer);
         // and it lasts 30 s
         clock.set(clock.get() + 30_001);
-        assert_eq!(on_share_address(&format!("{CHECK_PREFIX}{nonce}")).await, 404);
+        assert_eq!(on_share_address(&format!("{CHECK_PREFIX}{other}")).await, 404);
+    });
+}
+
+#[test]
+fn cleanup_can_ask_whether_a_page_has_a_live_link() {
+    let t = Tmp::new("shares-page");
+    let folder = site(&t);
+    let clock = Rc::new(Cell::new(1_000_000));
+    let c = clock.clone();
+    crate::test_util::block(async move {
+        hub(&t.0.join("home"), &folder, c, Some("https://share.example.com"));
+        let s = current().unwrap();
+        assert!(!s.shares_page("local", "plan", clock.get()));
+        let link = share(true, 1).await;
+        let (host, slug) = (link["host"].as_str().unwrap().to_owned(), link["slug"].as_str().unwrap().to_owned());
+        assert!(s.shares_page(&host, &slug, clock.get()));
+        assert!(!s.shares_page(&host, "another", clock.get()));
+        assert!(!s.shares_page(&host, &slug, clock.get() + 24 * 3_600_000 + 1), "not once it runs out");
     });
 }
 

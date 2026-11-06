@@ -64,12 +64,12 @@ From 0.25.4, **Address for shared links** is where links made for **Anyone with 
 
 From 0.25.5 **Set up** walks through it in four steps, in a sheet:
 
-1. **Pick a subdomain** you keep for this, such as `share.yourdomain.com`. The sheet warns when you type a main domain, an IP address or the address you open Inyon at.
+1. **Pick a subdomain** you keep for this, such as `share.yourdomain.com`. The sheet warns when you type a main domain, an IP address or the address you open Inyon at, and won't save a name a certificate can't be made out to.
 2. **Point it at your proxy.** It shows the DNS record to add, an A record for that name pointing at your proxy's public IP.
 3. **Forward only /share/ to the hub.** Pick Caddy, Traefik or nginx and copy the example, already filled in with your name and the hub's port.
 4. **Save and check.** The hub saves the address and then visits it the way a visitor would.
 
-The check passes only when the name resolves, an answer that only this hub can give comes back through your proxy, and the app at `/` and the API at `/api/` stay closed on that name. Each line that fails says what to change. **Check** on the row runs it again later, **Change** opens the steps with the address filled in (**Guide** when `INYON_SHARE_ORIGIN` sets it), and **Turn off** clears the address after asking: links for anyone stop opening, and new links stay on your network. Your DNS record and proxy stay as they are.
+The check passes only when the name resolves, an answer that only this hub can give comes back through your proxy, and `/` and `/api/session` don't answer on that name. A path that doesn't answer at all is reported as unsure, not closed. Each line that fails says what to change. **Check** on the row runs it again later, **Change** opens the steps with the address filled in (**Guide** when `INYON_SHARE_ORIGIN` sets it), and **Turn off** clears the address after asking: links for anyone stop opening, and new links stay on your network. Your DNS record and proxy stay as they are.
 
 **Shared links** under it lists every live link, with the blueprint, who it's for, when it ends and how often it was opened, with **Revoke** for one and **Revoke all**. These two rows are on the hub's web app, not in the phone app's own settings.
 

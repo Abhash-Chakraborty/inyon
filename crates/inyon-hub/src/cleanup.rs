@@ -107,6 +107,10 @@ pub async fn clean(days: u64, now: u64) -> Vec<Value> {
     let mut gone = vec![];
     for page in old(&entries, machine, shared, now, days) {
         let (Some(host), Some(slug)) = (page["host"].as_str(), page["slug"].as_str()) else { continue };
+        // a link may have been made while an earlier page was taken off
+        if crate::shares::current().is_some_and(|s| s.shares_page(host, slug, now)) {
+            continue;
+        }
         match crate::pages::take_off(&p, host, slug).await {
             Ok(()) => gone.push(page),
             Err(e) => inyon_core::platform::console::error(&format!("couldn't clean up {host}/{slug}: {}", e.message)),

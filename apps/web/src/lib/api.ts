@@ -124,8 +124,8 @@ export interface ShareCheck {
   dns: { ok: boolean; addresses: string[]; error?: string }
   /** a request there reached this hub: the name, the certificate and the proxy all lead here */
   reach: { ok: boolean; fault?: 'dns' | 'tls' | 'refused' | 'timeout' | 'not-hub' | 'other'; status?: number; error?: string }
-  /** nothing but /share/ answers there; `open` lists the paths that did */
-  wall: { ok: boolean; open: { path: string; status: number }[] }
+  /** nothing but /share/ answers there; `open` lists the paths that did, `unsure` those that didn't answer at all */
+  wall: { ok: boolean; open: { path: string; status: number }[]; unsure?: string[] }
 }
 
 /** What PATCH …/organize changes on a session; a field left out stays as it is. */

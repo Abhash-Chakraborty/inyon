@@ -5,7 +5,7 @@ import { api, type ShareCheck, type ShareList } from '../../lib/api.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { toast } from '../../lib/store.ts'
 import { useOpened } from '../../lib/useOpened.ts'
-import { addressOf, asShareList, checkLines, dnsRecord, nameAdvice, nameOf, proxyConfig, type ProxyKind } from '../../lib/shares.ts'
+import { addressOf, asShareList, checkLines, dnsRecord, fieldOf, nameAdvice, nameOf, proxyConfig, validName, type ProxyKind } from '../../lib/shares.ts'
 import { Button, Segmented, Sheet, inputClass } from '../ui/primitives.tsx'
 
 const PROXIES: { v: ProxyKind; label: string }[] = [
@@ -72,28 +72,35 @@ export function ShareSetup({ open, onClose, list, onSaved }: { open: boolean; on
   const [proxy, setProxy] = useState<ProxyKind>('caddy')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [check, setCheck] = useState<ShareCheck>()
+  // the check, with the name it was for: typing another name hides it
+  const [checked, setChecked] = useState<{ name: string; c: ShareCheck }>()
   // keyed on opening only: saving changes the address, and that mustn't wipe the check it starts
   useOpened(open, 'setup', () => {
-    setName(list.address ? nameOf(list.address) : '')
+    setName(list.address ? fieldOf(list.address) : '')
     setError('')
-    setCheck(undefined)
+    setChecked(undefined)
     setBusy(false)
   })
   const clean = nameOf(name)
+  const valid = validName(clean)
   const advice = nameAdvice(clean)
-  const shown = clean || 'share.example.com'
+  const shown = valid ? clean : 'share.example.com'
+  const check = checked?.name === name ? checked.c : undefined
   const record = dnsRecord(shown)
   const upstream = list.upstream ?? '127.0.0.1:4777'
   const saveAndCheck = async () => {
     setBusy(true)
     setError('')
-    setCheck(undefined)
+    setChecked(undefined)
     try {
       let l = list
-      if (!list.fromEnv && addressOf(name) !== (list.address ?? '')) l = asShareList(await api.setShareAddress(addressOf(name)))
+      if (!list.fromEnv && addressOf(name) !== (list.address ?? '')) {
+        l = asShareList(await api.setShareAddress(addressOf(name)))
+        // saved: Settings shows the new address even if the check then fails
+        onSaved(l)
+      }
       const c = await api.checkShareAddress()
-      setCheck(c)
+      setChecked({ name, c })
       onSaved(l, c)
       if (c.reach.ok && c.wall.ok) toast({ title: 'Shared links work', body: `Links for anyone open at ${nameOf(c.address)}.`, tone: 'success' })
     } catch (e) {
@@ -112,7 +119,7 @@ export function ShareSetup({ open, onClose, list, onSaved }: { open: boolean; on
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>{check?.reach.ok ? 'Done' : 'Close'}</Button>
-          <Button variant="primary" loading={busy} disabled={!clean} onClick={() => void saveAndCheck()}>{list.fromEnv || addressOf(name) === (list.address ?? '') ? 'Check' : 'Save and check'}</Button>
+          <Button variant="primary" loading={busy} disabled={!valid} onClick={() => void saveAndCheck()}>{list.fromEnv || addressOf(name) === (list.address ?? '') ? 'Check' : 'Save and check'}</Button>
         </div>
       }
     >
@@ -161,7 +168,9 @@ export function ShareSetup({ open, onClose, list, onSaved }: { open: boolean; on
               </tbody>
             </table>
           </div>
-          <p className="text-[12.5px] text-fg-3">Use AAAA for an IPv6 address. On Cloudflare, set it to DNS only, or use Full (strict) SSL with the proxy turned on.</p>
+          <p className="text-[12.5px] text-fg-3">
+            If DNS for a subdomain of {record.zone} is kept on its own, name the record from that zone instead. Use AAAA for an IPv6 address. On Cloudflare, set it to DNS only, or use Full (strict) SSL with the proxy turned on.
+          </p>
         </Step>
 
         <Step n={3} title="Forward only /share/ to the hub">

@@ -43,6 +43,8 @@ const TOKEN_LEN: usize = 22;
 pub const CHECK_PREFIX: &str = "/share/.inyon-check/";
 /// How long a check's probe is answered.
 const PROBE_MS: u64 = 30_000;
+/// How many checks can run at once, each with its own probe.
+const MAX_PROBES: usize = 8;
 
 pub const NO_ADDRESS: &str = "Set an address for shared links in Settings › Blueprints first.";
 pub const BAD_DAYS: &str = "A shared link lasts from 1 to 30 days.";
@@ -113,7 +115,7 @@ pub struct Shares {
     saved_at: Cell<u64>,
     unsaved_opens: Cell<bool>,
     /// the check in progress: the nonce in its path, the answer only this hub knows, and until when
-    probe: RefCell<Option<(String, String, u64)>>,
+    probe: RefCell<Vec<(String, String, u64)>>,
 }
 
 impl Shares {
@@ -137,7 +139,7 @@ impl Shares {
             env_address,
             saved_at: Cell::new(0),
             unsaved_opens: Cell::new(false),
-            probe: RefCell::new(None),
+            probe: RefCell::new(Vec::new()),
         }
     }
 
@@ -273,17 +275,33 @@ impl Shares {
     /// A new probe for `check`: the nonce to put in the path, and the answer this hub gives it. The
     /// answer isn't in the request, so only this hub can give it: a proxy that echoes the path, or
     /// another server on that name, can't.
+    /// Checks that overlap each keep their own probe, up to a few at once.
     pub fn start_probe(&self, now: u64) -> (String, String) {
         let (nonce, answer) = (crate::http::random_hex(16), crate::http::random_hex(16));
-        *self.probe.borrow_mut() = Some((nonce.clone(), answer.clone(), now + PROBE_MS));
+        let mut probes = self.probe.borrow_mut();
+        probes.retain(|(_, _, until)| now < *until);
+        if probes.len() >= MAX_PROBES {
+            probes.remove(0);
+        }
+        probes.push((nonce.clone(), answer.clone(), now + PROBE_MS));
         (nonce, answer)
     }
 
     /// The answer to a probe's nonce while it's live; None for anything else.
     pub fn probe_answer(&self, nonce: &str, now: u64) -> Option<String> {
-        let p = self.probe.borrow();
-        let (n, answer, until) = p.as_ref()?;
-        (now < *until && crate::http::same(n, nonce)).then(|| answer.clone())
+        let probes = self.probe.borrow();
+        probes.iter().find(|(n, _, until)| now < *until && crate::http::same(n, nonce)).map(|(_, answer, _)| answer.clone())
+    }
+
+    /// Ends a probe once its check has its answer.
+    pub fn end_probe(&self, nonce: &str) {
+        self.probe.borrow_mut().retain(|(n, _, _)| n != nonce);
+    }
+
+    /// Whether a page has a link that hasn't run out, without touching the file (for cleanup, which
+    /// asks again right before it takes a page off, in case a link was made meanwhile).
+    pub fn shares_page(&self, host: &str, slug: &str, now: u64) -> bool {
+        self.links.borrow().iter().any(|s| s.host == host && s.slug == slug && s.expires > now)
     }
 
     /// Saves opens counted since the last save (the hub stopping).
@@ -467,7 +485,7 @@ pub async fn check(_req: Req) -> HubResult<Resp> {
         Err(_) => json!({ "ok": false, "addresses": [], "error": "the lookup timed out" }),
     };
     if dns["ok"] != json!(true) {
-        return Ok(ok_json(&json!({ "address": address, "dns": dns, "reach": { "ok": false, "fault": "dns" }, "wall": { "ok": false, "open": [] } })));
+        return Ok(ok_json(&json!({ "address": address, "dns": dns, "reach": { "ok": false, "fault": "dns" }, "wall": { "ok": false, "open": [], "unsure": [] } })));
     }
 
     let (nonce, answer) = s.start_probe(now());
@@ -476,20 +494,21 @@ pub async fn check(_req: Req) -> HubResult<Resp> {
         Ok(r) => json!({ "ok": false, "fault": "not-hub", "status": r.status }),
         Err(e) => json!({ "ok": false, "fault": fault_of(&e), "error": e }),
     };
-    *s.probe.borrow_mut() = None;
+    s.end_probe(&nonce);
 
-    // what else answers there: nothing but /share/ should
-    let mut open = Vec::new();
+    // what else answers there: nothing but /share/ should. One that doesn't answer at all proves
+    // nothing either way, so it's reported as unsure rather than closed.
+    let (mut open, mut unsure) = (Vec::new(), Vec::new());
     if reach["ok"] == json!(true) {
         for path in ["/", "/api/session"] {
-            if let Ok(r) = inyon_engine::http::fetch("GET", format!("{address}{path}"), vec![], None, timeout).await {
-                if (200..400).contains(&r.status) {
-                    open.push(json!({ "path": path, "status": r.status }));
-                }
+            match inyon_engine::http::fetch("GET", format!("{address}{path}"), vec![], None, timeout).await {
+                Ok(r) if (200..400).contains(&r.status) => open.push(json!({ "path": path, "status": r.status })),
+                Ok(_) => {}
+                Err(_) => unsure.push(json!(path)),
             }
         }
     }
-    let wall = json!({ "ok": reach["ok"] == json!(true) && open.is_empty(), "open": open });
+    let wall = json!({ "ok": reach["ok"] == json!(true) && open.is_empty() && unsure.is_empty(), "open": open, "unsure": unsure });
     Ok(ok_json(&json!({ "address": address, "dns": dns, "reach": reach, "wall": wall })))
 }
 

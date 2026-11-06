@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { addressOf, audience, checkLines, dnsRecord, expiresIn, mainDomainOf, nameAdvice, nameOf, proxyConfig, shareMeta, shareUrl } from './shares.ts'
+import { addressOf, audience, checkLines, dnsRecord, expiresIn, fieldOf, mainDomainOf, nameAdvice, nameOf, proxyConfig, shareMeta, shareUrl, validName } from './shares.ts'
 
 const NOW = Date.UTC(2026, 10, 5, 12)
 const MIN = 60_000
@@ -35,6 +35,22 @@ describe('setting up the public address', () => {
     expect(addressOf('')).toBe('')
     expect(nameOf('https://Share.Example.com:8443')).toBe('share.example.com')
     expect(nameOf('share.example.com')).toBe('share.example.com')
+    expect(nameOf('share.example.com.')).toBe('share.example.com')
+  })
+
+  test('the sheet starts with the saved address, keeping a scheme or port the bare name would lose', () => {
+    expect(fieldOf('https://share.example.com')).toBe('share.example.com')
+    expect(fieldOf('http://share.example.com')).toBe('http://share.example.com')
+    expect(fieldOf('https://share.example.com:8443')).toBe('https://share.example.com:8443')
+    expect(addressOf(fieldOf('http://share.example.com'))).toBe('http://share.example.com')
+  })
+
+  test('only a name a certificate can be made out to is saved', () => {
+    expect(validName('share.example.com')).toBe(true)
+    expect(validName('xn--bcher-kva.example')).toBe(true)
+    for (const bad of ['share..example.com', 'share{.example.com', '-share.example.com', 'share-.example.com', 'share', 'a_b.example.com']) expect(validName(bad)).toBe(false)
+    expect(nameAdvice('share..example.com', 'hub.example.com')).toMatch(/letters, digits and hyphens/)
+    expect(nameAdvice('share{.example.com', 'hub.example.com')).toMatch(/letters, digits and hyphens/)
   })
 
   test('a subdomain is recommended over a main domain, an IP or the app\'s own address', () => {
@@ -78,5 +94,8 @@ describe('setting up the public address', () => {
     expect(checkLines({ ...base, reach: { ok: false, fault: 'refused' } })[1]!.title).toMatch(/Nothing answers/)
     const open = checkLines({ ...base, wall: { ok: false, open: [{ path: '/', status: 200 }] } })
     expect(open[2]).toMatchObject({ ok: false, title: '/ answers there too' })
+    // a path that didn't answer at all proves nothing
+    const unsure = checkLines({ ...base, wall: { ok: false, open: [], unsure: ['/api/session'] } })
+    expect(unsure[2]).toMatchObject({ ok: false, title: "Couldn't tell whether /api/session stays closed" })
   })
 })

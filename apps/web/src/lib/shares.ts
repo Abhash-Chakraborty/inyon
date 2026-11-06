@@ -45,10 +45,10 @@ export function addressOf(input: string) {
   return /^[a-z]+:\/\//i.test(t) ? t : `https://${t}`
 }
 
-/** The host name in an address, lowercase, without a port. */
+/** The host name in an address, lowercase, without a port or a trailing root dot. */
 export function nameOf(address: string) {
   try {
-    return new URL(addressOf(address)).hostname.toLowerCase()
+    return new URL(addressOf(address)).hostname.toLowerCase().replace(/\.$/, '')
   } catch {
     return ''
   }
@@ -65,11 +65,28 @@ export function mainDomainOf(name: string) {
   return parts.slice(-take).join('.')
 }
 
+/** What the setup sheet starts with for a saved address: the bare name for https on the usual port, else all of it. */
+export function fieldOf(address: string) {
+  try {
+    const u = new URL(address)
+    return u.protocol === 'https:' && !u.port ? nameOf(address) : address
+  } catch {
+    return address
+  }
+}
+
+/** A name a certificate can be made out to: dot-separated labels of letters, digits and inner hyphens. */
+export function validName(name: string) {
+  const labels = name.split('.')
+  return labels.length >= 2 && labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l))
+}
+
 /** Why a name isn't a good one for shared links, or '' when it is: a subdomain kept for this. */
 export function nameAdvice(name: string, appName = location.hostname) {
   if (!name) return ''
   if (/^\d+\.\d+\.\d+\.\d+$/.test(name) || name.includes(':')) return 'Use a name, not an IP address: links need a certificate made out to a name.'
   if (!name.includes('.')) return 'Use a full name, such as share.example.com.'
+  if (!validName(name)) return 'Use letters, digits and hyphens between the dots, such as share.example.com.'
   if (name === appName.toLowerCase()) return "That's the address you open Inyon at. Shared links need a name of their own."
   if (mainDomainOf(name) === name) return `That's a main domain. Use a subdomain you keep for this, such as share.${name}, so nothing else on ${name} changes.`
   return ''
@@ -155,8 +172,11 @@ export function checkLines(c: ShareCheck): CheckLine[] {
           ? { ok: false, title: `${name} answered ${r.status ?? ''}, but not from this hub`.replace('  ', ' '), body: 'Forward /share/ to the hub and keep the Host header, as in the example above.' }
           : { ok: false, title: `Couldn't reach ${name}`, body: r.error }
   if (!r.ok) return [dns, reach]
+  const unsure = c.wall.unsure ?? []
   const wall: CheckLine = c.wall.ok
-    ? { ok: true, title: 'Nothing else answers there', body: 'Only /share/ links get through; the rest is a 404.' }
-    : { ok: false, title: `${c.wall.open.map((o) => o.path).join(' and ')} answer${c.wall.open.length === 1 ? 's' : ''} there too`, body: 'Forward only /share/ to the hub. The hub still refuses the rest on that name, but keep both walls.' }
+    ? { ok: true, title: 'Nothing else answers there', body: 'Only /share/ links get through: / and /api/session are a 404.' }
+    : !c.wall.open.length && unsure.length
+      ? { ok: false, title: `Couldn't tell whether ${unsure.join(' and ')} stay${unsure.length === 1 ? 's' : ''} closed`, body: "They didn't answer in time. Run Check again." }
+      : { ok: false, title: `${c.wall.open.map((o) => o.path).join(' and ')} answer${c.wall.open.length === 1 ? 's' : ''} there too`, body: 'Forward only /share/ to the hub. The hub still refuses the rest on that name, but keep both walls.' }
   return [dns, reach, wall]
 }
