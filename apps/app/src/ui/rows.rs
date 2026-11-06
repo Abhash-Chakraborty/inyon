@@ -14,7 +14,7 @@ use inyon_protocol::{AgentKind, ChatItem, HeldPrompt, LiveItem, LiveKind, Notice
 use serde_json::Value;
 
 use super::icons::{AgentMark, Glyph, Icon};
-use super::md::{CopyButton, Markdown};
+use super::md::{CopyButton, Markdown, ReplyText};
 use super::menu::{self, Action, Item};
 use crate::diff::{self, Hunk, Row as DiffRow, Sign};
 use crate::platform;
@@ -287,6 +287,15 @@ fn Mark(agent: Option<AgentKind>, #[props(default)] active: bool) -> Element {
 fn Turn(turn: AssistantTurn, live: bool, ctx: Ctx) -> Element {
     let text = turn.parts.iter().filter_map(|p| if let Part::Text { text, .. } = p { Some(text.as_str()) } else { None }).collect::<Vec<_>>().join("\n\n");
     let items = if !turn.open && !text.is_empty() { vec![Item::copy("Copy reply", &text)] } else { vec![] };
+    // a code block's own menu offers the whole reply too
+    let reply = use_context_provider(|| ReplyText(Signal::new(None)));
+    let copyable = (!turn.open && !text.is_empty()).then(|| text.clone());
+    use_effect(use_reactive!(|copyable| {
+        let mut r = reply.0;
+        if *r.peek() != copyable {
+            r.set(copyable);
+        }
+    }));
     rsx! {
         div { class: "turn",
             div { class: "turn-mark", Mark { agent: ctx.agent } }

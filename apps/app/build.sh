@@ -2,7 +2,7 @@
 # Builds the browser app into apps/app/dist, which the hub carries and serves at /next
 # (crates/inyon-hub/src/static_files.rs). Needs dx at the version below (the Dioxus CLI, a
 # prebuilt binary from github.com/DioxusLabs/dioxus/releases), the wasm32-unknown-unknown target, and
-# Bun with the workspace installed (bun install) for the terminal's xterm.js.
+# Bun with the workspace installed (bun install) for the terminal's xterm.js and highlight.js.
 set -euo pipefail
 cd "$(dirname "$0")"
 want=0.7.10
@@ -27,4 +27,10 @@ term=$(bun term/build.ts dist/assets)
 sed -i.bak "s|</head>|<meta name=\"inyon-term\" content=\"/next/assets/$term\"></head>|" dist/index.html
 rm dist/index.html.bak
 grep -q "assets/$term" dist/index.html
+# code highlighting (highlight.js, hl/): its entry loads with the first coloured code block, and
+# each language's file the first time a block in it shows
+hl=$(bun hl/build.ts dist/assets)
+sed -i.bak "s|</head>|<meta name=\"inyon-hl\" content=\"/next/assets/$hl\"></head>|" dist/index.html
+rm dist/index.html.bak
+grep -q "assets/$hl" dist/index.html
 ls -l dist dist/assets
