@@ -422,3 +422,72 @@ fn the_api_needs_a_sign_in_and_the_inyon_command_cant_share() {
         }
     });
 }
+
+#[test]
+fn the_setups_probe_is_answered_on_the_share_address_with_an_answer_only_this_hub_knows() {
+    let t = Tmp::new("probe");
+    let folder = site(&t);
+    let clock = Rc::new(Cell::new(1_000_000));
+    let c = clock.clone();
+    crate::test_util::block(async move {
+        hub(&t.0.join("home"), &folder, c, Some("https://share.example.com"));
+        let s = current().unwrap();
+        let (nonce, answer) = s.start_probe(clock.get());
+        assert_ne!(nonce, answer, "the answer isn't in the request");
+        let a = ask("GET", &format!("{CHECK_PREFIX}{nonce}"), &[("host", SHARE)], None).await;
+        assert_eq!((a.status, a.body.as_str()), (200, answer.as_str()));
+        assert_eq!(a.header("x-robots-tag"), Some("noindex, nofollow"));
+        // another nonce, or the probe on the hub's own address, gets nothing
+        assert_eq!(on_share_address(&format!("{CHECK_PREFIX}{}", crate::http::random_hex(16))).await, 404);
+        let on_hub = ask("GET", &format!("{CHECK_PREFIX}{nonce}"), &[("host", HOST)], None).await;
+        assert_ne!(on_hub.body, answer);
+        assert_ne!(on_hub.status, 200);
+        // and it lasts 30 s
+        clock.set(clock.get() + 30_001);
+        assert_eq!(on_share_address(&format!("{CHECK_PREFIX}{nonce}")).await, 404);
+    });
+}
+
+#[test]
+fn the_check_needs_an_address_and_says_when_its_name_doesnt_resolve() {
+    let t = Tmp::new("check");
+    let folder = site(&t);
+    let clock = Rc::new(Cell::new(1_000_000));
+    let home = t.0.join("home");
+    crate::test_util::block(async move {
+        hub(&home, &folder, clock.clone(), None);
+        let none = api("POST", "/api/share-address/check", None).await;
+        assert_eq!(none.status, 409, "{}", none.body);
+        // .invalid never resolves (RFC 6761)
+        hub(&home, &folder, clock, Some("https://share.nothing.invalid"));
+        let a = api("POST", "/api/share-address/check", None).await;
+        assert_eq!(a.status, 200, "{}", a.body);
+        let r = a.json();
+        assert_eq!(r["address"], json!("https://share.nothing.invalid"));
+        assert_eq!(r["dns"]["ok"], json!(false));
+        assert_eq!(r["reach"], json!({ "ok": false, "fault": "dns" }));
+        assert_eq!(r["wall"]["ok"], json!(false));
+        // the CLI's local token can't run it
+        let cli = ask("POST", "/api/share-address/check", &[("host", HOST), ("authorization", "Bearer local")], None).await;
+        assert!(cli.status >= 400, "{}", cli.status);
+    });
+}
+
+#[test]
+fn the_listing_says_where_a_proxy_reaches_the_hub() {
+    let t = Tmp::new("upstream");
+    let folder = site(&t);
+    crate::test_util::block(async move {
+        hub(&t.0.join("home"), &folder, Rc::new(Cell::new(1_000_000)), None);
+        assert_eq!(api("GET", "/api/shares", None).await.json()["upstream"], json!("127.0.0.1:0"));
+    });
+}
+
+#[test]
+fn a_failed_check_says_what_failed() {
+    assert_eq!(fault_of("io: invalid peer certificate: NotValidForName"), "tls");
+    assert_eq!(fault_of("Connection refused (os error 111)"), "refused");
+    assert_eq!(fault_of("couldn't connect within 10 s"), "timeout");
+    assert_eq!(fault_of("dns failed: failed to lookup address information"), "dns");
+    assert_eq!(fault_of("something else"), "other");
+}

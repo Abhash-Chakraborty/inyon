@@ -313,7 +313,7 @@ export const copyFolder = (p: Page) => copyText(p.folder).then((ok) => ok && toa
 
 /** The sheets the page menus open, mounted once (in the shell). */
 type PageSheet = { kind: 'folder'; page: Page } | { kind: 'share'; page: Page } | { kind: 'add' }
-const usePageSheet = create<{ sheet?: PageSheet; open: boolean }>(() => ({ open: false }))
+export const usePageSheet = create<{ sheet?: PageSheet; open: boolean }>(() => ({ open: false }))
 export const openPageSheet = (sheet: PageSheet) => usePageSheet.setState({ sheet, open: true })
 
 /** What Open in browser says under it: the link's life, and that the tab is no place to sign in. */

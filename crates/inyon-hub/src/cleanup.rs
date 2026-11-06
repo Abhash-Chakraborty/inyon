@@ -6,7 +6,8 @@
 //! /api/pages-cleanup` does the same at once.
 //!
 //! Only a page whose session Inyon knows can go, and only while its machine is connected: a page
-//! added by hand outside tmux, or one on a machine that's away, stays.
+//! added by hand outside tmux, or one on a machine that's away, stays. So does a page with a live
+//! shared link: someone was given it, and cleaning up would end their link.
 
 use axum::http::Method;
 use inyon_core::config::load_settings;
@@ -72,8 +73,9 @@ pub fn session_gone(page: &Value, state: &HostState) -> Option<bool> {
     Some(!talking && !running)
 }
 
-/// The pages to clean up out of the list the API gives, by their machines now (`state_of`).
-pub fn old(entries: &[Value], state_of: impl Fn(&str) -> Option<HostState>, now: u64, days: u64) -> Vec<Value> {
+/// The pages to clean up out of the list the API gives, by their machines now (`state_of`), leaving
+/// those with a live shared link (`shared`).
+pub fn old(entries: &[Value], state_of: impl Fn(&str) -> Option<HostState>, shared: impl Fn(&str, &str) -> bool, now: u64, days: u64) -> Vec<Value> {
     if days == 0 {
         return vec![];
     }
@@ -84,6 +86,7 @@ pub fn old(entries: &[Value], state_of: impl Fn(&str) -> Option<HostState>, now:
             let host = p.get("host").and_then(Value::as_str).unwrap_or(LOCAL_HOST);
             state_of(host).and_then(|s| session_gone(p, &s)) == Some(true)
         })
+        .filter(|p| !shared(p.get("host").and_then(Value::as_str).unwrap_or(LOCAL_HOST), p.get("slug").and_then(Value::as_str).unwrap_or_default()))
         .map(|p| json!({ "host": p["host"], "slug": p["slug"], "name": p["name"], "folder": p["folder"] }))
         .collect()
 }
@@ -96,8 +99,13 @@ fn machine(host: &str) -> Option<HostState> {
 pub async fn clean(days: u64, now: u64) -> Vec<Value> {
     let p = crate::pages::pages();
     let entries = crate::pages::entries(&p).await;
+    let live: Vec<(String, String)> = match crate::shares::current() {
+        Some(s) => s.live(now, &|h: &str, sl: &str| p.epochs.of(h, sl)).into_iter().map(|x| (x.host, x.slug)).collect(),
+        None => vec![],
+    };
+    let shared = |h: &str, sl: &str| live.iter().any(|(lh, ls)| lh == h && ls == sl);
     let mut gone = vec![];
-    for page in old(&entries, machine, now, days) {
+    for page in old(&entries, machine, shared, now, days) {
         let (Some(host), Some(slug)) = (page["host"].as_str(), page["slug"].as_str()) else { continue };
         match crate::pages::take_off(&p, host, slug).await {
             Ok(()) => gone.push(page),
@@ -198,6 +206,7 @@ mod tests {
     #[test]
     fn a_blueprint_goes_once_its_session_is_gone_and_it_sat_unchanged_long_enough() {
         let on = |_: &str| Some(machine("online"));
+        let none = |_: &str, _: &str| false;
         let gone = json!({ "session": "chat-old", "tmux": "cardboard", "tmuxId": "$9" });
         let pages = vec![
             page("old", 20, gone.clone()),
@@ -212,14 +221,16 @@ mod tests {
             page("by-hand", 90, json!({})),
         ];
         let slugs = |v: Vec<Value>| v.iter().map(|p| p["slug"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
-        assert_eq!(slugs(old(&pages, on, NOW, 14)), ["old"]);
-        assert_eq!(slugs(old(&pages, on, NOW, 2)), ["old", "recent"]);
+        assert_eq!(slugs(old(&pages, on, none, NOW, 14)), ["old"]);
+        // a live shared link keeps it: someone was given it
+        assert!(old(&pages, on, |h: &str, s: &str| h == "laptop" && s == "old", NOW, 14).is_empty());
+        assert_eq!(slugs(old(&pages, on, none, NOW, 2)), ["old", "recent"]);
         // off, or the machine away
-        assert!(old(&pages, on, NOW, 0).is_empty());
-        assert!(old(&pages, |_| Some(machine("error")), NOW, 14).is_empty());
-        assert!(old(&pages, |_| None, NOW, 14).is_empty());
+        assert!(old(&pages, on, none, NOW, 0).is_empty());
+        assert!(old(&pages, |_| Some(machine("error")), none, NOW, 14).is_empty());
+        assert!(old(&pages, |_| None, none, NOW, 14).is_empty());
         // what the note keeps of each
-        assert_eq!(old(&pages[..1], on, NOW, 14), [json!({ "host": "laptop", "slug": "old", "name": "old", "folder": "/home/sam/old" })]);
+        assert_eq!(old(&pages[..1], on, none, NOW, 14), [json!({ "host": "laptop", "slug": "old", "name": "old", "folder": "/home/sam/old" })]);
     }
 
     #[test]
@@ -229,10 +240,10 @@ mod tests {
         p["progress"] = json!({ "done": 3, "total": 8, "updated": "2027-01-14T00:00:00Z" });
         // a day and 8 hours before NOW (2027-01-15 08:00 UTC)
         assert_eq!(changed_at(&p), NOW - DAY_MS - 8 * 60 * 60 * 1000);
-        assert!(old(&[p.clone()], on, NOW, 14).is_empty());
+        assert!(old(&[p.clone()], on, |_: &str, _: &str| false, NOW, 14).is_empty());
         p["progress"]["updated"] = json!("not a time");
         assert_eq!(changed_at(&p), NOW - 40 * DAY_MS);
-        assert_eq!(old(&[p], on, NOW, 14).len(), 1);
+        assert_eq!(old(&[p], on, |_: &str, _: &str| false, NOW, 14).len(), 1);
     }
 
     #[test]

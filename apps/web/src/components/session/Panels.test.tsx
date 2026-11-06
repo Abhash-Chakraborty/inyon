@@ -8,6 +8,7 @@ import { useSession } from './useSession.ts'
 import { useStore } from '../../lib/store.ts'
 import { agentPane, host } from '../../test/fixtures.ts'
 import { usePages, type Page } from '../../lib/pages.ts'
+import { usePageSheet } from '../pages/shared.tsx'
 
 function Panel({ closing }: { closing?: boolean }) {
   const s = useSession('box', '%1')
@@ -79,6 +80,10 @@ describe("the session's pages", () => {
     await user.click(link)
     expect(document.querySelector('.viewer-name')!.textContent).toBe('Plan robot')
     expect(document.querySelector('.viewer-where')!.textContent).toBe('box')
+    // and it can be shared from right here, without leaving the session
+    await user.click(screen.getByRole('button', { name: 'Share…' }))
+    expect(usePageSheet.getState()).toMatchObject({ open: true, sheet: { kind: 'share', page: { id: 'box/robot' } } })
+    usePageSheet.setState({ open: false, sheet: undefined })
     await user.click(screen.getByRole('button', { name: "This session's blueprints" }))
     expect(screen.getByRole('link', { name: /Plan robot/ })).toBeTruthy()
   })

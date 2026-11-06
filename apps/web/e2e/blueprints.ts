@@ -123,6 +123,9 @@ async function open(kind: 'phone' | 'desktop', scheme: 'light' | 'dark', width?:
       state.shares = state.shares.filter((x) => x.id !== u.pathname.split('/').pop())
       return r.fulfill({ json: { ok: true } })
     }
+    if (u.pathname === '/api/share-address/check') {
+      return r.fulfill({ json: { address: state.address, dns: { ok: true, addresses: ['203.0.113.4'] }, reach: { ok: true }, wall: { ok: true, open: [] } } })
+    }
     if (u.pathname === '/api/share-address') {
       const a = String(r.request().postDataJSON().address).trim()
       state.address = a ? (a.includes('://') ? a : `https://${a}`).replace(/\/$/, '').toLowerCase() : null
@@ -315,12 +318,22 @@ try {
       await sheet.getByRole('button', { name: 'Done' }).click()
       // Settings › Blueprints: the address, then the links
       await page.goto(`${base}/settings#blueprints`)
-      const field = page.getByPlaceholder('https://share.example.com')
-      await field.waitFor()
-      check((await field.inputValue()) === '', `${label}: no address unless set`)
+      await page.getByText('Off. Links stay on your network until you set one up.').waitFor()
+      await page.getByRole('button', { name: 'Set up' }).click()
+      const setup = page.getByRole('dialog', { name: 'Address for shared links' })
+      const field = setup.getByRole('textbox', { name: 'Name for shared links' })
+      await field.fill('example.com')
+      await setup.getByText(/That's a main domain/).waitFor()
       await field.fill('share.example.com')
-      await page.getByRole('button', { name: 'Save the address for shared links' }).click()
-      check(await until(async () => (await field.inputValue()) === 'https://share.example.com'), `${label}: the address as the hub keeps it`)
+      await setup.getByRole('radio', { name: 'Traefik' }).click()
+      check(((await setup.locator('pre').textContent()) ?? '').includes('Host(`share.example.com`) && PathPrefix(`/share/`)'), `${label}: the Traefik example follows the name`)
+      await page.screenshot({ path: path.join(shots, `share-setup-1440-${scheme}.png`) })
+      await layout(page, `${label} setup`)
+      await setup.getByRole('button', { name: 'Save and check' }).click()
+      await setup.getByText('Links reach this hub').waitFor()
+      check(state.address === 'https://share.example.com' && state.calls.includes('POST /api/share-address/check'), `${label}: saved, then checked`)
+      await setup.getByRole('button', { name: 'Done' }).click()
+      await page.getByText('Checked: links reach this hub.').waitFor()
       check(await page.getByText('Checkout redesign').first().isVisible(), `${label}: the live link, by its blueprint`)
       await page.locator('#blueprints').screenshot({ path: path.join(shots, `settings-shares-1440-${scheme}.png`) })
       await layout(page, `${label} settings`)

@@ -38,7 +38,7 @@ From 0.22.3 a page also shows where you work with the agent that made it. When a
 
 From 0.25 a session's blueprints are the ones made in its tmux session, the way Claude's artifacts belong to a chat. The ones this conversation made come first, then those that earlier conversations in the same tmux session made. A page whose tmux session isn't known (one added outside tmux, or before 0.25 by a conversation that has ended) shows by its folder, as before. A page made in another tmux session stays out, even in the same folder. The list follows live, so a page the agent adds or moves on shows up as it happens.
 
-- **On a desktop**, the side panel's **Blueprints** tab opens a page right there, beside the chat, with its name, tmux session and machine above it, its parts and notes, **Reload**, **Open full view** (from 0.25.3) and **Open in new tab**. The arrow back, **This session's blueprints**, returns to the list.
+- **On a desktop**, the side panel's **Blueprints** tab opens a page right there, beside the chat, with its name, tmux session and machine above it, its parts and notes, **Reload**, **Share…** (from 0.25.5), **Open full view** (from 0.25.3) and **Open in new tab**. The arrow back, **This session's blueprints**, returns to the list.
 - **On a phone**, the **Activity** sheet's **Blueprints** tab lists them. From 0.25.3 a page opens in the sheet, over the session, with the same controls; before, it opened full screen.
 - **Open full view** takes the page to the Blueprints screen, whose **Back** on a phone returns to the session. A page opened from the Blueprints list always opens there.
 - **In the [new app at `/next`](hub.md#the-new-app-at-next)**, the session's header has a **Blueprints** button with how many there are, and a dot when one changed since you opened it. It opens them beside the chat on a desktop, or the page itself when there's only one, and in a sheet on a phone. From 0.25.4 a page opens inside that sheet too, and both places have **Reload**, **Open full view** and **Open in new tab**.
@@ -125,10 +125,11 @@ A blueprint only goes when Inyon can tell its session is over:
 - Inyon has to know which session it came from. One added by hand outside tmux stays.
 - Its computer has to be connected. A blueprint on a computer that's away stays.
 - If a tmux session still has its name or its id, it stays, because that may be the same session, renamed.
+- From 0.25.5, a blueprint with a live [shared link](#share-a-blueprint) stays until the link ends or you revoke it, so a link you handed out doesn't stop early.
 
 ## Share a blueprint
 
-From 0.25.4 you can hand a blueprint to someone who doesn't use Inyon, such as a product manager or a teammate, with a link of its own. Pick **Share…** in the blueprint's **⋯** menu or the viewer's **⋯**. The sheet asks two things:
+From 0.25.4 you can hand a blueprint to someone who doesn't use Inyon, such as a product manager or a teammate, with a link of its own. Pick **Share…** in the blueprint's **⋯** menu or the viewer's **⋯**. From 0.25.5 it's also on a blueprint opened in a session's **Blueprints** tab, so you can share it without leaving the session. The sheet asks two things:
 
 | Choice | Options | Default |
 |---|---|---|
@@ -140,7 +141,7 @@ From 0.25.4 you can hand a blueprint to someone who doesn't use Inyon, such as a
 
 **Create link** makes the link and copies it. Keep it then: the hub stores only a fingerprint of each link, so it can't show it again. Under it the sheet lists the blueprint's live links: who each is for, when it ends, how often it was opened and when it was made, with **Revoke** to end one at once. A visit counts as an open when the link's first page loads. [Settings › Blueprints](settings.md#blueprints) lists the live links of every blueprint, with **Revoke all**.
 
-A shared link opens the blueprint read-only, in the same sandbox as in the app, with no sign-in and no cookies. It ends when it runs out, when you revoke it, when you use **Revoke links** on the blueprint, or when the blueprint is removed or [cleaned up](#old-blueprints-are-cleaned-up). Whoever opens it after that sees **Link expired**. A link for your network never opens on the address for shared links, even if someone passes it on.
+A shared link opens the blueprint read-only, in the same sandbox as in the app, with no sign-in and no cookies. It ends when it runs out, when you revoke it, when you use **Revoke links** on the blueprint, or when the blueprint is removed (from 0.25.5 cleanup leaves a blueprint with a live link alone). Whoever opens it after that sees **Link expired**. A link for your network never opens on the address for shared links, even if someone passes it on.
 
 > **Warning:** A shared link opens every file in the blueprint's folder, not only the page: the research notes, `progress.json`, pictures, anything an agent saved there. Names starting with a dot and files a symlink leads to outside the folder stay hidden, as in the app. Look through the folder before you share it outside your network.
 
