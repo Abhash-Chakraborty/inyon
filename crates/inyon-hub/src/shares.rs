@@ -131,7 +131,14 @@ impl Shares {
             }
             None => None,
         };
-        Shares { links: RefCell::new(links), saved_address: RefCell::new(saved_address), env_address, saved_at: Cell::new(0), unsaved_opens: Cell::new(false), probe: RefCell::new(None) }
+        Shares {
+            links: RefCell::new(links),
+            saved_address: RefCell::new(saved_address),
+            env_address,
+            saved_at: Cell::new(0),
+            unsaved_opens: Cell::new(false),
+            probe: RefCell::new(None),
+        }
     }
 
     /// The public share address (an origin such as `https://share.example.com`), if there is one.
