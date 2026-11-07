@@ -1,7 +1,8 @@
 //! Pages (pages/Pages.tsx and components/pages/shared.tsx): sites an agent made, listed by machine
 //! and project with their live progress, and opened in a sandboxed frame. On a phone the list and a
 //! full-screen viewer; from tablet width up the list and the viewer side by side, with device
-//! sizes. The list comes from the hub's `pages` stream; links, revoking and adding stay REST. The
+//! sizes. The list comes from the hub's `pages` stream (or `GET /api/pages` when the stream doesn't
+//! come); links, revoking, sharing and adding stay REST. The
 //! rows other screens show (a machine's page, a session's pages, a reply's links) are here too.
 
 use std::collections::{HashMap, HashSet};
@@ -60,7 +61,13 @@ fn listen() {
         return;
     }
     dom::answer_frames();
-    dom::on_wake(|| *WAKES.write() += 1);
+    dom::on_wake(|| {
+        *WAKES.write() += 1;
+        // a list that couldn't be fetched is asked for again on coming back
+        if PAGES.peek().error.is_some() {
+            fetch_list();
+        }
+    });
     dom::on_resize(|| {
         let wide = dom::viewport().0 >= WIDE_FROM;
         if *WIDE.peek() != wide {
@@ -69,12 +76,56 @@ fn listen() {
     });
 }
 
+/// How long a screen of pages waits for the pages stream before it asks over REST.
+const STREAM_WAIT_MS: u32 = 2500;
+
+thread_local! {
+    static FETCHING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The list over REST (`GET /api/pages`), as the web app loads it, for when the socket doesn't
+/// connect: the stream's own list replaces it as soon as it comes.
+fn fetch_list() {
+    if !PAGES.peek().wants_fetch() || FETCHING.with(|f| f.replace(true)) {
+        return;
+    }
+    dioxus::core::spawn_forever(async {
+        let got = api::pages().await.map_err(|e| e.message);
+        FETCHING.with(|f| f.set(false));
+        PAGES.write().fetched(got);
+    });
+}
+
+/// A screen of pages: when the stream's list hasn't come in a moment, it's fetched instead.
+fn use_list_fallback() {
+    use_hook(|| {
+        if PAGES.peek().pages.is_some() {
+            return;
+        }
+        spawn(async {
+            platform::sleep(STREAM_WAIT_MS).await;
+            if PAGES.peek().pages.is_none() {
+                fetch_list();
+            }
+        });
+    });
+}
+
+/// Why the list couldn't be fetched, over it.
+#[component]
+fn ListError() -> Element {
+    let Some(e) = PAGES.read().error.clone() else { return rsx! {} };
+    rsx! { p { class: "form-error pages-error", role: "alert", "{e}" } }
+}
+
 /// What a page menu item does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PageOp {
     /// the page, at a part or note of it (see [`pg::browser_path`]); the plain link when None
     OpenInBrowser(PageEntry, Option<(Part, Option<String>)>),
     Revoke(PageEntry),
+    /// the Share… sheet: a link for someone outside the app
+    Share(PageEntry),
     ShowFolder(PageEntry),
     CopyFolder(String),
     /// takes it off the list; `back` goes back to the list after (the viewer's own Remove)
@@ -97,6 +148,7 @@ pub enum ViewerOp {
 #[derive(Debug, Clone, PartialEq)]
 enum PageSheet {
     Folder(Box<PageEntry>),
+    Share(Box<PageEntry>),
     Add,
 }
 
@@ -126,6 +178,7 @@ pub fn run(op: PageOp, mut here: Signal<Route>, hub: Signal<Hub>) {
             dioxus::core::spawn_forever(revoke(p));
         }
         PageOp::ShowFolder(p) => open_sheet(PageSheet::Folder(Box::new(p))),
+        PageOp::Share(p) => open_sheet(PageSheet::Share(Box::new(p))),
         PageOp::CopyFolder(path) => {
             dioxus::core::spawn_forever(async move {
                 if dom::copy(&path).await {
@@ -219,6 +272,11 @@ async fn remove(p: PageEntry, machine: String) -> bool {
     }
 }
 
+/// "Share…": a link to the page for someone outside the app.
+fn share_item(p: &PageEntry) -> Item {
+    Item::new("Share…", Icon::Share2, Action::Page(Box::new(PageOp::Share(p.clone()))))
+}
+
 /// One menu for a page wherever it's listed: long-press, right-click and ⋯ share it.
 pub fn page_menu(p: &PageEntry, m: &PageMachine, open: bool) -> Vec<Item> {
     let mut v = Vec::new();
@@ -231,7 +289,8 @@ pub fn page_menu(p: &PageEntry, m: &PageMachine, open: bool) -> Vec<Item> {
             .hint(if off { format!("{} is offline", m.name) } else { BROWSER_HINT.into() })
             .disabled(off),
     );
-    v.push(Item::new("Revoke links", Icon::Link2Off, Action::Page(Box::new(PageOp::Revoke(p.clone())))).separated());
+    v.push(share_item(p).separated());
+    v.push(Item::new("Revoke links", Icon::Link2Off, Action::Page(Box::new(PageOp::Revoke(p.clone())))));
     v.push(Item::new("Show folder", Icon::FolderOpen, Action::Page(Box::new(PageOp::ShowFolder(p.clone())))));
     v.push(Item::new("Remove", Icon::Trash2, Action::Page(Box::new(PageOp::Remove { page: p.clone(), back: false }))).danger().separated());
     v
@@ -243,6 +302,7 @@ pub fn page_menu(p: &PageEntry, m: &PageMachine, open: bool) -> Vec<Item> {
 #[component]
 pub fn PagesPage(page: Option<(String, String)>) -> Element {
     use_hook(listen);
+    use_list_fallback();
     let wide = WIDE();
     dom::set_title("Blueprints · Inyon");
     if wide {
@@ -576,6 +636,7 @@ fn phone_more(p: &PageEntry, parts: &[Part], part: Part, note: Option<&str>, lin
     if siblings.len() > 1 {
         more.extend(group(siblings.iter().map(|s| Item::new(s.name.clone(), Icon::FileText, Action::Go(page_route(s))).checked(s.slug == p.slug)).collect()));
     }
+    more.push(share_item(p).separated());
     if let Some((id, name)) = machine {
         more.push(Item::new(format!("Open {name}"), Icon::Server, Action::Go(Route::Machine { id })).separated());
     }
@@ -886,6 +947,7 @@ fn PhoneList() -> Element {
                 if filtering() {
                     FilterInput { q, placeholder: "Filter blueprints" }
                 }
+                ListError {}
                 CleanedLine {}
                 match list.pages.as_deref() {
                     None => rsx! { WaitRows { label: "Loading blueprints", count: 2 } },
@@ -1168,6 +1230,7 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
                     }
                 }
                 div { class: "pages-tree-list",
+                    ListError {}
                     CleanedLine {}
                     if !loaded {
                         WaitRows { label: "Loading blueprints", count: 3 }
@@ -1346,6 +1409,7 @@ fn DesktopViewer(
     let note = v.note(&p);
     let group = pg::group_name(&p, &pg::Names::of(&hub.read().hosts));
     let menu_items = vec![
+        share_item(&p),
         Item::new("Revoke links", Icon::Link2Off, Action::Page(Box::new(PageOp::Revoke(p.clone())))),
         Item::new("Copy folder path", Icon::Copy, Action::Page(Box::new(PageOp::CopyFolder(p.folder.clone())))),
         Item::new("Show folder", Icon::FolderOpen, Action::Page(Box::new(PageOp::ShowFolder(p.clone())))),
@@ -1515,6 +1579,7 @@ pub fn PageSheets() -> Element {
     match SHEET() {
         None => rsx! {},
         Some(PageSheet::Folder(p)) => rsx! { FolderSheet { page: *p, open: SHEET_OPEN(), on_close: close } },
+        Some(PageSheet::Share(p)) => rsx! { super::share::ShareSheet { page: *p, open: SHEET_OPEN(), on_close: close } },
         Some(PageSheet::Add) => rsx! { AddFolderSheet { open: SHEET_OPEN(), on_close: close } },
     }
 }
@@ -1726,6 +1791,7 @@ fn PageRow(p: PageEntry, m: PageMachine, changed: bool) -> Element {
 /// "Blueprints on this machine", on a machine's page; nothing when it has none.
 #[component]
 pub fn MachinePages(host: String) -> Element {
+    use_list_fallback();
     let mut pages: Vec<PageEntry> = PAGES.read().pages.iter().flatten().filter(|p| p.host == host).cloned().collect();
     if pages.is_empty() {
         return rsx! {};
@@ -1807,6 +1873,7 @@ fn sections(list: pg::SessionList, tmux: Option<&str>) -> Vec<(Option<String>, V
 #[component]
 pub fn SessionPages(here: Here, side: Side, #[props(default)] on_panel: Option<EventHandler<()>>, #[props(default)] panel_on: bool) -> Element {
     use_hook(listen);
+    use_list_fallback();
     let hub = use_context::<Signal<Hub>>();
     let mut sheet = use_signal(|| false);
     let list = here_pages(&here, &hub.read());
@@ -2062,14 +2129,15 @@ mod tests {
         let p = entry();
         let on = PageMachine { name: "studio".into(), online: true, hub: true, known: None };
         let m = page_menu(&p, &on, true);
-        assert_eq!(labels(&m), ["Open", "Open in browser", "Revoke links", "Show folder", "Remove"]);
+        assert_eq!(labels(&m), ["Open", "Open in browser", "Share…", "Revoke links", "Show folder", "Remove"]);
         assert_eq!(m[0].action, Action::Go(Route::Pages { page: Some(("local".into(), "plan".into())) }));
         assert_eq!(m[1].hint.as_deref(), Some(BROWSER_HINT));
-        assert!(m[2].separated && m[4].separated && m[4].danger);
+        assert!(m[2].separated && !m[3].separated && m[5].separated && m[5].danger);
+        assert_eq!(m[2].action, Action::Page(Box::new(PageOp::Share(p.clone()))));
         // its machine offline: no link can be minted
         let off = PageMachine { online: false, ..on };
         let m = page_menu(&p, &off, false);
-        assert_eq!(labels(&m), ["Open in browser", "Revoke links", "Show folder", "Remove"]);
+        assert_eq!(labels(&m), ["Open in browser", "Share…", "Revoke links", "Show folder", "Remove"]);
         assert!(m[0].disabled);
         assert_eq!(m[0].hint.as_deref(), Some("studio is offline"));
     }
@@ -2091,21 +2159,21 @@ mod tests {
         let other = PageEntry { slug: "cart".into(), name: "Cart".into(), ..entry() };
         let sibs = [p.clone(), other];
         let m = phone_more(&p, &[Part::Plan, Part::Mockups], Part::Plan, None, true, &sibs, Some(("m1".into(), "studio".into())));
-        assert_eq!(labels(&m), ["Reload", "Open in browser", "Plan", "Mockups", "a", "b", "Plan", "Cart", "Open studio"]);
+        assert_eq!(labels(&m), ["Reload", "Open in browser", "Plan", "Mockups", "a", "b", "Plan", "Cart", "Share…", "Open studio"]);
         // each group starts after a line
-        assert!(!m[1].separated && m[2].separated && !m[3].separated && m[4].separated && !m[5].separated && m[6].separated && m[8].separated);
+        assert!(!m[1].separated && m[2].separated && !m[3].separated && m[4].separated && !m[5].separated && m[6].separated && m[8].separated && m[9].separated);
         assert_eq!(m[2].checked, Some(true));
         assert_eq!(m[6].checked, Some(true));
-        assert_eq!(m[8].action, Action::Go(Route::Machine { id: "m1".into() }));
+        assert_eq!(m[9].action, Action::Go(Route::Machine { id: "m1".into() }));
         // a note open: no part ticked, the note is, and its way back stays under the bar, not here
         let m = phone_more(&p, &[Part::Plan, Part::Mockups], Part::Plan, Some("b.md"), true, &sibs, None);
-        assert_eq!(labels(&m), ["Reload", "Open in browser", "Plan", "Mockups", "a", "b", "Plan", "Cart"]);
+        assert_eq!(labels(&m), ["Reload", "Open in browser", "Plan", "Mockups", "a", "b", "Plan", "Cart", "Share…"]);
         assert!(m[2].checked == Some(false) && m[5].checked == Some(true) && m[4].separated);
         // one part, no notes, alone on an unknown machine: just the two
         let bare = PageEntry { notes: None, ..entry() };
         let m = phone_more(&bare, &[Part::Plan], Part::Plan, None, false, std::slice::from_ref(&bare), None);
-        assert_eq!(labels(&m), ["Reload", "Open in browser"]);
-        assert!(m.iter().all(|i| i.disabled));
+        assert_eq!(labels(&m), ["Reload", "Open in browser", "Share…"]);
+        assert!(m[..2].iter().all(|i| i.disabled));
     }
 
     #[test]

@@ -44,6 +44,8 @@ mod push;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod route;
 mod settings;
+// shared links to a blueprint: the words and the public address's setup
+mod shares;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod snapshot;
 mod socket;

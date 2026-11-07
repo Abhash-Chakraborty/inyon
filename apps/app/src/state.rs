@@ -217,11 +217,53 @@ pub fn notice_msg(t: &str, text: &str) -> Option<ServerMsg> {
 pub struct PageList {
     pub pages: Option<Vec<PageEntry>>,
     pub seen: Seen,
+    /// the list came from `GET /api/pages` because the stream didn't, so the stream's own replaces it
+    pub fetched: bool,
+    /// why that fetch failed, over the list
+    pub error: Option<String>,
 }
 
 impl PageList {
     pub fn new(saved: Option<&str>) -> PageList {
-        PageList { pages: None, seen: pages::parse_seen(saved) }
+        PageList { pages: None, seen: pages::parse_seen(saved), fetched: false, error: None }
+    }
+
+    /// Empty again for a new sign-in.
+    pub fn reset(&mut self) {
+        self.pages = None;
+        self.fetched = false;
+        self.error = None;
+    }
+
+    /// The pages stream's list, which always wins.
+    pub fn streamed(&mut self, list: Vec<PageEntry>) {
+        self.pages = Some(list);
+        self.fetched = false;
+        self.error = None;
+    }
+
+    /// Whether a fetch over REST should fill in: nothing from the stream yet, or an earlier fetch.
+    pub fn wants_fetch(&self) -> bool {
+        self.pages.is_none() || self.fetched
+    }
+
+    /// What `GET /api/pages` answered, unless the stream got there first. A failure keeps what's
+    /// listed (or lists none) and says why, as the web app does.
+    pub fn fetched(&mut self, got: Result<Vec<PageEntry>, String>) {
+        if !self.wants_fetch() {
+            return;
+        }
+        self.fetched = true;
+        match got {
+            Ok(list) => {
+                self.pages = Some(list);
+                self.error = None;
+            }
+            Err(e) => {
+                self.pages.get_or_insert_with(Vec::new);
+                self.error = Some(e);
+            }
+        }
     }
 
     pub fn find(&self, host: &str, slug: &str) -> Option<&PageEntry> {
@@ -413,6 +455,7 @@ mod tests {
         assert_eq!(wire2(&feed.subs()[1]), r#"{"t":"sub","stream":"pages"}"#);
         let snap = frame(json!({ "t": "snapshot", "stream": "pages", "epoch": 2, "seq": 1, "rows": { "pages": [page("plan", 100), page("site", 200)] } }));
         let mut list = PageList::new(Some(r#"{"local/plan":150}"#));
+        assert!(list.wants_fetch());
         assert_eq!(list.pages, None);
         let (pages, resync) = feed.pages(&snap);
         assert_eq!(resync, None);
@@ -430,6 +473,28 @@ mod tests {
         list.drop_page("local", "site");
         assert_eq!(list.pages, Some(vec![]));
         assert_eq!(wire2(&feed.subs()[1]), r#"{"t":"sub","stream":"pages","at":{"epoch":2,"seq":2}}"#);
+    }
+
+    #[test]
+    fn the_pages_come_over_rest_when_the_stream_does_not() {
+        let entry = |slug: &str| -> PageEntry {
+            serde_json::from_value(json!({ "host": "local", "slug": slug, "name": slug, "project": "/p", "by": "cli", "added": 1, "folder": "/p" })).unwrap()
+        };
+        let mut list = PageList::new(None);
+        // a failed fetch lists none and says why, as the web app does
+        list.fetched(Err("Couldn't reach the hub. Check your connection.".into()));
+        assert_eq!((list.pages.clone(), list.error.as_deref()), (Some(vec![]), Some("Couldn't reach the hub. Check your connection.")));
+        assert!(list.wants_fetch());
+        list.fetched(Ok(vec![entry("plan")]));
+        assert_eq!((list.pages.as_ref().map(Vec::len), list.error.clone()), (Some(1), None));
+        // the stream's list wins, and a fetch that answers after it changes nothing
+        list.streamed(vec![entry("plan"), entry("site")]);
+        assert!(!list.wants_fetch());
+        list.fetched(Ok(vec![]));
+        list.fetched(Err("late".into()));
+        assert_eq!((list.pages.as_ref().map(Vec::len), list.error.clone()), (Some(2), None));
+        list.reset();
+        assert_eq!((list.pages.clone(), list.fetched), (None, false));
     }
 
     #[test]

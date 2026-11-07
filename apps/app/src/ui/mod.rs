@@ -24,6 +24,7 @@ mod session;
 mod session_menu;
 mod settings;
 mod setup;
+mod share;
 mod shell;
 mod sidebar;
 // xterm.js and the page's events reach it only in the browser build
@@ -153,7 +154,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
     let outbox = use_hook(move || {
         // a new sign-in: the screens start empty, so the streams start over
         state::reset_feed();
-        pages::PAGES.write().pages = None;
+        pages::PAGES.write().reset();
         organize::reset();
         if hub.peek().stale {
             if let Some(org) = crate::snapshot::organize() {
@@ -222,7 +223,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 Incoming::Frame(f) if f.stream() == Some(PAGES) => {
                     let (list, resync) = state::with_feed(|feed| feed.pages(&f));
                     if let Some(list) = list {
-                        pages::PAGES.write().pages = Some(list);
+                        pages::PAGES.write().streamed(list);
                     }
                     if let Some(m) = resync {
                         out.send(state::wire2(&m));

@@ -121,6 +121,15 @@ pub fn internal(href: &str) -> Option<Route> {
     Some(Route::parse(path, query))
 }
 
+/// The address a link into the app leads to: its route's, with the link's `#section` kept (a
+/// section of Settings).
+pub fn link_href(r: &Route, href: &str) -> String {
+    match href.split_once('#') {
+        Some((_, hash)) if !hash.is_empty() => format!("{}#{hash}", r.href()),
+        _ => r.href(),
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod imp {
     use super::Route;
@@ -158,9 +167,12 @@ mod imp {
             if a.get_attribute("target").is_some_and(|t| !t.is_empty() && t != "_self") || a.has_attribute("download") {
                 return;
             }
-            let Some(route) = a.get_attribute("href").and_then(|h| super::internal(&h)) else { return };
+            let Some(href) = a.get_attribute("href") else { return };
+            let Some(route) = super::internal(&href) else { return };
             e.prevent_default();
-            push(&route, false);
+            if let Some(h) = web_sys::window().and_then(|w| w.history().ok()) {
+                let _ = h.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&super::link_href(&route, &href)));
+            }
             let _ = tx.unbounded_send(route);
         });
         if let Some(doc) = win.document() {
@@ -340,6 +352,10 @@ mod tests {
         assert_eq!(session("box", "%12", true).href(), "/next/m/box/p/12?view=terminal");
         // a section of Settings is the same screen, scrolled to it
         assert_eq!(internal("/next/settings#notifications"), Some(Route::Settings));
+        // and the address keeps the section, so the screen scrolls to it
+        assert_eq!(link_href(&Route::Settings, "/next/settings#blueprints"), "/next/settings#blueprints");
+        assert_eq!(link_href(&Route::Settings, "/next/settings#"), "/next/settings");
+        assert_eq!(link_href(&Route::Pages { page: None }, "/next/pages"), "/next/blueprints");
         // links out of the app load their page
         assert_eq!(internal("/machines"), None);
         assert_eq!(internal("/nextcloud"), None);

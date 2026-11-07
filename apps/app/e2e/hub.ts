@@ -1,5 +1,5 @@
 // A stand-in hub for the app's browser checks: the page under the hub's own CSP at /next, the
-// sign-in endpoints, the pane actions, the chunked upload routes and the /ws2 streams (protocol
+// sign-in endpoints, the pane actions, the chunked upload routes, shared links and the /ws2 streams (protocol
 // v2), fed made-up data (demo.ts). The React app's build (apps/web/dist), when there is one, is
 // served at / over the same data through the v1 /ws socket, so a check can draw both apps side by
 // side. Nothing here comes from a real account.
@@ -8,6 +8,7 @@ import path from 'node:path'
 import type { ServerWebSocket } from 'bun'
 import { chromium, devices, type Browser, type BrowserContext, type Page } from 'playwright'
 import { accounts, overview, storefront } from './demo.ts'
+import { shareRoute } from './share-hub.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = process.env.APP_DIST ?? path.join(import.meta.dir, '../dist')
@@ -185,6 +186,12 @@ const server = Bun.serve({
     if (p === '/api/session') return json({ authed: state.authed, setup: false, setupCode: false, version: VERSION })
     const up = await uploads(req, p)
     if (up) return up
+    // shared links to a blueprint (share-hub.ts holds them)
+    if (/^\/api\/(pages\/[^/]+\/[^/]+\/shares|shares|share-address)/.test(p)) {
+      const body = req.method === 'GET' || req.method === 'DELETE' ? undefined : await req.json().catch(() => undefined)
+      const shared = shareRoute(req.method, p, body)
+      if (shared) return shared
+    }
     const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/([a-z]+)$/.exec(p)
     if (action && req.method === 'POST') {
       const host = decodeURIComponent(action[1]!)

@@ -897,6 +897,10 @@ fn Blueprints() -> Element {
                         if busy() { "Cleaning up\u{2026}" } else { "Clean up" }
                     }
                 }
+                // the hub's web app only: the phone app's pages may sit on several hubs
+                if !cfg!(feature = "phone") {
+                    super::share::SharedLinks {}
+                }
             } else {
                 WaitRows { label: "Loading blueprint settings", count: 2, class: "set-wait" }
             }
