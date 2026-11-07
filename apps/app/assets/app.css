@@ -2116,3 +2116,17 @@ button.nav-item { width: 100%; text-align: left; }
 .ultracode-mark { animation: ultracode-breathe 2.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .ultracode-box::after, .ultracode-label, .ultracode-mark { animation: none; } }
 .goal-lede { margin-bottom: 16px; }
+
+/* a menu placed over its anchor grows up out of it */
+.menu-up { transform-origin: bottom left; }
+
+/* the Snooze sheet (OrganizeSheets.tsx SnoozeSheet) */
+.snooze-lede { margin-bottom: 12px; }
+.snooze-choices { display: flex; flex-direction: column; margin: 0 -8px; }
+.snooze-choice { display: flex; height: 44px; align-items: center; gap: 12px; border-radius: 12px; padding: 0 8px; text-align: left; font-size: 14px; color: var(--fg); }
+.snooze-choice:hover, .snooze-choice:focus-visible { background: var(--hover); outline: none; }
+.snooze-label { min-width: 0; flex: 1; }
+.snooze-at { flex-shrink: 0; font-size: 12px; color: var(--fg-3); }
+.snooze-tell { display: flex; align-items: center; gap: 12px; margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.snooze-tell-label { min-width: 0; flex: 1; font-size: 13px; color: var(--fg-2); }
+.snooze-off { margin-top: 8px; font-size: 12px; line-height: 1.6; color: var(--fg-3); }

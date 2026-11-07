@@ -2,6 +2,7 @@
 //! form or the app with its socket.
 
 mod add;
+pub(crate) mod back;
 mod chat;
 mod composer;
 mod connect;

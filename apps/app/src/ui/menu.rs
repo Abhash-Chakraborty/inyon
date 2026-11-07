@@ -1,7 +1,10 @@
 //! Right-click menus (ui/ContextMenu.tsx, components/menus.tsx): a right click, or a long press on
 //! a touch screen, on anything listed (a machine, a session, a message, a code block, the terminal)
 //! opens a short list of what can be done with it; its ⋯ button opens the same list. One menu at a
-//! time, drawn over everything by [`MenuLayer`]; ↑/↓ move, Enter picks, Esc closes.
+//! time, drawn over everything by [`MenuLayer`]; ↑/↓ move, Enter picks, Esc and back close it.
+//! Everywhere else the app's own menu replaces the browser's: Cut, Copy and Paste in a text box,
+//! Open and Copy link on a link, and the page menu on anything else ([`page_menu`]). Shift+right
+//! click, and anything marked `data-native-menu`, keep the browser's own.
 
 use dioxus::prelude::*;
 use inyon_protocol::{HostKind, HostState, HostStatus};
@@ -14,7 +17,17 @@ use crate::{dom, machines, platform};
 /// that opened it has scrolled out of the list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-    Copy(String),
+    /// copies `text`; `what` names it for the toast that says so ("Session ID copied"), and a copy
+    /// without one (the selection, a text box's) says nothing
+    Copy {
+        text: String,
+        what: Option<String>,
+    },
+    /// Cut, Copy, Paste or Select all in the text box the menu was opened on
+    Text(crate::dom::TextOp),
+    /// back a page, past whatever layers are open (the page menu)
+    Back,
+    Reload,
     /// send a message that failed again
     Retry {
         host: String,
@@ -105,8 +118,10 @@ impl Item {
         Item { header: true, ..Item::new(label, Icon::Ellipsis, Action::None) }
     }
 
+    /// An item that copies `text` and says so: "Copy session ID" toasts "Session ID copied", and an
+    /// item in a Copy submenu ("Folder path") names what it copies itself.
     pub fn copy(label: &str, text: &str) -> Item {
-        Item::new(label, Icon::Copy, Action::Copy(text.into()))
+        Item::new(label, Icon::Copy, Action::Copy { text: text.into(), what: Some(copied_what(label)) })
     }
 
     pub fn hint(mut self, h: impl Into<String>) -> Item {
@@ -145,6 +160,93 @@ impl Item {
         self.separated = true;
         self
     }
+}
+
+/// What a copy item's toast calls what it copied: its label without "Copy ", from a capital.
+fn copied_what(label: &str) -> String {
+    let rest = label.strip_prefix("Copy ").unwrap_or(label);
+    let mut c = rest.chars();
+    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
+}
+
+/// What a copy says when it's done (ContextMenu.tsx's copyItem).
+pub fn copy_toast(what: &str, ok: bool) -> (String, super::toast::ToastTone) {
+    if ok {
+        (format!("{what} copied"), super::toast::ToastTone::Info)
+    } else {
+        ("Could not copy".into(), super::toast::ToastTone::Error)
+    }
+}
+
+/// A key with ⌘ or ⌥ on a Mac, Ctrl or Alt elsewhere, as the web app writes it (lib/keys.ts).
+pub fn key_label(mac: bool, cmd: bool, key: &str) -> String {
+    match (mac, cmd) {
+        (true, true) => format!("⌘{key}"),
+        (true, false) => format!("⌥{key}"),
+        (false, true) => format!("Ctrl {key}"),
+        (false, false) => format!("Alt {key}"),
+    }
+}
+
+/// Cut, Copy, Paste and Select all for the text box that was right-clicked.
+pub fn text_items(b: crate::dom::TextBox, mac: bool) -> Vec<Item> {
+    use crate::dom::TextOp;
+    let mut v = vec![];
+    if b.editable {
+        v.push(Item::new("Cut", Icon::Scissors, Action::Text(TextOp::Cut)).keys(key_label(mac, true, "X")).disabled(!b.picked || b.secret));
+    }
+    v.push(Item::new("Copy", Icon::Copy, Action::Text(TextOp::Copy)).keys(key_label(mac, true, "C")).disabled(!b.picked || b.secret));
+    if b.editable {
+        v.push(Item::new("Paste", Icon::ClipboardPaste, Action::Text(TextOp::Paste)).keys(key_label(mac, true, "V")));
+    }
+    v.push(Item::new("Select all", Icon::TextSelect, Action::Text(TextOp::SelectAll)).keys(key_label(mac, true, "A")).separated());
+    v
+}
+
+/// Open, open in a new tab (a link inside the app, where there are tabs) and copy, for a link.
+pub fn link_items(href: &str, path: &str, outside: bool, tabs: bool) -> Vec<Item> {
+    let inside = if outside { None } else { crate::route::internal(path) };
+    let mut v = vec![match &inside {
+        Some(r) => Item::new("Open link", Icon::ArrowRight, Action::Go(r.clone())),
+        None => Item::new("Open link", Icon::ExternalLink, Action::NewTab(href.into())),
+    }];
+    if !outside && tabs {
+        v.push(Item::new("Open in new tab", Icon::ExternalLink, Action::NewTab(href.into())));
+    }
+    v.push(Item { icon: Icon::Link2, ..Item::copy("Copy link", href) });
+    v
+}
+
+/// The menu for a right click nothing on the page claimed (ContextMenu.tsx's fallbackMenu): a text
+/// box's, a link's, or the page's own (Back while there's a page to go back to, Reload, then
+/// `extra`: Search… and New session…), with Copy first while text is selected.
+pub fn page_menu(at: &crate::dom::PageAt, picked: &str, back: bool, extra: Vec<Item>, mac: bool, tabs: bool) -> Vec<Item> {
+    use crate::dom::PageAt;
+    if let PageAt::TextBox(b) = at {
+        return text_items(*b, mac);
+    }
+    let rest = match at {
+        PageAt::Link { href, path, outside } => link_items(href, path, *outside, tabs),
+        _ => {
+            let mut v = vec![];
+            if back {
+                v.push(Item::new("Back", Icon::ArrowLeft, Action::Back));
+            }
+            v.push(Item::new("Reload", Icon::RotateCw, Action::Reload));
+            v.extend(extra.into_iter().enumerate().map(|(i, it)| if i == 0 { it.separated() } else { it }));
+            v
+        }
+    };
+    with_copy(picked, rest, Some(key_label(mac, true, "C")))
+}
+
+/// `items` with Copy first while `picked` holds selected text.
+fn with_copy(picked: &str, items: Vec<Item>, keys: Option<String>) -> Vec<Item> {
+    if picked.trim().is_empty() {
+        return items;
+    }
+    let copy = Item { keys, ..Item::new("Copy", Icon::Copy, Action::Copy { text: picked.into(), what: None }) };
+    std::iter::once(copy).chain(items.into_iter().enumerate().map(|(i, it)| if i == 0 { it.separated() } else { it })).collect()
 }
 
 /// What can be done to a machine from wherever it's listed: its row's right-click menu and the ⋯
@@ -194,17 +296,40 @@ pub fn pane_menu(host: &str, pane: &str, agent: bool, session_id: Option<&str>, 
     v
 }
 
+/// What a menu opens next to: a button, or the point that was right-clicked (a box of no size).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Anchor {
+    pub left: f64,
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    /// the menu's right edge lines up with the anchor's (a ⋯ button), else its left
+    pub end: bool,
+    /// how far from the anchor it opens
+    pub gap: f64,
+}
+
+impl Anchor {
+    pub fn point(x: f64, y: f64) -> Anchor {
+        Anchor { left: x, top: y, right: x, bottom: y, end: false, gap: 2.0 }
+    }
+
+    fn of(id: &str, end: bool) -> Anchor {
+        let (left, top, right, bottom) = dom::rect(id).unwrap_or((8.0, 8.0, 8.0, 8.0));
+        Anchor { left, top, right, bottom, end, gap: 6.0 }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Menu {
-    x: f64,
-    y: f64,
+    anchor: Anchor,
     items: Vec<Item>,
 }
 
 impl Menu {
     /// A menu of `items` opened at a point on the screen.
     pub fn at(x: f64, y: f64, items: Vec<Item>) -> Menu {
-        Menu { x, y, items }
+        Menu { anchor: Anchor::point(x, y), items }
     }
 
     /// Whether it's a message-box chip's menu, which must close when its session can't take picks.
@@ -215,57 +340,99 @@ impl Menu {
 
 /// An `oncontextmenu` handler that opens a menu with `items` where the pointer is.
 pub fn open(items: Vec<Item>) -> impl FnMut(Event<MouseData>) + 'static {
-    let mut menu = use_context::<Signal<Option<Menu>>>();
-    move |e: Event<MouseData>| {
-        if items.is_empty() {
-            return;
-        }
-        e.prevent_default();
-        e.stop_propagation();
-        let p = e.client_coordinates();
-        menu.set(Some(Menu { x: p.x, y: p.y, items: items.clone() }));
-    }
+    open_with(move || items.clone())
 }
 
 /// An `oncontextmenu` handler for a menu whose items depend on the moment it opens (the
-/// terminal's Copy, there only while text is selected).
+/// terminal's Copy, there only while text is selected). A right click on a text box or a link out
+/// inside it gets that one's own menu instead, Shift or `data-native-menu` the browser's, and text
+/// selected in it puts Copy first.
 pub fn open_with(items: impl Fn() -> Vec<Item> + 'static) -> impl FnMut(Event<MouseData>) + 'static {
     let mut menu = use_context::<Signal<Option<Menu>>>();
     move |e: Event<MouseData>| {
+        if e.modifiers().shift() {
+            return;
+        }
+        let p = e.client_coordinates();
+        let Some(picked) = dom::row_menu(&e.data(), p.x, p.y) else { return };
         let items = items();
         if items.is_empty() {
             return;
         }
         e.prevent_default();
         e.stop_propagation();
-        let p = e.client_coordinates();
-        menu.set(Some(Menu { x: p.x, y: p.y, items }));
+        menu.set(Some(Menu::at(p.x, p.y, with_copy(&picked, items, None))));
     }
 }
 
-/// A ⋯ button's menu, under the button with their right edges lined up (or over it near the
-/// bottom of the screen). `anchor` is the button's id.
+/// A ⋯ button's menu, under the button with their right edges lined up (or over it when there's
+/// more room above). `anchor` is the button's id.
 pub fn drop_down(menu: &mut Signal<Option<Menu>>, anchor: &str, items: Vec<Item>) {
     if items.is_empty() {
         return;
     }
-    let (x, y) = dom::rect(anchor).map_or((8.0, 8.0), |(_, _, right, bottom)| ((right - 220.0).max(8.0), bottom + 4.0));
-    menu.set(Some(Menu { x, y, items }));
+    menu.set(Some(Menu { anchor: Anchor::of(anchor, true), items }));
 }
 
 /// A chip's menu at the bottom of the screen (the composer's model, effort and mode): over the
-/// chip with their left edges lined up.
+/// chip with their left edges lined up, since that's where the room is.
 pub fn drop_up(menu: &mut Signal<Option<Menu>>, anchor: &str, items: Vec<Item>) {
     if items.is_empty() {
         return;
     }
-    let (x, y) = dom::rect(anchor).map_or((8.0, 8.0), |(left, top, _, _)| (left, up_from(top, rows(&items))));
-    menu.set(Some(Menu { x, y, items }));
+    menu.set(Some(Menu { anchor: Anchor::of(anchor, false), items }));
 }
 
-/// Where a menu of `n` rows starts so it ends just over something whose top is at `top`.
-pub fn up_from(top: f64, n: usize) -> f64 {
-    (top - 4.0 - (12.0 + 40.0 * n as f64)).max(8.0)
+/// The tallest a menu gets before it scrolls (primitives.tsx's MenuPopup).
+const MAX_HEIGHT: f64 = 420.0;
+
+/// Where a menu sits: `top` or `bottom` (from the window's bottom edge, so it grows up from its
+/// anchor), how far from the left, and how tall it may get before it scrolls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placed {
+    pub left: f64,
+    pub top: Option<f64>,
+    pub bottom: Option<f64>,
+    pub max_height: f64,
+}
+
+impl Placed {
+    fn style(&self) -> String {
+        // both edges every time: the page keeps an edge that's left out from the last placing
+        let edge = match (self.top, self.bottom) {
+            (Some(t), _) => format!("top:{t}px;bottom:auto"),
+            (_, Some(b)) => format!("top:auto;bottom:{b}px"),
+            _ => String::new(),
+        };
+        format!("left:{}px;{edge};max-height:{}px", self.left, self.max_height)
+    }
+}
+
+/// Places a menu `wanted` px tall and `width` wide next to `a` (primitives.tsx's MenuPopup): below
+/// it, or above when there's less room below than it needs and more above, shrunk to the room
+/// there is when neither side has enough. `area` is the part of the window a keyboard leaves (top,
+/// bottom), then the window's width and full height.
+pub fn fit(a: Anchor, wanted: f64, width: f64, area: (f64, f64, f64, f64)) -> Placed {
+    let (top, bottom, w, h) = (area.0 + 8.0, area.1 - 8.0, area.2, area.3);
+    // a point the window shrank away from (a keyboard came up under it) counts as its edge
+    let a = Anchor { top: a.top.clamp(top, bottom.max(top)), bottom: a.bottom.clamp(top, bottom.max(top)), ..a };
+    let below = (bottom - a.bottom - a.gap).max(0.0);
+    let above = (a.top - a.gap - top).max(0.0);
+    let up = below < wanted.min(MAX_HEIGHT) && above > below;
+    let width = width.min(w - 16.0);
+    let left = if a.end { a.right - width } else { a.left };
+    Placed {
+        left: left.min(w - width - 8.0).max(8.0),
+        top: (!up).then(|| (a.bottom + a.gap).min(bottom)),
+        bottom: up.then(|| h - (a.top - a.gap).max(top)),
+        max_height: MAX_HEIGHT.min(if up { above } else { below }),
+    }
+}
+
+/// A first guess at a menu's height, for before the page has measured it (and for the native
+/// build, where it can't).
+fn guess(items: &[Item]) -> f64 {
+    12.0 + 40.0 * rows(items) as f64
 }
 
 // ---------- a long press on a touch screen ----------
@@ -330,7 +497,8 @@ impl LongPress {
                 if let Some(pr) = PRESS.write().as_mut() {
                     pr.fired = true;
                 }
-                menu.set(Some(Menu { x: p.x, y: p.y, items }));
+                buzz();
+                menu.set(Some(Menu::at(p.x, p.y, items)));
             }
         });
     }
@@ -359,6 +527,15 @@ impl LongPress {
     }
 }
 
+/// The firm buzz as a long press opens its menu (lib/haptics.ts's 'long'), when haptics are on.
+fn buzz() {
+    if super::notices::PREFS.peek().haptics {
+        dom::vibrate(&LONG_BUZZ);
+    }
+}
+
+const LONG_BUZZ: [u32; 1] = [40];
+
 /// The finger came up: a press that didn't open the menu is forgotten, and one that did notes when,
 /// so the click the lift brings is told apart from a later tap.
 fn lifted() {
@@ -382,16 +559,6 @@ fn lift_click() -> bool {
         *PRESS.write() = None;
     }
     owned
-}
-
-/// Where a menu of `n` items opens so it stays on a `w`×`h` screen: at the pointer, moved left or
-/// up when it would run off the edge.
-pub fn place(x: f64, y: f64, n: usize, w: f64, h: f64) -> (f64, f64) {
-    const WIDTH: f64 = 220.0;
-    let height = 12.0 + 40.0 * n as f64;
-    let left = if x + WIDTH + 8.0 > w { (x - WIDTH).max(8.0) } else { x };
-    let top = if y + height + 8.0 > h { (y - height).max(8.0) } else { y };
-    (left, top)
 }
 
 /// Where a submenu of `n` rows opens beside the item at `item` (left, top, right): to its right,
@@ -455,17 +622,38 @@ pub fn MenuLayer() -> Element {
     let hub = use_context::<Signal<crate::state::Hub>>();
     // the submenu open now: which item of the menu holds it
     let mut open_sub = use_signal(|| None::<usize>);
+    // back and Esc close it, as the newest layer
+    let layer = super::back::use_layer(menu.read().is_some(), true, move || menu.set(None));
+    // the menu's real height and width, once the page has drawn it, for the menu they're of
+    let mut measured = use_signal(|| None::<(Anchor, usize, f64, f64)>);
+    // the window, and what a keyboard leaves of it: the menu moves when they change
+    let area = use_signal(dom::visible_area);
+    use_hook(move || {
+        dom::on_viewport(move || {
+            let mut a = area;
+            a.set(dom::visible_area());
+        })
+    });
     // the first item takes focus as the menu opens, so the keys work at once
     use_effect(move || {
         if let Some(m) = menu.read().as_ref() {
             open_sub.set(None);
             dom::focus(&format!("menu-item-{}", first_pick(&m.items)));
+            if let (Some((_, full, _)), Some((l, _, r, _))) = (dom::scroll_metrics("menu-root"), dom::rect("menu-root")) {
+                measured.set(Some((m.anchor, m.items.len(), full, r - l)));
+            }
         }
     });
     let Some(m) = menu() else { return rsx! {} };
-    let (w, h) = dom::viewport();
+    let (_, _, w, h) = area();
     let narrow = w < SIDE_BY_SIDE;
-    let (left, top) = place(m.x, m.y, rows(&m.items), w, h);
+    let (wanted, width) = measured().filter(|x| x.0 == m.anchor && x.1 == m.items.len()).map_or((guess(&m.items), 220.0), |x| (x.2, x.3));
+    let placed = fit(m.anchor, wanted, width, area());
+    let left = placed.left;
+    // where its top edge is, for a submenu that opens in its place or beside one of its items
+    let top = placed.top.unwrap_or_else(|| h - placed.bottom.unwrap_or(0.0) - wanted.min(placed.max_height));
+    let style = placed.style();
+    let grows_up = placed.bottom.is_some();
     let sub = open_sub().and_then(|i| m.items.get(i).and_then(|it| it.sub.clone().map(|s| (i, it.label.clone(), s))));
     let mut close_sub = move |back_to: usize| {
         open_sub.set(None);
@@ -498,19 +686,30 @@ pub fn MenuLayer() -> Element {
                     menu.set(None);
                 }
             },
+            // a right click on something else closes this menu and opens that one's
             oncontextmenu: move |e| {
                 e.prevent_default();
                 let now = platform::clock().now;
-                if !PRESS.peek().as_ref().is_some_and(|p| p.owns(now)) {
-                    menu.set(None);
+                if PRESS.peek().as_ref().is_some_and(|p| p.owns(now)) {
+                    return;
+                }
+                menu.set(None);
+                let p = e.client_coordinates();
+                if !dom::touch_press() {
+                    spawn(async move {
+                        // once the backdrop has gone
+                        platform::sleep(20).await;
+                        dom::context_menu_at(p.x, p.y);
+                    });
                 }
             },
         }
         if !(narrow && sub.is_some()) {
             div {
-                class: "menu",
+                id: "menu-root",
+                class: if grows_up { "menu menu-up" } else { "menu" },
                 role: "menu",
-                style: "left:{left}px;top:{top}px",
+                style: "{style}",
                 onkeydown: move |e: KeyboardEvent| {
                     let at = dom::active_id().and_then(|id| id.strip_prefix("menu-item-").and_then(|i| i.parse::<usize>().ok()));
                     match e.key() {
@@ -557,6 +756,7 @@ pub fn MenuLayer() -> Element {
                                         Some(s) => enter_sub(i, s),
                                         None => {
                                             menu.set(None);
+                                            layer.done();
                                             run(item.action.clone(), chats, here, hub);
                                         }
                                     }
@@ -612,6 +812,7 @@ pub fn MenuLayer() -> Element {
                                 on_hover: move |_| {},
                                 on_pick: move |_| {
                                     menu.set(None);
+                                    layer.done();
                                     run(item.action.clone(), chats, here, hub);
                                 },
                             }
@@ -690,11 +891,26 @@ fn MenuRow(id: String, item: Item, first: bool, expanded: bool, on_hover: EventH
 
 pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<Route>, hub: Signal<crate::state::Hub>) {
     match action {
-        Action::Copy(text) => {
+        Action::Copy { text, what } => {
             spawn(async move {
-                dom::copy(&text).await;
+                let ok = dom::copy(&text).await;
+                if let Some(what) = what {
+                    let (title, tone) = copy_toast(&what, ok);
+                    super::toast::toast(title, None, tone);
+                }
             });
         }
+        Action::Text(op) => {
+            spawn(async move {
+                if !dom::text_op(op).await {
+                    // the browser won't let a page read the clipboard: the keys still work
+                    let keys = key_label(dom::mac(), true, "V");
+                    super::toast::toast(format!("Press {keys} to paste"), Some("This browser doesn't let the menu read the clipboard.".into()), super::toast::ToastTone::Info);
+                }
+            });
+        }
+        Action::Back => super::back::page_back(),
+        Action::Reload => dom::reload(),
         Action::Retry { host, pane, id, text } => super::composer::retry(chats, host, pane, id, text),
         Action::Dismiss { key, id } => super::composer::dismiss(chats, &key, &id),
         Action::Term(op) => crate::term::menu(op),
@@ -752,11 +968,28 @@ mod tests {
     }
 
     #[test]
-    fn a_menu_stays_on_the_screen() {
-        assert_eq!(place(100.0, 100.0, 2, 390.0, 844.0), (100.0, 100.0));
-        // near the right edge it opens to the left of the pointer, near the bottom above it
-        assert_eq!(place(300.0, 820.0, 2, 390.0, 844.0), (80.0, 728.0));
-        assert_eq!(place(10.0, 10.0, 3, 200.0, 100.0), (8.0, 8.0));
+    fn a_menu_opens_on_the_side_with_room_and_shrinks_when_neither_has_enough() {
+        let screen = (0.0, 844.0, 390.0, 844.0);
+        // a right click high up: below the point, as tall as it is
+        let p = fit(Anchor::point(100.0, 100.0), 300.0, 240.0, screen);
+        assert_eq!(p, Placed { left: 100.0, top: Some(102.0), bottom: None, max_height: 420.0f64.min(844.0 - 8.0 - 102.0) });
+        // low down: above it, growing up from the point, kept off the right edge
+        let p = fit(Anchor::point(300.0, 800.0), 300.0, 240.0, screen);
+        assert_eq!((p.left, p.top, p.bottom), (142.0, None, Some(844.0 - 798.0)));
+        assert_eq!(p.max_height, 420.0);
+        // a ⋯ button: right edges lined up
+        let button = Anchor { left: 340.0, top: 20.0, right: 372.0, bottom: 52.0, end: true, gap: 6.0 };
+        assert_eq!(fit(button, 200.0, 220.0, screen).left, 152.0);
+        // the keyboard is up: only the top 400px show, so a menu from a point at 300 goes up and shrinks
+        let p = fit(Anchor::point(20.0, 300.0), 360.0, 240.0, (0.0, 400.0, 390.0, 844.0));
+        assert_eq!((p.top, p.bottom, p.max_height), (None, Some(844.0 - 298.0), 290.0));
+        // the window shrank under the point: it counts as the bottom edge, and the menu goes up
+        let p = fit(Anchor::point(200.0, 548.0), 300.0, 200.0, (0.0, 420.0, 390.0, 420.0));
+        assert_eq!((p.top, p.bottom, p.max_height), (None, Some(420.0 - 410.0), 402.0));
+        assert_eq!(p.style(), "left:182px;top:auto;bottom:10px;max-height:402px");
+        // a measured menu that fits below stays below, whatever 40px a row would have guessed
+        let short = fit(Anchor::point(20.0, 600.0), 150.0, 240.0, screen);
+        assert_eq!(short.top, Some(602.0));
     }
 
     #[test]
@@ -789,6 +1022,77 @@ mod tests {
         let menu = vec![Item::copy("A", "a"), Item::copy("B", "b"), Item::copy("C", "c"), Item::copy("D", "d")];
         assert_eq!(row_top(&menu, 3, 100.0), 226.0);
         assert_eq!(row_top(&menu, 0, 100.0), 106.0);
+    }
+
+    #[test]
+    fn copy_items_say_what_they_copied() {
+        let id = Item::copy("Copy session ID", "abc");
+        assert_eq!(id.action, Action::Copy { text: "abc".into(), what: Some("Session ID".into()) });
+        assert_eq!(copied_what("Copy message"), "Message");
+        assert_eq!(copied_what("Folder path"), "Folder path", "an item in a Copy submenu names itself");
+        assert_eq!(copied_what("tmux target"), "Tmux target");
+        assert_eq!(copy_toast("Session ID", true).0, "Session ID copied");
+        assert_eq!(copy_toast("Session ID", false), ("Could not copy".to_string(), super::super::toast::ToastTone::Error));
+    }
+
+    #[test]
+    fn a_text_box_menu_cuts_copies_pastes_and_selects_all() {
+        use crate::dom::{TextBox, TextOp};
+        let m = text_items(TextBox { picked: true, editable: true, secret: false }, false);
+        assert_eq!(labels(&m), ["Cut", "Copy", "Paste", "Select all"]);
+        assert_eq!(m.iter().map(|i| i.keys.clone().unwrap()).collect::<Vec<_>>(), ["Ctrl X", "Ctrl C", "Ctrl V", "Ctrl A"]);
+        assert_eq!(m[2].action, Action::Text(TextOp::Paste));
+        assert!(m[3].separated && !m[0].disabled);
+        // nothing selected, or a password: no Cut or Copy; read-only: nothing to cut or paste
+        let none = text_items(TextBox { picked: false, editable: true, secret: false }, true);
+        assert!(none[0].disabled && none[1].disabled);
+        assert_eq!(none[0].keys.as_deref(), Some("⌘X"));
+        assert!(text_items(TextBox { picked: true, editable: true, secret: true }, false)[1].disabled);
+        assert_eq!(labels(&text_items(TextBox { picked: true, editable: false, secret: false }, false)), ["Copy", "Select all"]);
+    }
+
+    #[test]
+    fn a_link_menu_opens_it_here_or_in_a_tab_and_copies_it() {
+        let m = link_items("http://hub:4777/next/settings", "/next/settings", false, true);
+        assert_eq!(labels(&m), ["Open link", "Open in new tab", "Copy link"]);
+        assert_eq!(m[0].action, Action::Go(Route::Settings));
+        assert_eq!(m[2].action, Action::Copy { text: "http://hub:4777/next/settings".into(), what: Some("Link".into()) });
+        // a link out opens in a tab of its own; the phone app has no tabs
+        let out = link_items("https://example.com/", "https://example.com/", true, true);
+        assert_eq!(labels(&out), ["Open link", "Copy link"]);
+        assert_eq!(out[0].action, Action::NewTab("https://example.com/".into()));
+        assert_eq!(labels(&link_items("http://hub/next/", "/next/", false, false)), ["Open link", "Copy link"]);
+    }
+
+    #[test]
+    fn the_page_menu_goes_back_reloads_then_offers_the_shells_own_with_copy_first() {
+        use crate::dom::PageAt;
+        let extra = || vec![Item::new("Search…", Icon::Search, Action::None), Item::new("New session…", Icon::Plus, Action::None)];
+        let m = page_menu(&PageAt::Page, "", true, extra(), false, true);
+        assert_eq!(labels(&m), ["Back", "Reload", "Search…", "New session…"]);
+        assert_eq!((m[0].action.clone(), m[1].action.clone()), (Action::Back, Action::Reload));
+        assert!(m[2].separated && !m[3].separated);
+        // the first page of the tab has nowhere to go back to
+        assert_eq!(labels(&page_menu(&PageAt::Page, "", false, extra(), false, true)), ["Reload", "Search…", "New session…"]);
+        // selected text: Copy first, silently, with its key
+        let m = page_menu(&PageAt::Page, "two words", true, extra(), true, true);
+        assert_eq!(labels(&m), ["Copy", "Back", "Reload", "Search…", "New session…"]);
+        assert_eq!((m[0].action.clone(), m[0].keys.as_deref()), (Action::Copy { text: "two words".into(), what: None }, Some("⌘C")));
+        assert!(m[1].separated);
+        let link = PageAt::Link { href: "http://hub/next/machines".into(), path: "/next/machines".into(), outside: false };
+        assert_eq!(labels(&page_menu(&link, "x", true, extra(), false, true)), ["Copy", "Open link", "Open in new tab", "Copy link"]);
+        // a text box gets its own menu, and the selection elsewhere doesn't matter to it
+        let b = PageAt::TextBox(crate::dom::TextBox { picked: false, editable: true, secret: false });
+        assert_eq!(labels(&page_menu(&b, "x", true, extra(), false, true)), ["Cut", "Copy", "Paste", "Select all"]);
+    }
+
+    #[test]
+    fn selected_text_puts_copy_at_the_top_of_a_rows_menu() {
+        let rows = vec![Item::copy("Copy message", "all of it")];
+        let m = with_copy("part", rows.clone(), None);
+        assert_eq!(labels(&m), ["Copy", "Copy message"]);
+        assert!(m[1].separated && m[0].keys.is_none());
+        assert_eq!(with_copy("  ", rows.clone(), None), rows);
     }
 
     #[test]

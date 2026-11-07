@@ -504,26 +504,252 @@ mod imp {
         key.forget();
     }
 
-    /// A right click that nothing in the app took (`contextmenu` left without preventDefault) on
-    /// a spot that isn't text, a text box, a link or the terminal: `f` gets where it was and says
-    /// whether it opened a menu. Shift keeps the browser's own menu.
-    pub fn on_page_menu(f: impl Fn(f64, f64) -> bool + 'static) {
+    // ---------- right-click menus ----------
+
+    thread_local! {
+        /// how the last press was made: a long press on a touch screen also sends contextmenu
+        static POINTER: std::cell::RefCell<String> = std::cell::RefCell::new("mouse".into());
+        /// the text box a menu was opened on, with what was selected in it then (picking an item
+        /// moves the focus to the menu)
+        static BOX: std::cell::RefCell<Option<(web_sys::HtmlElement, u32, u32, String)>> = const { std::cell::RefCell::new(None) };
+    }
+
+    fn follow_pointer() {
+        thread_local!(static ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        if ON.with(|o| o.replace(true)) {
+            return;
+        }
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
+        let down = Closure::<dyn Fn(web_sys::Event)>::new(|e: web_sys::Event| {
+            if let Ok(t) = js_sys::Reflect::get(&e, &"pointerType".into()) {
+                POINTER.with(|p| *p.borrow_mut() = t.as_string().unwrap_or_else(|| "mouse".into()));
+            }
+        });
+        let _ = doc.add_event_listener_with_callback_and_bool("pointerdown", down.as_ref().unchecked_ref(), true);
+        down.forget();
+    }
+
+    /// A box people type text in, as the text box menu takes it (an input of a text type, a
+    /// textarea or editable text), and not the terminal's hidden one.
+    fn text_box(el: &web_sys::Element) -> Option<web_sys::HtmlElement> {
+        let b = el.closest("input, textarea, [contenteditable=''], [contenteditable='true']").ok().flatten()?;
+        if b.closest(".xterm").ok().flatten().is_some() {
+            return None;
+        }
+        if let Some(i) = b.dyn_ref::<web_sys::HtmlInputElement>() {
+            if !matches!(i.type_().as_str(), "text" | "search" | "url" | "email" | "tel" | "password" | "number" | "") {
+                return None;
+            }
+        }
+        b.dyn_into().ok()
+    }
+
+    /// The selected text, when the right click at `x`, `y` on `target` is on it or around it.
+    fn selection_at(target: &web_sys::Element, x: f64, y: f64) -> String {
+        let Some(sel) = web_sys::window().and_then(|w| w.get_selection().ok().flatten()) else { return String::new() };
+        let text: String = sel.to_string().into();
+        if text.trim().is_empty() || sel.range_count() == 0 {
+            return String::new();
+        }
+        let Ok(r) = sel.get_range_at(0) else { return String::new() };
+        let inside = r.common_ancestor_container().is_ok_and(|c| target.contains(Some(&c)));
+        let b = r.get_bounding_client_rect();
+        let on = x >= b.left() && x <= b.right() && y >= b.top() && y <= b.bottom();
+        if inside || on {
+            text
+        } else {
+            String::new()
+        }
+    }
+
+    /// What a row's right click lands on (ContextMenu.tsx's contextMenu): None when it belongs to
+    /// what's under the pointer instead (a text box, a link out, anything marked
+    /// `data-native-menu`, all of which get their own menu), or when it was a long press on a touch
+    /// screen; else the text selected in the row, which its menu offers to copy first.
+    pub fn row_menu(data: &dioxus::prelude::MouseData, x: f64, y: f64) -> Option<String> {
+        follow_pointer();
+        let Some(e) = data.downcast::<web_sys::MouseEvent>() else { return Some(String::new()) };
+        let Some(t) = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else { return Some(String::new()) };
+        let own = t.closest("input, textarea, select, [contenteditable=''], [contenteditable='true'], a[href^='http'], [data-native-menu]").ok().flatten();
+        if own.is_some_and(|o| o.closest(".xterm").ok().flatten().is_none()) {
+            return None;
+        }
+        Some(selection_at(&t, x, y))
+    }
+
+    /// The last press was a finger's.
+    pub fn touch_press() -> bool {
+        POINTER.with(|p| p.borrow().as_str() == "touch")
+    }
+
+    /// A right click that nothing in the app took (`contextmenu` left without preventDefault): `f`
+    /// gets where it was, what it landed on and the text selected, and says whether it opened a
+    /// menu. Shift, a finger's long press and anything marked `data-native-menu` keep the
+    /// browser's own menu.
+    pub fn on_page_menu(f: impl Fn(f64, f64, super::PageAt, String) -> bool + 'static) {
         let Some(win) = web_sys::window() else { return };
+        follow_pointer();
         let menu = Closure::<dyn Fn(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| {
-            if e.default_prevented() || e.shift_key() {
+            if e.default_prevented() || e.shift_key() || touch_press() {
                 return;
             }
             let target = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
             let Some(el) = target else { return };
-            if typing_in(Some(el.clone())) || el.closest("a[href], [data-native-menu], iframe").ok().flatten().is_some() {
+            if el.closest("[data-native-menu], iframe, select, .xterm").ok().flatten().is_some() {
                 return;
             }
-            if f(e.client_x() as f64, e.client_y() as f64) {
+            // the keyboard's menu key gives no position: at the element instead
+            let (mut x, mut y) = (e.client_x() as f64, e.client_y() as f64);
+            if x == 0.0 && y == 0.0 {
+                let r = el.get_bounding_client_rect();
+                (x, y) = (r.left() + 12.0, r.top() + r.height().min(24.0));
+            }
+            let at = if let Some(b) = text_box(&el) {
+                let (start, end, picked, editable, secret) = if let Some(i) = b.dyn_ref::<web_sys::HtmlInputElement>() {
+                    let (s, e) = (i.selection_start().ok().flatten().unwrap_or(0), i.selection_end().ok().flatten().unwrap_or(0));
+                    (s, e, utf16_slice(&i.value(), s, e), !i.read_only() && !i.disabled(), i.type_() == "password")
+                } else if let Some(t) = b.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                    let (s, e) = (t.selection_start().ok().flatten().unwrap_or(0), t.selection_end().ok().flatten().unwrap_or(0));
+                    (s, e, utf16_slice(&t.value(), s, e), !t.read_only() && !t.disabled(), false)
+                } else {
+                    let picked = web_sys::window().and_then(|w| w.get_selection().ok().flatten()).map(|s| String::from(s.to_string())).unwrap_or_default();
+                    (0, 0, picked, b.is_content_editable(), false)
+                };
+                let info = super::TextBox { picked: !picked.is_empty(), editable, secret };
+                BOX.with(|bx| *bx.borrow_mut() = Some((b, start, end, picked)));
+                super::PageAt::TextBox(info)
+            } else if let Some(a) = el.closest("a[href]").ok().flatten().and_then(|a| a.dyn_into::<web_sys::HtmlAnchorElement>().ok()) {
+                super::PageAt::Link { href: a.href(), path: a.get_attribute("href").unwrap_or_default(), outside: a.origin() != origin() }
+            } else {
+                super::PageAt::Page
+            };
+            let picked = if matches!(at, super::PageAt::TextBox(_)) { String::new() } else { selection_at(&el, x, y) };
+            if f(x, y, at, picked) {
                 e.prevent_default();
             }
         });
         let _ = win.add_event_listener_with_callback("contextmenu", menu.as_ref().unchecked_ref());
         menu.forget();
+    }
+
+    /// Part of a JavaScript string by its UTF-16 offsets, as a text box's selection gives them.
+    fn utf16_slice(s: &str, start: u32, end: u32) -> String {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let (a, b) = ((start as usize).min(units.len()), (end as usize).min(units.len()));
+        String::from_utf16_lossy(&units[a.min(b)..b])
+    }
+
+    /// Puts the focus and the selection back on the text box the menu was opened on.
+    fn restore() -> Option<(web_sys::HtmlElement, u32, u32, String)> {
+        let b = BOX.with(|b| b.borrow().clone())?;
+        let _ = b.0.focus();
+        if let Some(i) = b.0.dyn_ref::<web_sys::HtmlInputElement>() {
+            let _ = i.set_selection_range(b.1, b.2);
+        } else if let Some(t) = b.0.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+            let _ = t.set_selection_range(b.1, b.2);
+        }
+        Some(b)
+    }
+
+    /// Types `text` over the selection: insertText keeps the box's undo history, and the app sees
+    /// the change as typing.
+    fn insert(text: &str) {
+        let Some((el, start, end, _)) = restore() else { return };
+        let doc = web_sys::window().and_then(|w| w.document());
+        let ok = doc.and_then(|d| d.dyn_into::<web_sys::HtmlDocument>().ok()).and_then(|d| d.exec_command_with_show_ui_and_value("insertText", false, text).ok()).unwrap_or(false);
+        let field = el.dyn_ref::<web_sys::HtmlInputElement>().is_some() || el.dyn_ref::<web_sys::HtmlTextAreaElement>().is_some();
+        if !ok && field {
+            if let Ok(f) = js_sys::Reflect::get(&el, &"setRangeText".into()).and_then(|f| f.dyn_into::<js_sys::Function>()) {
+                let args = js_sys::Array::of4(&text.into(), &start.into(), &end.into(), &"end".into());
+                let _ = f.apply(&el, &args);
+            }
+        }
+    }
+
+    /// Cut, Copy, Paste or Select all in the text box the menu was opened on. False when the page
+    /// may not read the clipboard (Paste), so the keys are the way.
+    pub async fn text_op(op: super::TextOp) -> bool {
+        let Some((el, _, _, picked)) = BOX.with(|b| b.borrow().clone()) else { return true };
+        match op {
+            super::TextOp::Cut => {
+                if copy(&picked).await {
+                    insert("");
+                }
+            }
+            super::TextOp::Copy => {
+                copy(&picked).await;
+            }
+            super::TextOp::Paste => match paste().await {
+                Ok(text) => insert(&text),
+                Err(()) => {
+                    restore();
+                    return false;
+                }
+            },
+            super::TextOp::SelectAll => {
+                let _ = el.focus();
+                if let Some(i) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+                    i.select();
+                } else if let Some(t) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                    t.select();
+                } else if let Some(d) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.dyn_into::<web_sys::HtmlDocument>().ok()) {
+                    let _ = d.exec_command("selectAll");
+                }
+            }
+        }
+        true
+    }
+
+    /// Right-clicks whatever is at `x`, `y` now, so it opens its own menu (a right click elsewhere
+    /// while a menu is open, once that menu has closed).
+    pub fn context_menu_at(x: f64, y: f64) {
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
+        let Some(el) = doc.element_from_point(x as f32, y as f32) else { return };
+        let init = web_sys::MouseEventInit::new();
+        init.set_bubbles(true);
+        init.set_cancelable(true);
+        init.set_client_x(x as i32);
+        init.set_client_y(y as i32);
+        init.set_button(2);
+        if let Ok(e) = web_sys::MouseEvent::new_with_mouse_event_init_dict("contextmenu", &init) {
+            let _ = el.dispatch_event(&e);
+        }
+    }
+
+    /// How many entries the tab's history has (the page menu's Back needs one to go to).
+    pub fn history_len() -> u32 {
+        web_sys::window().and_then(|w| w.history().ok()).and_then(|h| h.length().ok()).unwrap_or(1)
+    }
+
+    /// Whether the focus is in something that takes typing (a text box or the terminal).
+    pub fn typing_now() -> bool {
+        typing_in(web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()))
+    }
+
+    /// The part of the window not covered by an on-screen keyboard (the visual viewport): its top
+    /// and bottom, the window's width and its full height.
+    pub fn visible_area() -> (f64, f64, f64, f64) {
+        let (w, h) = viewport();
+        let vv = web_sys::window().and_then(|win| js_sys::Reflect::get(&win, &"visualViewport".into()).ok()).filter(|v| v.is_object());
+        let num = |k: &str| vv.as_ref().and_then(|v| js_sys::Reflect::get(v, &k.into()).ok()).and_then(|v| v.as_f64());
+        // the visual viewport can lag the window's own size by an event
+        match (num("offsetTop"), num("height")) {
+            (Some(top), Some(height)) => (top, (top + height).min(h), w, h),
+            _ => (0.0, h, w, h),
+        }
+    }
+
+    /// Calls `f` whenever the window or the part of it a keyboard leaves changes.
+    pub fn on_viewport(f: impl Fn() + 'static) {
+        let f = std::rc::Rc::new(f);
+        let g = f.clone();
+        on_resize(move || g());
+        let Some(vv) = web_sys::window().and_then(|win| js_sys::Reflect::get(&win, &"visualViewport".into()).ok()).filter(|v| v.is_object()) else { return };
+        let target: web_sys::EventTarget = vv.unchecked_into();
+        let cb = Closure::<dyn Fn()>::new(move || f());
+        let _ = target.add_event_listener_with_callback("resize", cb.as_ref().unchecked_ref());
+        let _ = target.add_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
+        cb.forget();
     }
 
     // ---------- Settings, notices and the intro ----------
@@ -873,7 +1099,28 @@ mod imp {
         false
     }
     pub fn on_shortcut(_f: impl Fn(&str) -> bool + 'static) {}
-    pub fn on_page_menu(_f: impl Fn(f64, f64) -> bool + 'static) {}
+    pub fn on_page_menu(_f: impl Fn(f64, f64, super::PageAt, String) -> bool + 'static) {}
+    pub fn row_menu(_data: &dioxus::prelude::MouseData, _x: f64, _y: f64) -> Option<String> {
+        Some(String::new())
+    }
+    pub fn touch_press() -> bool {
+        false
+    }
+    pub async fn text_op(_op: super::TextOp) -> bool {
+        true
+    }
+    pub fn context_menu_at(_x: f64, _y: f64) {}
+    pub fn history_len() -> u32 {
+        1
+    }
+    pub fn typing_now() -> bool {
+        false
+    }
+    pub fn visible_area() -> (f64, f64, f64, f64) {
+        let (w, h) = viewport();
+        (0.0, h, w, h)
+    }
+    pub fn on_viewport(_f: impl Fn() + 'static) {}
     thread_local! {
         static WAKE: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
         static AWAY: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
@@ -989,6 +1236,37 @@ mod imp {
 }
 
 pub use imp::*;
+
+/// What a right click that nothing in the app took landed on, for the menu it gets.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageAt {
+    /// a text box: whether text is selected in it, whether it can be changed, whether it's a password
+    TextBox(TextBox),
+    /// a link: where it leads in full, as written, and whether that's outside the app's origin
+    Link {
+        href: String,
+        path: String,
+        outside: bool,
+    },
+    Page,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextBox {
+    pub picked: bool,
+    pub editable: bool,
+    pub secret: bool,
+}
+
+/// What the text box menu does to the box it was opened on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextOp {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {

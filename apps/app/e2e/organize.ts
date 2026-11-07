@@ -215,20 +215,18 @@ try {
     if (scheme === 'light') {
       // the menu, in Ghostex's order
       await row('Write release notes').locator('.side-link').click({ button: 'right' })
-      check((await menuItems(page)).join('|') === 'Open|Open terminal|Open in new tab|Rename…|Pin|Snooze|Park|Tag as|Copy|More|Select|End session…', `${label}: the session menu (${await menuItems(page)})`)
+      check((await menuItems(page)).join('|') === 'Open|Open terminal|Open in new tab|Rename…|Pin|Snooze…|Park|Tag as|Copy|More|Select|End session…', `${label}: the session menu (${await menuItems(page)})`)
       // a submenu opens beside its item on hover, and with → from the keyboard
-      await page.locator('.menu .menu-item', { hasText: 'Snooze' }).hover()
+      await page.locator('.menu .menu-item', { hasText: 'More' }).hover()
       await page.locator('.menu-sub').waitFor()
-      const times = await page.locator('.menu-sub .menu-words > span:first-child').allTextContents()
-      check(times.join('|') === '1 hour|3 hours|Tomorrow morning|Next week', `${label}: the snooze times (${times})`)
-      check((await page.locator('.menu-sub .menu-hint').nth(3).textContent())?.startsWith('Mon '), `${label}: next week is a Monday`)
+      check((await menuItems(page, 'menu-sub')).join('|') === 'Note…|Close when done', `${label}: More's submenu (${await menuItems(page, 'menu-sub')})`)
       const sub = (await page.locator('.menu-sub').boundingBox())!
       const main = (await page.locator('.menu').first().boundingBox())!
       check(sub.x >= main.x + main.width - 12, `${label}: the submenu sits beside the menu`)
       await page.screenshot({ path: path.join(shots, 'organize-menu-1440-light.png') })
       await page.locator('.menu .menu-item', { hasText: 'Copy' }).hover()
       check(await until(async () => (await menuItems(page, 'menu-sub')).join('|') === 'Folder path|tmux target'), `${label}: hovering another item swaps the submenu (${await menuItems(page, 'menu-sub')})`)
-      await page.locator('.menu .menu-item', { hasText: 'Pin' }).first().focus()
+      await page.locator('.menu .menu-item', { hasText: 'Park' }).first().focus()
       await page.keyboard.press('ArrowDown')
       await page.keyboard.press('ArrowRight')
       check(await until(async () => (await page.evaluate(() => document.activeElement?.id)) === 'menu-sub-0'), `${label}: → opens the submenu and focuses its first item`)
@@ -244,13 +242,23 @@ try {
       check(await until(async () => (await heads()).join(',') === 'Pinned,Sessions'), `${label}: a Pinned section (${await heads()})`)
       check(await until(async () => (await page.locator('.pinned .card-title').allTextContents()).join() === 'Write release notes'), `${label}: Pinned on the Overview`)
 
-      // snooze for an hour, then Undo on the toast
+      // snooze for an hour from the Snooze sheet, told when it's back, then Undo on the toast
       await row('Tidy the billing API types').locator('.side-link').click({ button: 'right' })
-      await page.locator('.menu .menu-item', { hasText: 'Snooze' }).click()
-      await page.locator('.menu-sub .menu-item', { hasText: '1 hour' }).click()
+      await page.locator('.menu .menu-item', { hasText: 'Snooze…' }).click()
+      const snoozeSheet = page.getByRole('dialog', { name: 'Snooze' })
+      await snoozeSheet.waitFor()
+      const choices = await snoozeSheet.locator('.snooze-label').allTextContents()
+      check(choices.join('|') === 'For an hour|For three hours|Until tomorrow morning|Until next week', `${label}: the snooze choices (${choices})`)
+      check((await snoozeSheet.locator('.snooze-at').nth(3).textContent())?.startsWith('until Mon '), `${label}: next week is a Monday (${await snoozeSheet.locator('.snooze-at').nth(3).textContent()})`)
+      check(await snoozeSheet.getByText('It moves to Parked and snoozed on every device and comes back on its own. The agent keeps running.').isVisible(), `${label}: the sheet says what a snooze does`)
+      await snoozeSheet.getByRole('switch', { name: "Tell me when it's back" }).click()
+      await page.screenshot({ path: path.join(shots, 'organize-snooze-1440-light.png') })
+      await snoozeSheet.getByRole('button', { name: /For an hour/ }).click()
       check(await until(() => patches().length === 2), `${label}: Snooze asks the hub`)
       const until1h = patches()[1]?.body?.snoozedUntil
       check(Math.abs(until1h - (Date.now() + 3600_000)) < 60_000, `${label}: snoozed for an hour (${until1h})`)
+      check(patches()[1]?.body?.snoozeNotice === true, `${label}: and told when it's back (${JSON.stringify(patches()[1]?.body)})`)
+      await snoozeSheet.waitFor({ state: 'detached' })
       check(await until(async () => (await heads()).join(',') === 'Pinned,Sessions,Snoozed'), `${label}: a folded Snoozed section (${await heads()})`)
       check((await list.locator('.side-section', { hasText: 'Snoozed' }).locator('.side-head').getAttribute('aria-expanded')) === 'false', `${label}: Snoozed starts folded`)
       const toast = page.locator('.toast', { hasText: 'Snoozed until' })
@@ -328,7 +336,7 @@ try {
     await page.keyboard.press('Escape')
     check(await until(async () => (await page.locator('.menu').count()) === 0 && (await bar.count()) === 1), `${label}: Esc closes the menu and keeps the selection`)
     await row('Migrate auth to passkeys').locator('.side-link').click({ button: 'right' })
-    check((await menuItems(page)).join('|') === '2 sessions selected|Pin selected|Park selected|Snooze selected|Tag selected as|Clear selection', `${label}: the bulk menu (${await menuItems(page)})`)
+    check((await menuItems(page)).join('|') === '2 sessions selected|Pin selected|Park selected|Snooze selected…|Tag selected as|Clear selection', `${label}: the bulk menu (${await menuItems(page)})`)
     await page.locator('.menu .menu-item', { hasText: 'Park selected' }).click()
     check(await until(() => patches().length === before + 2 && patches().slice(-2).every((c) => c.body?.parked === true)), `${label}: both parked (${JSON.stringify(patches().slice(before))})`)
     await page.locator('.toast', { hasText: 'Parked 2 sessions' }).waitFor()
@@ -389,7 +397,7 @@ try {
     await hold('Write release notes')
     check((await menuItems(page)).includes('Select'), `${label}: the long-press menu (${await menuItems(page)})`)
     // a submenu takes the menu's place, with a way back
-    await page.locator('.menu .menu-item', { hasText: 'Snooze' }).tap()
+    await page.locator('.menu .menu-item', { hasText: 'Copy' }).tap()
     await page.locator('.menu-back').waitFor()
     check((await page.locator('.menu').count()) === 1, `${label}: one menu at a time on a phone`)
     // the Back row counts when it's placed: the last row stays on the screen
@@ -399,7 +407,7 @@ try {
       await page.screenshot({ path: path.join(shots, 'organize-submenu-390-light.png') })
       // ← goes back, and the keys still work: the focus is on the item the submenu came from
       await page.keyboard.press('ArrowLeft')
-      check(await until(async () => (await page.evaluate(() => document.activeElement?.textContent ?? '')).includes('Snooze')), `${label}: ← puts the focus back on Snooze (${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80))})`)
+      check(await until(async () => (await page.evaluate(() => document.activeElement?.textContent ?? '')).includes('Copy')), `${label}: ← puts the focus back on Copy (${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80))})`)
     } else {
       await page.locator('.menu-back').tap()
     }
