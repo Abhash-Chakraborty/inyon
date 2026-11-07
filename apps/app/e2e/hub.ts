@@ -200,7 +200,8 @@ const server = Bun.serve({
       if (action[3] === 'send') {
         state.sends.push({ host, pane, ...body })
         const stream = `${host}:%${pane}`
-        if (streams.has(stream)) setTimeout(() => change(stream, { append: [{ kind: 'user', seq: 1000 + state.sends.length, uuid: `sent${state.sends.length}`, ts: new Date().toISOString(), text: body.text, images: 0 }] }), 400)
+        // a setting (model, effort, goal) never shows as a message
+        if (!body.setting && streams.has(stream)) setTimeout(() => change(stream, { append: [{ kind: 'user', seq: 1000 + state.sends.length, uuid: `sent${state.sends.length}`, ts: new Date().toISOString(), text: body.text, images: 0 }] }), 400)
       }
       return json({ ok: true })
     }
