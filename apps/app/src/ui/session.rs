@@ -1,16 +1,18 @@
-//! A session's screen (PanePage.tsx and SessionHeader.tsx): the header with the agent, the title,
-//! where the pane is and its state, then the chat. Opening it follows the chat's `/ws2` stream from
-//! where this app left it; leaving stops following it. Chat and Terminal switch between the two
+//! A session's screen (PanePage.tsx and SessionHeader.tsx): the header with the agent, the title
+//! (a click renames it), where the pane is and its state, then the chat. Opening it follows the
+//! chat's `/ws2` stream from where this app left it; leaving stops following it. Chat and Terminal switch between the two
 //! views; a plain shell, or an agent that stays in its terminal, opens on the terminal.
 
 use dioxus::prelude::*;
-use inyon_chat_core::format::model_name;
 use inyon_chat_core::overview::{all_panes, pane_href, pane_title, terminal_name, PaneView};
 use inyon_chat_core::store::{ReplyFontSetting, Settings, ToolDetail};
-use inyon_protocol::{chat_key, AgentDef, AgentKind, ClientMsg2, ReplyFont, SkinTokens};
+use inyon_protocol::{chat_key, is_busy, AgentDef, AgentKind, ClientMsg2, ReplyFont, SkinTokens};
 
 use super::chat::ChatView;
+use super::controls::{Controls, Reported};
+use super::conversations::ConversationsSheet;
 use super::icons::{AgentMark, Glyph, Icon};
+use super::organize::{self, OrgSheet};
 use super::outbox;
 use super::panel::{self, ActivitySheet, PanelSheets, SidePanel, Tab};
 use super::rows::Ctx;
@@ -23,12 +25,6 @@ use crate::{dom, format, platform};
 // each view rises in over the one it replaces
 const CHAT_KEY: &str = "chat";
 const TERMINAL_KEY: &str = "terminal";
-
-/// "Opus 4.8 · high · Plan": the model, effort and mode, as far as they're known.
-pub fn controls_line(model: Option<&str>, effort: Option<&str>, mode: Option<&str>, def: Option<&AgentDef>) -> String {
-    let mode = mode.filter(|m| !m.is_empty()).map(|m| def.and_then(|d| d.modes.iter().find(|o| o.id == m)).map_or(m.to_string(), |o| o.label.clone()));
-    [Some(model_name(model)), effort.map(str::to_string), mode].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
-}
 
 /// The reply font's class: the setting, or the agent's own when it's on Auto.
 pub fn font_class(setting: ReplyFontSetting, def: Option<&AgentDef>) -> &'static str {
@@ -118,6 +114,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let agent_info = r.and_then(|r| r.pane.agent.as_ref());
     let agent: Option<AgentKind> = agent_info.map(|a| a.kind).or(info.as_ref().and_then(|i| i.agent));
     let def = agent.map(|k| k.def());
+    let catalog = super::controls::use_catalog(&host, &pane, agent);
     let agent_name = agent_info.and_then(|a| a.custom.clone()).or(def.map(|d| d.name.clone())).unwrap_or_else(|| "the agent".into());
     let title = r
         .and_then(|r| r.pane.label.clone().filter(|l| !l.is_empty()).or_else(|| (r.pane.companion == Some(true)).then(|| "Companion".into())))
@@ -144,12 +141,6 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     .collect::<Vec<_>>()
     .join(" · ");
     let shown = r.and_then(|r| r.pane.agent.as_ref().map(|a| Shown::of(a, r.host)));
-    let controls = controls_line(
-        screen.as_ref().and_then(|s| s.model.as_deref()).or(info.as_ref().and_then(|i| i.model.as_deref())),
-        screen.as_ref().and_then(|s| s.effort.as_deref()),
-        screen.as_ref().and_then(|s| s.mode.as_deref()).or(info.as_ref().and_then(|i| i.mode.as_deref())),
-        def,
-    );
     // only the hub's own overview can say a pane is gone, not the copy a reload draws first
     // a chat page kept in the browser doesn't keep a pane alive; one the hub sends does
     let kept = c.get(&key).is_some_and(|e| e.chat.stale);
@@ -169,10 +160,35 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     };
     // the live numbers: Copilot and OpenCode report theirs in the transcript
     let live = agent_info.and_then(|a| a.status.clone());
+    let footer = live.clone();
     let status = match agent {
         Some(AgentKind::Copilot | AgentKind::Opencode) => info.as_ref().and_then(|i| i.status.clone()).or(live),
         _ => live,
     };
+    // the switch as the screen shows it, else as the hub last read it
+    let ultracode_on = screen.as_ref().and_then(|s| s.ultracode).or(agent_info.and_then(|a| a.ultracode)).or(info.as_ref().and_then(|i| i.ultracode)) == Some(true);
+    // the model, effort, mode and goal chips in the message box
+    let controls = agent.map(|kind| {
+        // OpenCode's footer names the model and variant it runs; its record keeps the numbers
+        let footer = footer.as_ref().filter(|l| kind == AgentKind::Opencode && l.model.is_some());
+        let reported = footer.or(status.as_ref());
+        Controls::of(
+            &host,
+            machine.as_deref().unwrap_or(&host),
+            &pane,
+            kind,
+            Reported {
+                catalog: catalog.as_ref(),
+                status: reported,
+                model: screen.as_ref().and_then(|s| s.model.as_deref()).or(info.as_ref().and_then(|i| i.model.as_deref())),
+                effort: screen.as_ref().and_then(|s| s.effort.as_deref()),
+                mode: screen.as_ref().and_then(|s| s.mode.as_deref()).or(agent_info.and_then(|a| a.mode.as_deref())).or(info.as_ref().and_then(|i| i.mode.as_deref())),
+                chosen: info.as_ref().and_then(|i| i.chosen.as_ref()),
+                goal: info.as_ref().and_then(|i| i.goal.as_ref()),
+                ultracode: ultracode_on,
+            },
+        )
+    });
     let of = panel::Of { host: host.clone(), pane: pane.clone(), ctx: ctx.clone(), here: page_here.clone(), side, agent, status, compact: def.and_then(|d| d.set.compact.clone()) };
     let busy = crate::changes::running(info.as_ref());
     let show_panel = agent.is_some() && panel_wide && settings.side_panel && !gone;
@@ -191,13 +207,26 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let (chat_href, terminal_href) = (view_href(PaneView::Chat), view_href(PaneView::Terminal));
     dom::set_title(&format!("{title} · Inyon"));
     // the header's ⋯, as the web app's session menu
+    let remote = info.as_ref().and_then(|i| i.rc.as_ref()).map(|rc| rc.url.clone());
     let now = super::session_menu::Now {
         session_id: session_id.clone(),
-        remote: info.as_ref().and_then(|i| i.rc.as_ref()).map(|rc| rc.url.clone()),
-        ultracode: screen.as_ref().and_then(|s| s.ultracode).or(agent_info.and_then(|a| a.ultracode)).or(info.as_ref().and_then(|i| i.ultracode)) == Some(true),
+        remote: remote.clone(),
+        ultracode: ultracode_on,
         shared: info.as_ref().is_some_and(|i| i.share.is_some()),
+        // typing would answer the question on screen
+        asking: screen.as_ref().is_some_and(|s| s.prompt.is_some()),
+        tmux: r.map(|r| (r.session.id.clone(), r.session.name.clone())),
     };
     let more = super::session_menu::items(&host, &pane, agent, &now);
+    // the header's switches while they're on, each with its small menu
+    let ultracode_menu = agent.filter(|k| ultracode_on && k.def().set.ultracode.is_some()).map(|k| super::session_menu::ultracode_menu(&host, &pane, k));
+    let remote_menu = agent.filter(|k| k.def().set.rc.is_some()).zip(remote.as_deref()).map(|(k, url)| super::session_menu::remote_menu(&host, &pane, k, url));
+    let active = logo_active(screen.as_ref(), agent_info);
+    let working = screen.as_ref().map_or(agent_info.is_some_and(|a| a.state == inyon_protocol::AgentState::Working), |s| s.working);
+    // an agent that stays in its terminal asks you to sign in there itself
+    let signed_out = agent.filter(|k| k.def().chat).zip(r).and_then(|(k, r)| r.host.signed_in.as_ref().filter(|list| !list.contains(&k)).map(|_| (k, r.host.config.name.clone())));
+    let mut sign_in = use_signal(|| None::<AgentKind>);
+    let installed = h.hosts.iter().find(|x| x.config.id == host).map(|x| x.agents.clone()).unwrap_or_default();
     let mut menu_at = use_context::<Signal<Option<super::menu::Menu>>>();
     let has_pane = r.is_some();
     drop(c);
@@ -233,14 +262,34 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         Glyph { icon: Icon::ChevronLeft, size: 20 }
                     }
                     if let Some(kind) = agent {
-                        span { class: "session-logo", AgentMark { kind, size: 26 } }
+                        span { class: "session-logo",
+                            AgentMark { kind, size: 26 }
+                            // the mark holds still; the working dot on its corner says it's busy
+                            if let Some(dot) = active {
+                                span { class: "dot {dot} session-logo-dot", "aria-hidden": "true" }
+                            }
+                        }
                     }
                     div { class: "session-titles",
                         h1 { class: "session-title",
                             if let Some(s) = shown {
                                 span { class: "dot dot-{s.class()} phone-dot" }
                             }
-                            span { class: "truncate", "{title}" }
+                            button {
+                                class: "session-title-button",
+                                r#type: "button",
+                                title: "Rename",
+                                onclick: {
+                                    let (host, pane) = (host.clone(), pane.clone());
+                                    move |_| {
+                                        if has_pane {
+                                            organize::open_sheet(OrgSheet::Rename((host.clone(), pane.clone())));
+                                        }
+                                    }
+                                },
+                                span { class: "truncate", "{title}" }
+                                Glyph { icon: Icon::Pencil, size: 12, class: "session-title-pencil" }
+                            }
                         }
                         p { class: "session-sub mono truncate", "{subtitle}" }
                     }
@@ -262,6 +311,28 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         span { class: "pill session-pill",
                             span { class: "dot dot-{s.class()}" }
                             "{s.label()}"
+                        }
+                    }
+                    if let Some(items) = ultracode_menu {
+                        button {
+                            id: "session-ultracode",
+                            class: "icon-button icon-button-lg press",
+                            r#type: "button",
+                            title: "Ultracode is on",
+                            "aria-label": "Ultracode is on",
+                            onclick: move |_| super::menu::drop_down(&mut menu_at, "session-ultracode", items.clone()),
+                            Glyph { icon: Icon::Gauge, size: 16, class: "ultracode-mark" }
+                        }
+                    }
+                    if let Some(items) = remote_menu {
+                        button {
+                            id: "session-remote",
+                            class: "icon-button icon-button-lg press",
+                            r#type: "button",
+                            title: "Remote Control is on",
+                            "aria-label": "Remote Control is on",
+                            onclick: move |_| super::menu::drop_down(&mut menu_at, "session-remote", items.clone()),
+                            Glyph { icon: Icon::RadioTower, size: 16 }
                         }
                     }
                     if has_pane && confirmed {
@@ -304,17 +375,26 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                     }
                 }
             }
+            if let Some((kind, machine)) = signed_out.clone().filter(|_| !gone) {
+                div { class: "signin-banner",
+                    Glyph { icon: Icon::LogIn, size: 16, class: "signin-banner-icon" }
+                    span { class: "signin-banner-text", "{kind.def().name} isn't signed in on {machine}." }
+                    button { class: "button button-xs button-primary press", r#type: "button", onclick: move |_| sign_in.set(Some(kind)), "Sign in" }
+                }
+            }
+            if let Some((_, machine)) = signed_out {
+                super::setup::SignInSheet { host: host.clone(), host_name: machine, agent: sign_in(), on_close: move |_| sign_in.set(None) }
+            }
             div { class: "session-body",
             if gone {
                 div { class: "chat-column",
                     div { class: "empty chat-empty",
                         div { class: "empty-title", "This pane is gone" }
-                        div { class: "empty-text", "Its tmux pane closed, or its machine no longer lists it." }
-                        a { class: "button button-md button-primary press empty-action", href: crate::route::Route::Overview.href(), "Back to the Overview" }
+                        div { class: "empty-text", "The tmux pane was closed or its machine is unreachable." }
                     }
                 }
             } else if shows == Some(PaneView::Terminal) {
-                div { key: "{TERMINAL_KEY}", class: "session-view fade-in", TerminalView { host: host.clone(), pane: pane.clone() } }
+                div { key: "{TERMINAL_KEY}", class: "session-view fade-in", TerminalView { host: host.clone(), pane: pane.clone(), agent, installed } }
             } else if shows == Some(PaneView::Chat) {
                 div { key: "{CHAT_KEY}", class: "session-view fade-in", ChatView { ctx, connected, offline, controls } }
             } else {
@@ -336,8 +416,20 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
             if agent.is_some() {
                 ActivitySheet { of: of.clone(), open: activity() && !panel_wide, on_close: move |_| activity.set(false) }
                 PanelSheets { of }
+                ConversationsSheet { working }
             }
         }
+    }
+}
+
+/// The dot on the header's agent mark while it works (or only its background job runs), as the
+/// screen shows it, else as the pane state says: `dot-working`, `dot-background` or none.
+pub fn logo_active(screen: Option<&inyon_protocol::ScreenState>, agent: Option<&inyon_protocol::AgentPaneInfo>) -> Option<&'static str> {
+    match screen {
+        Some(s) if s.working => Some("dot-working"),
+        Some(s) if s.background.as_ref().is_some_and(|b| b.as_deref().is_some_and(|b| !b.is_empty())) => Some("dot-background"),
+        Some(_) => None,
+        None => agent.filter(|a| is_busy(a.state, a.background.as_deref())).map(|a| if a.state == inyon_protocol::AgentState::Working { "dot-working" } else { "dot-background" }),
     }
 }
 
@@ -448,16 +540,6 @@ mod tests {
     }
 
     #[test]
-    fn the_controls_read_as_one_line() {
-        let claude = AgentKind::Claude.def();
-        assert_eq!(controls_line(Some("claude-opus-4-6"), Some("high"), None, Some(claude)), "Opus 4.6 · high");
-        assert_eq!(controls_line(None, None, None, None), "");
-        let mode = claude.modes.first().expect("Claude Code has modes");
-        assert_eq!(controls_line(None, None, Some(&mode.id), Some(claude)), mode.label);
-        assert_eq!(controls_line(None, None, Some("custom"), None), "custom");
-    }
-
-    #[test]
     fn replies_keep_their_agents_font() {
         let claude = AgentKind::Claude.def();
         assert_eq!(font_class(ReplyFontSetting::Auto, Some(claude)), "reply-serif");
@@ -483,6 +565,25 @@ mod tests {
         // an address that names its view needs no wait
         assert_eq!(shown_view(Some(PaneView::Terminal), None, false), Some(PaneView::Terminal));
         assert_eq!(shown_view(Some(PaneView::Terminal), Some(AgentKind::Claude), true), Some(PaneView::Terminal));
+    }
+
+    #[test]
+    fn the_mark_shows_a_dot_while_the_agent_or_its_job_works() {
+        let with = |mut v: serde_json::Value, more: serde_json::Value| {
+            v.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+            v
+        };
+        let screen = |v: serde_json::Value| serde_json::from_value::<inyon_protocol::ScreenState>(with(v, serde_json::json!({ "width": 120 }))).unwrap();
+        let agent = |v: serde_json::Value| serde_json::from_value::<inyon_protocol::AgentPaneInfo>(with(v, serde_json::json!({ "pid": 4000 }))).unwrap();
+        assert_eq!(logo_active(Some(&screen(serde_json::json!({ "working": true }))), None), Some("dot-working"));
+        assert_eq!(logo_active(Some(&screen(serde_json::json!({ "working": false, "background": "1 shell" }))), None), Some("dot-background"));
+        // the screen says it's idle: the pane state isn't asked
+        let busy = agent(serde_json::json!({ "kind": "claude", "state": "working" }));
+        assert_eq!(logo_active(Some(&screen(serde_json::json!({ "working": false }))), Some(&busy)), None);
+        // no screen yet: the pane state says
+        assert_eq!(logo_active(None, Some(&busy)), Some("dot-working"));
+        assert_eq!(logo_active(None, Some(&agent(serde_json::json!({ "kind": "opencode", "state": "idle", "background": "1 shell" })))), Some("dot-background"));
+        assert_eq!(logo_active(None, Some(&agent(serde_json::json!({ "kind": "claude", "state": "idle" })))), None);
     }
 
     #[test]

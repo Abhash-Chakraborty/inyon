@@ -450,7 +450,7 @@ fn SessionsTab(host: HostState) -> Element {
         div { class: "session-groups",
             for s in host.sessions.iter() {
                 section { key: "{s.id}", class: "panel session-group",
-                    div { class: "session-group-head",
+                    TmuxHead { host: host.config.id.clone(), id: s.id.clone(), name: s.name.clone(),
                         span { class: "session-group-name", "{s.name}" }
                         if s.attached.0 > 0.0 {
                             span { class: "chip chip-quiet", "attached" }
@@ -472,6 +472,25 @@ fn SessionsTab(host: HostState) -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+/// A tmux session's heading, with its own menu on a right click or a long press: rename the tmux
+/// session, or copy its name.
+#[component]
+fn TmuxHead(host: String, id: String, name: String, children: Element) -> Element {
+    let items = super::organize::tmux_session_menu(&host, &id, &name);
+    let press = menu::long_press(items.clone());
+    let (p1, p2, p3) = (press.clone(), press.clone(), press);
+    rsx! {
+        div {
+            class: "session-group-head",
+            oncontextmenu: menu::open(items),
+            onpointerdown: move |e| p1.down(&e),
+            onpointermove: move |e| p2.moved(&e),
+            onpointerup: move |_| p3.up(),
+            {children}
         }
     }
 }

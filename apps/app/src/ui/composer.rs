@@ -1,7 +1,8 @@
 //! The message box under the chat (Composer.tsx): Enter sends (Shift+Enter for a new line), a
 //! message sent while the agent works waits in its queue, Esc in an empty box stops the agent and
 //! Alt+Enter holds the message until it's free. What you type is the pane's draft, kept in step
-//! with the terminal's input line and other devices through the hub's `draft` message.
+//! with the terminal's input line and other devices through the hub's `draft` message. A bare
+//! "/resume" (each agent's own word for it) opens Past conversations instead of the agent's picker.
 //!
 //! Files come along too: pasted (from the box or anywhere on the page), dropped on the box, or
 //! picked with Attach files and Take a photo. Each uploads at once with its progress on a chip,
@@ -14,7 +15,7 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 use inyon_chat_core::pending::{PendingMessage, PendingStatus};
-use inyon_protocol::ClientMsg;
+use inyon_protocol::{AgentKind, ClientMsg};
 
 use super::icons::{Glyph, Icon};
 use super::{now, outbox};
@@ -224,7 +225,7 @@ fn remove_file(key: &str, id: &str) {
 }
 
 /// `draft`: the pane's draft as the hub last sent it (its text, when, and whether the terminal
-/// wrote it). `controls`: the model, effort and mode, as one line. `disabled` keeps anything
+/// wrote it). `controls`: the model, effort, mode and goal chips. `disabled` keeps anything
 /// from going out; `offline` also greys the box out (not while the first connection opens).
 #[component]
 pub fn Composer(
@@ -235,7 +236,10 @@ pub fn Composer(
     disabled: bool,
     #[props(default)] offline: bool,
     draft: Option<(String, u64, bool)>,
-    controls: String,
+    controls: Option<super::controls::Controls>,
+    /// the agent, for the commands the app has its own sheet for
+    #[props(default)]
+    kind: Option<AgentKind>,
     on_sent: EventHandler<()>,
 ) -> Element {
     let chats = use_context::<Signal<Chats>>();
@@ -460,10 +464,18 @@ pub fn Composer(
     let can_send = (!text.read().trim().is_empty() || !ready.is_empty()) && !uploading && !failed && !disabled;
     let mode = button(working, can_send, uploading || failed);
     let do_send = {
-        let (host, pane, key, synced, typed, unsent) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone(), unsent.clone());
+        let (host, pane, key, synced, typed, unsent, set_text) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone(), unsent.clone(), set_text.clone());
         move || {
             let list = attach::of(&key);
             let (uploading, failed, ready) = attach::summary(&list);
+            // a bare "/resume" would open the agent's picker in its terminal; the app has its own
+            if !uploading && ready.is_empty() && super::conversations::asks_for(&text.peek(), kind) {
+                set_text(String::new());
+                if let Some(k) = kind {
+                    super::conversations::open(&host, &pane, k);
+                }
+                return;
+            }
             // a file that didn't upload holds the message until it's retried or removed: the text
             // often refers to it ("use the attached spec")
             if disabled || uploading || failed {
@@ -561,12 +573,18 @@ pub fn Composer(
         (false, true) => "composer-box composer-drag",
         _ => "composer-box",
     };
+    // Claude Code's ultracode is on: the box carries the label Claude draws on its own
+    let ultracode = controls.as_ref().is_some_and(|c| c.ultracode);
+    let box_class = if ultracode { format!("{box_class} ultracode-box") } else { box_class.to_string() };
     rsx! {
         div { id: ZONE, class: "composer fade-in",
             div {
                 class: box_class,
                 // measured again once the page's styles and fonts settle, or the width changes
                 onresize: move |_| dom::autosize(BOX, 0.4),
+                if ultracode {
+                    span { class: "ultracode-label", "aria-hidden": "true", "ultracode" }
+                }
                 if !list.is_empty() {
                     div { class: "attach-row no-scrollbar",
                         for a in list {
@@ -592,8 +610,8 @@ pub fn Composer(
                     if touch {
                         ToolButton { label: "Take a photo", onpress: move |_| files::pick(PICK_PHOTO), Glyph { icon: Icon::Camera, size: 17 } }
                     }
-                    if !controls.is_empty() {
-                        span { class: "composer-controls mono truncate", title: "Model, effort and mode", "{controls}" }
+                    if let Some(c) = controls.clone() {
+                        super::controls::ControlChips { c }
                     }
                     span { class: "composer-note truncate", "{note}" }
                     button {

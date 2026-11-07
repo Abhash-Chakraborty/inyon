@@ -135,11 +135,11 @@ fn load_more(chats: Signal<Chats>, key: &str, out: &Outbox) {
     out.send(state::wire2(&ClientMsg2::More { stream: key.to_string(), before }));
 }
 
-/// `controls`: the model, effort and mode as one line, for the message box. `connected`:
+/// `controls`: the model, effort, mode and goal chips for the message box. `connected`:
 /// messages can go to the agent; `offline`: the chat says it's reconnecting (not while the first
 /// connection is still opening).
 #[component]
-pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> Element {
+pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: Option<super::controls::Controls>) -> Element {
     let chats = use_context::<Signal<Chats>>();
     let out = outbox();
     let key = ctx.key.clone();
@@ -519,6 +519,7 @@ pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> E
                                 offline,
                                 draft,
                                 controls,
+                                kind: ctx.agent,
                                 on_sent: sent,
                             }
                         }
@@ -623,8 +624,8 @@ fn TerminalFirst(ctx: Ctx, machine: Option<Machine>, terminal_href: String) -> E
     }
 }
 
-/// "No agent is running in this pane", with its way back: resume the conversation, start an
-/// agent, or the terminal. `compact`: a card under the conversation that ended. `online`: the
+/// "No agent is running in this pane", with its way back: resume the conversation, pick a past
+/// one, start an agent, or the terminal. `compact`: a card under the conversation that ended. `online`: the
 /// machine can be reached; until it can, nothing starts.
 #[component]
 fn NotRunning(
@@ -642,6 +643,7 @@ fn NotRunning(
     // a start in flight holds every button, here and wherever this pane's card shows, until the
     // pane says an agent runs, the start fails, or the wait runs out
     let busy = starting(STARTING.read().get(&key), now()).map(str::to_string);
+    let here = (host.clone(), pane.clone());
     let start = {
         let key = key.clone();
         move |kind: AgentKind, resume: Option<String>| {
@@ -690,6 +692,15 @@ fn NotRunning(
                             Glyph { icon: Icon::History, size: 16 }
                         }
                         "Resume conversation"
+                    }
+                }
+                if let Some(kind) = agent.filter(|k| super::session_menu::switchable(*k)) {
+                    button {
+                        class: "button button-md button-ghost press",
+                        r#type: "button",
+                        onclick: move |_| super::conversations::open(&here.0, &here.1, kind),
+                        Glyph { icon: Icon::History, size: 16 }
+                        "Past conversations"
                     }
                 }
                 for kind in kinds {

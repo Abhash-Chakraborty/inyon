@@ -15,6 +15,7 @@ import { accounts, overview, storefront, twoQuestions } from './demo.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
+const CATALOG: Record<string, { models: unknown[] }> = await Bun.file(path.join(root, 'crates/inyon-protocol/src/agents.json')).json()
 const web = path.join(root, 'apps/web/public')
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
@@ -92,6 +93,12 @@ const server = Bun.serve({
       const body = await req.json().catch(() => ({}))
       state.controls.push({ pane: control[2], what: control[3], ...body })
       return json(control[3] === 'fork' ? { pane: '%99' } : { ok: true })
+    }
+    // the model list the CLI offers (Codex's), as the hub reads it: the catalog's own here
+    const models = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/models$/.exec(p)
+    if (models) {
+      const agent = (streams.get(`${decodeURIComponent(models[1]!)}:%${models[2]}`)?.state.info as { agent?: string } | undefined)?.agent ?? 'claude'
+      return json({ models: CATALOG[agent]?.models ?? [], source: 'fallback', updatedAt: Date.now() })
     }
     const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(answer|send)$/.exec(p)
     if (action && req.method === 'POST') {
@@ -330,7 +337,7 @@ try {
       check(await page.getByText('Claude Code · studio · storefront:1').isVisible(), `${label}: where the pane is`)
       check(await page.locator('.working-verb').filter({ hasText: 'Running the whole suite…' }).isVisible(), `${label}: the working line`)
       check(await page.getByRole('button', { name: 'Queue follow-up' }).count() + (await page.getByRole('button', { name: 'Stop' }).count()) === 1, `${label}: one send/stop button`)
-      check(await page.locator('.composer-controls').filter({ hasText: 'Sonnet 5.5 · medium' }).isVisible(), `${label}: the model and effort under the box`)
+      check(await page.locator('.controls').filter({ hasText: 'Sonnet 5.5' }).filter({ hasText: 'Medium' }).isVisible(), `${label}: the model and effort under the box`)
       check(phone === (await page.getByRole('link', { name: 'Back' }).isVisible()), `${label}: a back link on phones only`)
       check((await page.getByRole('link', { name: /Terminal/ }).getAttribute('href')) === '/next/m/local/p/11?view=terminal', `${label}: the terminal opens in this app`)
       // only the rows near the screen are in the page
@@ -469,7 +476,7 @@ try {
     await page.locator('.composer').waitFor()
     const second = state.answers[1] as Record<string, unknown> | undefined
     check(second?.option === 2 && second.question === promptKey(twoQuestions), `answer: ${JSON.stringify(second)}`)
-    check(await page.locator('.composer-controls').filter({ hasText: 'GPT-6-Astra · medium' }).isVisible(), 'answer: the model controls are back')
+    check(await page.locator('.controls').filter({ hasText: 'GPT-6-Astra' }).filter({ hasText: 'Medium' }).isVisible(), 'answer: the model controls are back')
     await ctx.close()
   }
 
@@ -805,8 +812,16 @@ try {
     await ask.getByRole('button', { name: 'Exit' }).click()
     await page.getByText('Claude Code exited').waitFor()
     check(state.controls.at(-1)?.what === 'exit', 'session menu: exited at the hub')
-    // Codex rewinds through the hub, after asking
+    // while Codex asks something, its menu keeps only what can't reach the question
     await page.goto(`${base}/next/m/local/p/12`)
+    await page.getByText('Would you like to run the following command?').waitFor()
+    await more.click()
+    const asking = await page.getByRole('menuitem').allTextContents()
+    check(!asking.some((i) => i.includes('Rewind…') || i.includes('Exit to shell')), `session menu while asking: ${asking.join(' | ')}`)
+    await page.keyboard.press('Escape')
+    // once it's answered, Codex rewinds through the hub, after asking
+    change('local:%12', { state: { screen: { working: false, model: 'GPT-6-Astra', effort: 'medium', width: 120 } } })
+    await page.locator('.prompt').waitFor({ state: 'detached' })
     await more.click()
     await page.getByRole('menuitem', { name: 'Rewind…' }).click()
     await page.getByRole('dialog', { name: 'Rewind your last message?' }).getByRole('button', { name: 'Rewind' }).click()

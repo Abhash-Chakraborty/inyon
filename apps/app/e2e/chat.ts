@@ -14,6 +14,7 @@ import { accounts, info, overview, storefront } from './demo.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
+const CATALOG: Record<string, { models: unknown[] }> = await Bun.file(path.join(root, 'crates/inyon-protocol/src/agents.json')).json()
 const web = path.join(root, 'apps/web/public')
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
@@ -107,6 +108,12 @@ const server = Bun.serve({
     const json = (body: unknown, status = 200) => Response.json(body, { status })
     if (p === '/ws2') return srv.upgrade(req, { data: { subs: new Set<string>() } }) ? undefined : new Response('no upgrade', { status: 400 })
     if (p === '/api/session') return json({ authed: true, setup: false, setupCode: false })
+    // the model chip's catalog, for the agents that report one
+    const models = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/models$/.exec(p)
+    if (models) {
+      const agent = (streams.get(`${decodeURIComponent(models[1]!)}:%${models[2]}`)?.state.info as { agent?: string } | undefined)?.agent ?? 'claude'
+      return json({ models: CATALOG[agent]?.models ?? [], source: 'fallback', updatedAt: Date.now() })
+    }
     const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(start|send)$/.exec(p)
     if (action && req.method === 'POST') {
       const host = decodeURIComponent(action[1]!)
