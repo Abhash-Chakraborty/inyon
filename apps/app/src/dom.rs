@@ -703,6 +703,195 @@ mod imp {
         web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten()).is_some_and(|m| m.matches())
     }
 
+    /// Brings the `at`th session that needs you (counting round, and only the cards on screen: one
+    /// in a folded group isn't) into view and puts focus on its first answer. Which one it was, or
+    /// None when no card needs you.
+    pub fn show_waiting(at: usize) -> Option<usize> {
+        let doc = web_sys::window()?.document()?;
+        let list = doc.query_selector_all("[data-waiting]").ok()?;
+        let cards: Vec<web_sys::Element> =
+            (0..list.length()).filter_map(|i| list.item(i)?.dyn_into::<web_sys::Element>().ok()).filter(|c| c.closest("[inert]").ok().flatten().is_none()).collect();
+        if cards.is_empty() {
+            return None;
+        }
+        let i = at % cards.len();
+        let card = &cards[i];
+        let how = web_sys::ScrollIntoViewOptions::new();
+        how.set_block(web_sys::ScrollLogicalPosition::Center);
+        how.set_behavior(if reduced_motion() { web_sys::ScrollBehavior::Auto } else { web_sys::ScrollBehavior::Smooth });
+        card.scroll_into_view_with_scroll_into_view_options(&how);
+        if let Some(b) = card.query_selector("[data-answer]").ok().flatten().and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
+            let f = web_sys::FocusOptions::new();
+            f.set_prevent_scroll(true);
+            let _ = b.focus_with_options(&f);
+        }
+        Some(i)
+    }
+
+    /// Whether focus is inside an element, or the pointer is over it.
+    pub fn holds(id: &str) -> bool {
+        let Some(e) = el(id) else { return false };
+        let focus = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).is_some_and(|a| e.contains(Some(&a)));
+        focus || e.matches(":hover").unwrap_or(false)
+    }
+
+    /// Whether focus is inside an element.
+    pub fn focus_inside(id: &str) -> bool {
+        let Some(e) = el(id) else { return false };
+        web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).is_some_and(|a| e.contains(Some(&a)))
+    }
+
+    // ---------- a grid whose items arrive, leave and move (ui/AnimatedList.tsx) ----------
+
+    /// Where each item of a grid was last time (by its `data-key`), measured without transforms
+    /// against the grid (which is positioned), and the grid's own width then.
+    struct Grid {
+        el: web_sys::HtmlElement,
+        width: i32,
+        at: std::collections::HashMap<String, (i32, i32, i32, i32)>,
+    }
+
+    impl Grid {
+        fn measure(&self) -> std::collections::HashMap<String, (i32, i32, i32, i32)> {
+            let kids = self.el.children();
+            (0..kids.length())
+                .filter_map(|i| kids.item(i)?.dyn_into::<web_sys::HtmlElement>().ok())
+                .filter_map(|c| Some((c.get_attribute("data-key")?, (c.offset_left(), c.offset_top(), c.offset_width(), c.offset_height()))))
+                .collect()
+        }
+    }
+
+    type Watch = (std::rc::Rc<std::cell::RefCell<Grid>>, web_sys::MutationObserver, Closure<dyn FnMut(js_sys::Array, web_sys::MutationObserver)>);
+
+    thread_local! {
+        static GRIDS: std::cell::RefCell<Vec<Watch>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// A copy of an item that just left, fading out where it was, over the page and out of the
+    /// way of everything else; gone after 120 ms.
+    fn ghost(grid: &web_sys::HtmlElement, item: &web_sys::HtmlElement, (x, y, w, h): (i32, i32, i32, i32)) {
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
+        let Some(body) = doc.body() else { return };
+        let Ok(copy) = item.clone_node_with_deep(true) else { return };
+        let Ok(copy) = copy.dyn_into::<web_sys::HtmlElement>() else { return };
+        for a in ["id", "data-key", "data-waiting"] {
+            let _ = copy.remove_attribute(a);
+        }
+        if let Ok(inner) = copy.query_selector_all("[id], [data-answer]") {
+            for i in 0..inner.length() {
+                if let Some(e) = inner.item(i).and_then(|n| n.dyn_into::<web_sys::Element>().ok()) {
+                    let _ = e.remove_attribute("id");
+                    let _ = e.remove_attribute("data-answer");
+                }
+            }
+        }
+        let _ = copy.set_attribute("aria-hidden", "true");
+        let _ = copy.set_attribute("inert", "");
+        let _ = copy.class_list().add_1("flip-leave");
+        let r = grid.get_bounding_client_rect();
+        let style = copy.style();
+        style.set_css_text(&format!("position:fixed;left:{}px;top:{}px;width:{w}px;height:{h}px;margin:0;z-index:5;pointer-events:none", r.left() + x as f64, r.top() + y as f64));
+        let _ = body.append_child(&copy);
+        let gone = Closure::once_into_js(move || copy.remove());
+        if let Some(w) = web_sys::window() {
+            let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(gone.unchecked_ref(), 120);
+        }
+    }
+
+    /// Starts an item where it was and lets its transition carry it to where it is now.
+    fn slide(item: &web_sys::HtmlElement, dx: i32, dy: i32) {
+        let style = item.style();
+        let _ = style.set_property("transition", "none");
+        let _ = style.set_property("transform", &format!("translate({dx}px, {dy}px)"));
+        // the start has to be drawn before the transition can run from it
+        let _ = item.offset_width();
+        let item = item.clone();
+        let go = Closure::once_into_js(move || {
+            let style = item.style();
+            let _ = style.remove_property("transition");
+            let _ = style.remove_property("transform");
+        });
+        if let Some(w) = web_sys::window() {
+            let _ = w.request_animation_frame(go.unchecked_ref());
+        }
+    }
+
+    /// Watches a grid (by id) so its items move as the web app's AnimatedList moves them: a new
+    /// one rises in (the first batch one after another, from the stylesheet), one that goes fades
+    /// out where it was, and the others slide to their new places. Each item carries `data-key`.
+    /// Nothing moves under reduced motion, or when the grid changed width (that's a reflow).
+    pub fn animate_grid(id: &str) {
+        let Some(el) = el(id) else { return };
+        GRIDS.with(|g| {
+            let mut g = g.borrow_mut();
+            // a grid that left the page stops being watched before its callback is dropped, so a
+            // late mutation can't call into a freed closure
+            g.retain(|(grid, observer, _)| {
+                let live = grid.borrow().el.is_connected();
+                if !live {
+                    observer.disconnect();
+                }
+                live
+            });
+            if g.iter().any(|(grid, ..)| grid.borrow().el == el) {
+                return;
+            }
+            let grid = Grid { width: el.offset_width(), at: Default::default(), el: el.clone() };
+            let at = grid.measure();
+            let grid = std::rc::Rc::new(std::cell::RefCell::new(Grid { at, ..grid }));
+            let state = grid.clone();
+            let cb = Closure::<dyn FnMut(js_sys::Array, web_sys::MutationObserver)>::new(move |records: js_sys::Array, _: web_sys::MutationObserver| {
+                let mut st = state.borrow_mut();
+                if !st.el.is_connected() {
+                    return;
+                }
+                let next = st.measure();
+                let width = st.el.offset_width();
+                let still = reduced_motion() || width != st.width || st.el.closest("[inert]").ok().flatten().is_some();
+                if !still {
+                    for rec in records.iter() {
+                        let rec: web_sys::MutationRecord = rec.unchecked_into();
+                        let removed = rec.removed_nodes();
+                        for i in 0..removed.length() {
+                            let Some(item) = removed.item(i).and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok()) else { continue };
+                            // a reorder takes an item out and puts it back: that one didn't leave
+                            if item.is_connected() {
+                                continue;
+                            }
+                            let Some(key) = item.get_attribute("data-key") else { continue };
+                            if let Some(&was) = st.at.get(&key).filter(|_| !next.contains_key(&key)) {
+                                ghost(&st.el, &item, was);
+                            }
+                        }
+                    }
+                }
+                let kids = st.el.children();
+                for i in 0..kids.length() {
+                    let Some(item) = kids.item(i).and_then(|c| c.dyn_into::<web_sys::HtmlElement>().ok()) else { continue };
+                    let Some(key) = item.get_attribute("data-key") else { continue };
+                    let Some(&(x, y, ..)) = st.at.get(&key) else {
+                        // a newcomer after the first batch rises at once, wherever it lands
+                        let _ = item.style().set_property("animation-delay", "0ms");
+                        continue;
+                    };
+                    // one that was here already doesn't come in again when the list puts it back
+                    let _ = item.style().set_property("animation", "none");
+                    let (nx, ny, ..) = next[&key];
+                    if !still && (x != nx || y != ny) {
+                        slide(&item, x - nx, y - ny);
+                    }
+                }
+                st.at = next;
+                st.width = width;
+            });
+            let Ok(observer) = web_sys::MutationObserver::new(cb.as_ref().unchecked_ref()) else { return };
+            let opts = web_sys::MutationObserverInit::new();
+            opts.set_child_list(true);
+            let _ = observer.observe_with_options(&el, &opts);
+            g.push((grid, observer, cb));
+        });
+    }
+
     /// True the first time it's asked for `key` in this browser tab's session, then false.
     pub fn first_in_session(key: &str) -> bool {
         let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) else { return false };
@@ -971,6 +1160,16 @@ mod imp {
     pub fn reduced_motion() -> bool {
         false
     }
+    pub fn show_waiting(_at: usize) -> Option<usize> {
+        None
+    }
+    pub fn holds(_id: &str) -> bool {
+        false
+    }
+    pub fn focus_inside(_id: &str) -> bool {
+        false
+    }
+    pub fn animate_grid(_id: &str) {}
     pub fn first_in_session(_key: &str) -> bool {
         false
     }

@@ -168,6 +168,11 @@ impl Feed {
         (effects, toasts)
     }
 
+    /// The latest agent events (finished, asked), newest first, for Recent activity.
+    pub fn activity(&self) -> &[inyon_chat_core::store::ActivityEvent] {
+        &self.store.activity
+    }
+
     /// Takes a pane being ended out of every list at once (or brings it back, when the end failed):
     /// the machines as they should show now.
     pub fn hide_pane(&mut self, host: &str, pane: &str, hide: bool, now: u64) -> Vec<HostState> {

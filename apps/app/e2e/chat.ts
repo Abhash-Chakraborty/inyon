@@ -107,6 +107,8 @@ const server = Bun.serve({
     const json = (body: unknown, status = 200) => Response.json(body, { status })
     if (p === '/ws2') return srv.upgrade(req, { data: { subs: new Set<string>() } }) ? undefined : new Response('no upgrade', { status: 400 })
     if (p === '/api/session') return json({ authed: true, setup: false, setupCode: false })
+    // the Overview's phone card asks whether a phone is paired
+    if (p === '/api/phones') return json([])
     const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(start|send)$/.exec(p)
     if (action && req.method === 'POST') {
       const host = decodeURIComponent(action[1]!)
