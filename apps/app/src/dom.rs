@@ -824,7 +824,15 @@ mod imp {
         let Some(el) = el(id) else { return };
         GRIDS.with(|g| {
             let mut g = g.borrow_mut();
-            g.retain(|(grid, ..)| grid.borrow().el.is_connected());
+            // a grid that left the page stops being watched before its callback is dropped, so a
+            // late mutation can't call into a freed closure
+            g.retain(|(grid, observer, _)| {
+                let live = grid.borrow().el.is_connected();
+                if !live {
+                    observer.disconnect();
+                }
+                live
+            });
             if g.iter().any(|(grid, ..)| grid.borrow().el == el) {
                 return;
             }
