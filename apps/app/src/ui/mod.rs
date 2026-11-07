@@ -15,6 +15,7 @@ mod notices;
 mod organize;
 mod overview;
 mod pages;
+mod panel;
 mod phone;
 mod prompt;
 mod quick;
@@ -32,6 +33,7 @@ mod temp;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod terminal;
 pub mod toast;
+mod usage;
 
 use dioxus::prelude::*;
 use inyon_protocol::v2::{ORGANIZE, OVERVIEW, PAGES};

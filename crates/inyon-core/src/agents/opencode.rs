@@ -133,7 +133,8 @@ fn map_tool(tool: &str, input: Option<&Value>) -> ToolCall {
         "read" => call("Read", obj([("file_path", a.at("filePath").or(a.at("path")).cloned())])),
         "write" => call("Write", obj([("file_path", get("filePath")), ("content", get("content"))])),
         "edit" => call("Edit", obj([("file_path", get("filePath")), ("old_string", get("oldString")), ("new_string", get("newString"))])),
-        "patch" => call("ApplyPatch", obj([("patch", a.at("patchText").or(a.at("patch")).cloned())])),
+        // `apply_patch` is the name it gives the tool for OpenAI's models
+        "patch" | "apply_patch" => call("ApplyPatch", obj([("patch", a.at("patchText").or(a.at("patch")).cloned())])),
         "glob" => call("Glob", obj([("pattern", get("pattern"))])),
         "grep" => call("Grep", obj([("pattern", get("pattern"))])),
         "list" => call("LS", obj([("path", get("path"))])),

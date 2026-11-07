@@ -1779,6 +1779,11 @@ fn here_pages(here: &Here, hub: &Hub) -> pg::SessionList {
     pg::session_pages(PAGES.read().pages.as_deref().unwrap_or_default(), &pg::Names::of(&hub.hosts), &at)
 }
 
+/// How many pages the session works on (the side panel's Blueprints tab shows only with some).
+pub fn session_page_count(here: &Here, hub: &Hub) -> usize {
+    here_pages(here, hub).len()
+}
+
 /// The labelled parts of a session's list: this conversation's pages, the tmux session's earlier
 /// ones, and those in its folder. A list of only this conversation's pages goes without a label.
 fn sections(list: pg::SessionList, tmux: Option<&str>) -> Vec<(Option<String>, Vec<PageEntry>)> {
@@ -1800,12 +1805,10 @@ fn sections(list: pg::SessionList, tmux: Option<&str>) -> Vec<(Option<String>, V
 /// on a phone in a sheet, where a page opens right there over the session, with **Open full view**
 /// to the Blueprints screen. Nothing for a session with none.
 #[component]
-pub fn SessionPages(here: Here, side: Side) -> Element {
+pub fn SessionPages(here: Here, side: Side, #[props(default)] on_panel: Option<EventHandler<()>>, #[props(default)] panel_on: bool) -> Element {
     use_hook(listen);
     let hub = use_context::<Signal<Hub>>();
     let mut sheet = use_signal(|| false);
-    // on a phone, the page picked in the sheet, shown right there over the session
-    let mut picked = use_signal(|| None::<(String, String)>);
     let list = here_pages(&here, &hub.read());
     let seen = PAGES.read().seen.clone();
     let wide = WIDE();
@@ -1816,10 +1819,9 @@ pub fn SessionPages(here: Here, side: Side) -> Element {
     let n = list.len();
     let changed = list.all().any(|p| pg::is_changed(p, &seen));
     let only = (n == 1).then(|| list.all().next().map(|p| (p.host.clone(), p.slug.clone()))).flatten();
-    let on = wide && open();
-    let in_sheet = picked().and_then(|(host, slug)| list.all().find(|p| p.host == host && p.slug == slug).cloned());
-    let parts = sections(list, here.tmux.as_deref());
-    let h = hub.read();
+    // from 1180 px the side panel's Blueprints tab is where they open, so that's what pressed means
+    let in_panel = on_panel.is_some() && super::panel::wide();
+    let on = if in_panel { panel_on } else { wide && open() };
     rsx! {
         button {
             class: if on { "button button-sm button-ghost press session-pages session-pages-on" } else { "button button-sm button-ghost press session-pages" },
@@ -1828,7 +1830,9 @@ pub fn SessionPages(here: Here, side: Side) -> Element {
             "aria-pressed": wide.then_some(if on { "true" } else { "false" }),
             title: "This session's blueprints",
             onclick: move |_| {
-                if !wide {
+                if let Some(h) = on_panel.filter(|_| super::panel::wide()) {
+                    h.call(());
+                } else if !wide {
                     sheet.set(true);
                 } else if open() {
                     open.set(false);
@@ -1848,31 +1852,49 @@ pub fn SessionPages(here: Here, side: Side) -> Element {
             }
         }
         if !wide {
-            Sheet { open: sheet(), on_close: move |_| { sheet.set(false); picked.set(None); }, title: "Blueprints", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
-                if let Some(p) = in_sheet {
-                    div { class: "sheet-viewer",
-                        DesktopViewer { key: "{p.host}/{p.slug}", m: pg::machine_of(&h.hosts, &p.host), docked: true, on_list: move |_| picked.set(None), p }
-                    }
-                } else if parts.is_empty() {
-                    p { class: "sheet-text",
-                        "Sites an agent adds with "
-                        code { class: "mono", "inyon blueprints add" }
-                        " in this session show up here."
-                    }
-                } else {
-                    for (label , pages) in parts {
-                        if let Some(l) = label {
-                            div { class: "side-label mono", "{l}" }
-                        }
-                        for p in pages {
-                            SideRow {
-                                key: "{p.host}/{p.slug}",
-                                changed: pg::is_changed(&p, &seen),
-                                m: pg::machine_of(&h.hosts, &p.host),
-                                on_pick: move |id| picked.set(Some(id)),
-                                p,
-                            }
-                        }
+            Sheet { open: sheet(), on_close: move |_| sheet.set(false), title: "Blueprints", icon: rsx! { Glyph { icon: Icon::PanelsTopLeft, size: 16, class: "fg-2" } },
+                PhonePages { key: "{sheet()}", here: here.clone() }
+            }
+        }
+    }
+}
+
+/// A session's pages on a phone (the header's sheet, the Activity sheet's Blueprints tab): the
+/// list, and a page picked from it right there over the session, with **Open full view** to the
+/// Blueprints screen.
+#[component]
+pub fn PhonePages(here: Here) -> Element {
+    use_hook(listen);
+    let hub = use_context::<Signal<Hub>>();
+    let mut picked = use_signal(|| None::<(String, String)>);
+    let h = hub.read();
+    let list = here_pages(&here, &h);
+    let seen = PAGES.read().seen.clone();
+    let in_sheet = picked().and_then(|(host, slug)| list.all().find(|p| p.host == host && p.slug == slug).cloned());
+    let parts = sections(list, here.tmux.as_deref());
+    rsx! {
+        if let Some(p) = in_sheet {
+            div { class: "sheet-viewer",
+                DesktopViewer { key: "{p.host}/{p.slug}", m: pg::machine_of(&h.hosts, &p.host), docked: true, on_list: move |_| picked.set(None), p }
+            }
+        } else if parts.is_empty() {
+            p { class: "sheet-text",
+                "Sites an agent adds with "
+                code { class: "mono", "inyon blueprints add" }
+                " in this session show up here."
+            }
+        } else {
+            for (label , pages) in parts {
+                if let Some(l) = label {
+                    div { class: "side-label mono", "{l}" }
+                }
+                for p in pages {
+                    SideRow {
+                        key: "{p.host}/{p.slug}",
+                        changed: pg::is_changed(&p, &seen),
+                        m: pg::machine_of(&h.hosts, &p.host),
+                        on_pick: move |id| picked.set(Some(id)),
+                        p,
                     }
                 }
             }
@@ -1888,12 +1910,11 @@ pub fn SessionSide(here: Here, side: Side) -> Element {
     use_hook(listen);
     let hub = use_context::<Signal<Hub>>();
     let (mut open, mut page) = (side.open, side.page);
-    if !open() || !WIDE() {
+    if !open() || !WIDE() || super::panel::wide() {
         return rsx! {};
     }
     let h = hub.read();
     let list = here_pages(&here, &h);
-    let seen = PAGES.read().seen.clone();
     // the page picked, while it's still this session's
     let shown = page().and_then(|(host, slug)| list.all().find(|p| p.host == host && p.slug == slug).cloned());
     let mut close = move || open.set(false);
@@ -1906,7 +1927,7 @@ pub fn SessionSide(here: Here, side: Side) -> Element {
         };
     }
     let tmux = here.tmux.clone();
-    let parts = sections(list, tmux.as_deref());
+    drop(h);
     rsx! {
         aside { class: "session-side", "aria-label": "Blueprints",
             div { class: "side-head",
@@ -1919,31 +1940,64 @@ pub fn SessionSide(here: Here, side: Side) -> Element {
                     Glyph { icon: Icon::X, size: 16 }
                 }
             }
-            div { class: "side-list",
-                if parts.is_empty() {
-                    p { class: "side-empty",
-                        "Sites an agent adds with "
-                        code { class: "mono", "inyon blueprints add" }
-                        " in this session show up here."
-                    }
+            SideList { here, page }
+        }
+    }
+}
+
+/// The session's pages as the side shows them, each opening there.
+#[component]
+fn SideList(here: Here, page: Signal<Option<(String, String)>>) -> Element {
+    let hub = use_context::<Signal<Hub>>();
+    let h = hub.read();
+    let list = here_pages(&here, &h);
+    let seen = PAGES.read().seen.clone();
+    let parts = sections(list, here.tmux.as_deref());
+    rsx! {
+        div { class: "side-list",
+            if parts.is_empty() {
+                p { class: "side-empty",
+                    "Sites an agent adds with "
+                    code { class: "mono", "inyon blueprints add" }
+                    " in this session show up here."
                 }
-                for (label , pages) in parts {
-                    if let Some(l) = label {
-                        div { class: "side-label mono", "{l}" }
-                    }
-                    for p in pages {
-                        SideRow {
-                            key: "{p.host}/{p.slug}",
-                            changed: pg::is_changed(&p, &seen),
-                            m: pg::machine_of(&h.hosts, &p.host),
-                            on_pick: move |id| page.set(Some(id)),
-                            p,
-                        }
+            }
+            for (label , pages) in parts {
+                if let Some(l) = label {
+                    div { class: "side-label mono", "{l}" }
+                }
+                for p in pages {
+                    SideRow {
+                        key: "{p.host}/{p.slug}",
+                        changed: pg::is_changed(&p, &seen),
+                        m: pg::machine_of(&h.hosts, &p.host),
+                        on_pick: move |id| page.set(Some(id)),
+                        p,
                     }
                 }
             }
         }
     }
+}
+
+/// The side panel's Blueprints tab: the session's pages, and one opened from them in the viewer
+/// with the way back to the list.
+#[component]
+pub fn SidePages(here: Here, side: Side) -> Element {
+    use_hook(listen);
+    let hub = use_context::<Signal<Hub>>();
+    let mut page = side.page;
+    let h = hub.read();
+    let list = here_pages(&here, &h);
+    let shown = page().and_then(|(host, slug)| list.all().find(|p| p.host == host && p.slug == slug).cloned());
+    if let Some(p) = shown {
+        let m = pg::machine_of(&h.hosts, &p.host);
+        return rsx! {
+            DesktopViewer { key: "{p.host}/{p.slug}", p, m, docked: true, on_list: move |_| page.set(None) }
+        };
+    }
+    drop(h);
+    rsx! { SideList { here, page } }
 }
 
 /// A page in the session's side list: it opens in the panel, and has the page menu.

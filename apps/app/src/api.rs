@@ -1082,6 +1082,174 @@ pub async fn page_file_exists(_url: &str) -> bool {
     false
 }
 
+// ---------- the session side panel (session/Workspace.tsx, Panels.tsx) ----------
+
+fn path_query(path: &str) -> String {
+    format!("?path={}", inyon_chat_core::js::encode_uri_component(path))
+}
+
+/// One entry of a folder in the session's folder.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct DirEntry {
+    pub name: String,
+    pub dir: bool,
+    #[serde(default)]
+    pub size: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct Dir {
+    pub cwd: String,
+    pub entries: Vec<DirEntry>,
+}
+
+/// A folder under the session's folder (`path` relative to it, empty for the folder itself).
+pub async fn dir(host: &str, pane: &str, path: &str) -> Result<Dir, ApiError> {
+    parse(&request("GET", &format!("{}/dir{}", pane_path(host, pane), path_query(path)), None).await?)
+}
+
+/// A file as the Files tab shows it.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum FileView {
+    Text {
+        text: String,
+        size: f64,
+        truncated: bool,
+    },
+    Image {
+        #[serde(rename = "type")]
+        mime: String,
+        data: String,
+    },
+    Binary {
+        size: f64,
+    },
+    Large {
+        size: f64,
+    },
+}
+
+pub async fn file(host: &str, pane: &str, path: &str) -> Result<FileView, ApiError> {
+    parse(&request("GET", &format!("{}/file{}", pane_path(host, pane), path_query(path)), None).await?)
+}
+
+/// A changed file in git's working tree: `M`, `A`, `D`, `R` or `?` (not tracked).
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct GitFile {
+    pub path: String,
+    #[serde(default)]
+    pub from: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub add: f64,
+    #[serde(default)]
+    pub del: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct GitState {
+    pub repo: bool,
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub remote: Option<bool>,
+    #[serde(default)]
+    pub upstream: Option<String>,
+    #[serde(default)]
+    pub ahead: Option<f64>,
+    #[serde(default)]
+    pub behind: Option<f64>,
+    #[serde(default)]
+    pub files: Vec<GitFile>,
+}
+
+/// The session folder's git working tree against the last commit.
+pub async fn git(host: &str, pane: &str) -> Result<GitState, ApiError> {
+    parse(&request("GET", &format!("{}/git", pane_path(host, pane)), None).await?)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct GitDiff {
+    #[serde(default)]
+    pub binary: bool,
+    #[serde(default)]
+    pub hunks: Vec<inyon_protocol::PatchHunk>,
+}
+
+pub async fn git_diff(host: &str, pane: &str, path: &str) -> Result<GitDiff, ApiError> {
+    parse(&request("GET", &format!("{}/git/diff{}", pane_path(host, pane), path_query(path)), None).await?)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct Commit {
+    pub commit: String,
+}
+
+#[derive(Serialize)]
+struct CommitBody<'a> {
+    message: &'a str,
+}
+
+/// Commits every change in the working tree.
+pub async fn git_commit(host: &str, pane: &str, message: &str) -> Result<Commit, ApiError> {
+    let body = serde_json::to_string(&CommitBody { message }).unwrap_or_default();
+    parse(&request("POST", &format!("{}/git/commit", pane_path(host, pane)), Some(body)).await?)
+}
+
+pub async fn git_push(host: &str, pane: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/git/push", pane_path(host, pane)), None).await.map(drop)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct Stopped {
+    pub stopped: bool,
+}
+
+#[derive(Serialize)]
+struct TaskRef<'a> {
+    id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<&'a str>,
+}
+
+/// Stops a background task or monitor of a machine's agent.
+pub async fn stop_task(host: &str, id: &str, path: Option<&str>) -> Result<Stopped, ApiError> {
+    let body = serde_json::to_string(&TaskRef { id, path }).unwrap_or_default();
+    parse(&request("POST", &format!("{}/tasks/stop", host_path(host)), Some(body)).await?)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct TaskOutput {
+    pub output: String,
+}
+
+pub async fn task_output(host: &str, id: &str, path: Option<&str>) -> Result<TaskOutput, ApiError> {
+    let enc = inyon_chat_core::js::encode_uri_component;
+    parse(&request("GET", &format!("{}/task-output?path={}&id={}", host_path(host), enc(path.unwrap_or("")), enc(id)), None).await?)
+}
+
+/// A subagent's own transcript file, found from the session's.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentFile {
+    #[serde(default)]
+    pub tool_use_id: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub path: String,
+}
+
+pub async fn subagents(host: &str, transcript: &str) -> Result<Vec<SubagentFile>, ApiError> {
+    parse(&request("GET", &format!("{}/subagents?transcript={}", host_path(host), inyon_chat_core::js::encode_uri_component(transcript)), None).await?)
+}
+
+pub async fn transcript(host: &str, path: &str) -> Result<Vec<inyon_protocol::ChatItem>, ApiError> {
+    parse(&request("GET", &format!("{}/transcript{}", host_path(host), path_query(path)), None).await?)
+}
+
 #[cfg(target_arch = "wasm32")]
 async fn request(method: &str, path: &str, body: Option<String>) -> Result<String, ApiError> {
     use wasm_bindgen::JsCast;

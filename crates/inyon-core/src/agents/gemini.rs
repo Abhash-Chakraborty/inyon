@@ -278,6 +278,7 @@ impl GeminiDoc {
                         let mapped = map_tool(&tc.at("name").to_js_string(), tc.at("args"));
                         out.push(base.with_uuid(format!("{mid}:{tid}")).assistant(&mid, None, tool_block(&tid, &mapped.name, mapped.input.clone())));
                         let status = tc.at("status").str();
+                        // a call cancelled before it ran did nothing, so it reads as one that failed
                         if matches!(status, Some("success" | "error" | "cancelled")) || tc.at("result").truthy() {
                             let display = tc.at("resultDisplay").str().unwrap_or("");
                             let text = if display.is_empty() {
@@ -287,7 +288,13 @@ impl GeminiDoc {
                                 display.to_owned()
                             };
                             let meta = (mapped.name == "Bash").then(|| stdout_meta(display.slice16(0, Some(8000))));
-                            out.push(base.with_uuid(format!("{mid}:{tid}:r")).tool_result(&tid, status == Some("error"), text.slice16(0, Some(8000)), None, meta));
+                            out.push(base.with_uuid(format!("{mid}:{tid}:r")).tool_result(
+                                &tid,
+                                matches!(status, Some("error" | "cancelled")),
+                                text.slice16(0, Some(8000)),
+                                None,
+                                meta,
+                            ));
                         }
                     }
                     meta.stats.turns += 1;

@@ -500,9 +500,10 @@ try {
   }
 
   // ---- a session's pages beside its chat, as artifacts open, in both themes ----
+  // (from 1180 px they're the side panel's Blueprints tab, checked after this; narrower, the side view)
   for (const scheme of ['light', 'dark'] as const) {
     reset()
-    const ctx = await browser.newContext({ ...desktop, colorScheme: scheme })
+    const ctx = await browser.newContext({ ...desktop, viewport: { width: 1100, height: 900 }, colorScheme: scheme })
     const page = await ctx.newPage()
     watch(page)
     const label = `session desktop ${scheme}`
@@ -521,7 +522,7 @@ try {
     check((await side.locator('.side-row-name').allTextContents()).join('|') === 'Checkout redesign|Cart mockups', `${label}: the rows`)
     check(await side.locator('.side-tmux').getByText('storefront').isVisible(), `${label}: the tmux session in the panel's head`)
     check(await page.locator('.chat-column').first().isVisible(), `${label}: the chat stays beside it`)
-    await page.screenshot({ path: path.join(shots, `session-side-1440-${scheme}.png`) })
+    await page.screenshot({ path: path.join(shots, `session-side-1100-${scheme}.png`) })
     await layout(page, `${label} list`)
     // live: a page the conversation adds shows up at once
     state.pages.push({ host: 'local', slug: 'promo-codes', name: 'Promo codes', project: '/home/sam/code/storefront', by: 'claude', added: Date.now(), folder: '/home/sam/code/storefront/private/plans/promo-codes', session: 'chat-store-2', tmux: 'storefront', tmuxId: '$11' })
@@ -537,7 +538,7 @@ try {
     check(!(await side.getByRole('radiogroup', { name: 'Frame size' }).count()), `${label}: no device sizes in the panel`)
     check(page.url().endsWith('/next/m/local/p/11'), `${label}: still on the session`)
     for (const name of ['Reload', 'Open full view', 'Open in new tab']) check(await side.getByRole('button', { name, exact: true }).isVisible(), `${label}: ${name} in the side view`)
-    await page.screenshot({ path: path.join(shots, `session-side-viewer-1440-${scheme}.png`) })
+    await page.screenshot({ path: path.join(shots, `session-side-viewer-1100-${scheme}.png`) })
     await layout(page, `${label} viewer`)
     if (scheme === 'dark') {
       // Open full view: the Blueprints screen, with the page
@@ -573,6 +574,38 @@ try {
       check(await until(async () => (await heads()).join(',') === 'accounts,shop,docs-site'), `${label}: one heading again (${await heads()})`)
       check((await page.locator('.crumbs').textContent())?.replace(/\s+/g, '') === 'studio/shop/Checkoutredesign', `${label}: so does the viewer (${await page.locator('.crumbs').textContent()})`)
     }
+    await ctx.close()
+  }
+
+  // ---- from 1180 px the header's Blueprints button opens the side panel's Blueprints tab ----
+  for (const scheme of ['light', 'dark'] as const) {
+    reset()
+    const ctx = await browser.newContext({ ...desktop, colorScheme: scheme })
+    const page = await ctx.newPage()
+    watch(page)
+    const label = `session panel ${scheme}`
+    await page.goto(`${base}/next/m/local/p/11`)
+    await styled(page)
+    await page.locator('.reply-pages').waitFor()
+    const button = page.getByRole('button', { name: 'Blueprints: 2, changed' })
+    await button.click()
+    const panel = page.locator('aside[aria-label="Side panel"]')
+    check(await panel.getByRole('tab', { name: /Blueprints/ }).getAttribute('aria-selected') === 'true', `${label}: the button picks the panel's Blueprints tab`)
+    check(await until(async () => (await button.getAttribute('aria-pressed')) === 'true'), `${label}: and shows as pressed`)
+    check(!(await page.locator('.session-side').count()), `${label}: no second side view next to the panel`)
+    // six tabs don't fit 420 px: the row scrolls, with its hidden end faded
+    check(await until(async () => /end|start/.test((await panel.locator('#pp-tabs').getAttribute('data-fade')) ?? '')), `${label}: the tab row fades where it runs on (${await panel.locator('#pp-tabs').getAttribute('data-fade')})`)
+    check((await panel.locator('.side-label').allTextContents()).join('|') === 'This conversation|Earlier in storefront', `${label}: this conversation's first`)
+    await panel.locator('.side-row', { hasText: 'Checkout redesign' }).click()
+    await panel.frameLocator('iframe.page-frame').getByRole('heading', { name: 'Checkout redesign' }).waitFor()
+    for (const name of ['Reload', 'Open full view', 'Open in new tab']) check(await panel.getByRole('button', { name, exact: true }).isVisible(), `${label}: ${name} in the panel`)
+    check(page.url().endsWith('/next/m/local/p/11'), `${label}: still on the session`)
+    await page.screenshot({ path: path.join(shots, `session-panel-blueprints-1440-${scheme}.png`) })
+    await layout(page, `${label} viewer`)
+    // pressed again, it hides the panel
+    await button.click()
+    await panel.waitFor({ state: 'detached' })
+    check((await button.getAttribute('aria-pressed')) === 'false', `${label}: pressed again, the panel goes`)
     await ctx.close()
   }
 

@@ -106,3 +106,23 @@ fn a_gemini_chat_is_found_under_a_home_whose_path_has_a_space() {
         assert_eq!(find_gemini_session(&host("find", "local"), &home, &proc).await.unwrap(), Some(root.path(rel).to_string_lossy().into_owned()));
     });
 }
+
+/// an edit cancelled before it ran changed nothing, so the Changes panel leaves it out
+#[test]
+fn a_cancelled_call_reads_as_one_that_failed() {
+    let mut doc = GeminiDoc::new();
+    let records = json!([
+        { "sessionId": "s1", "projectHash": "h", "startTime": "2026-10-10T08:00:00Z", "kind": "main" },
+        { "id": "g1", "type": "gemini", "timestamp": "2026-10-10T08:00:02Z", "content": "", "toolCalls": [
+            { "id": "c1", "name": "write_file", "args": { "file_path": "a.rs", "content": "x" }, "status": "cancelled" },
+            { "id": "c2", "name": "write_file", "args": { "file_path": "b.rs", "content": "y" }, "status": "success" }
+        ] }
+    ]);
+    for r in records.as_array().unwrap() {
+        doc.apply(r);
+    }
+    let items = serde_json::to_value(doc.items(&mut new_meta())).unwrap();
+    let error_of = |id: &str| items.as_array().unwrap().iter().find(|i| i["toolUseId"] == id).map(|i| i["isError"].clone());
+    assert_eq!(error_of("c1"), Some(json!(true)));
+    assert_eq!(error_of("c2"), Some(json!(false)));
+}

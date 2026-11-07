@@ -92,7 +92,9 @@ function snapshot(stream: string) {
   if (stream === 'organize') return { t: 'snapshot', stream, epoch: EPOCH, seq: organizeSeq(), rows: { sessions: state.marks, projects: [], groups: [], spaces: [] } }
   const c = streams.get(stream)
   if (!c) return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { items: [] }, state: { loaded: true, hasMore: false } }
-  return { t: 'snapshot', stream, epoch: EPOCH, seq: c.seq, rows: { items: c.items, live: [], queue: [] }, state: c.state }
+  // the agent's own queue travels as rows; chat-core puts it back into info.queue
+  const queue = ((c.state.info as { queue?: string[] } | undefined)?.queue ?? []).map((text, i) => ({ kind: 'agent', id: String(i), text }))
+  return { t: 'snapshot', stream, epoch: EPOCH, seq: c.seq, rows: { items: c.items, live: [], queue }, state: c.state }
 }
 
 /** A change to a chat, sent to every socket that follows it. */

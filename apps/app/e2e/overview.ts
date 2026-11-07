@@ -702,7 +702,8 @@ try {
       await page.screenshot({ path: path.join(shots, `terminal-${w}-${scheme}.png`) })
       if (!phone && scheme === 'light') {
         const from = state.frames.length
-        await page.setViewportSize({ width: 1000, height: 700 })
+        // still wide enough for the side panel, which would otherwise leave and widen the grid
+        await page.setViewportSize({ width: 1200, height: 700 })
         await frames('term.resize', 1, from)
         await page.waitForTimeout(500)
         const r = (await frames('term.resize', 1, from)).at(-1)

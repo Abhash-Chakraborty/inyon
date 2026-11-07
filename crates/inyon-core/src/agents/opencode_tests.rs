@@ -454,3 +454,11 @@ fn a_null_error_or_output_reads_as_the_default_not_as_null() {
     let rows = serde_json::to_value(&rows).unwrap();
     assert_match(&rows, json!([{ "kind": "notice", "text": "OpenCode request failed" }, { "kind": "assistant" }, { "kind": "tool_result", "text": "", "isError": true }]));
 }
+
+#[test]
+fn a_patch_reads_as_applypatch_under_either_of_its_names() {
+    for name in ["patch", "apply_patch"] {
+        let c = map_tool(name, Some(&json!({ "patchText": "*** Begin Patch\n*** Update File: a.rs\n*** End Patch" })));
+        assert_eq!((c.name.as_str(), &c.input), ("ApplyPatch", &json!({ "patch": "*** Begin Patch\n*** Update File: a.rs\n*** End Patch" })));
+    }
+}
