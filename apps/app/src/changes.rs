@@ -56,7 +56,7 @@ pub fn changes(items: &[ChatItem]) -> Vec<FileChange> {
         }
         let meta = r.and_then(|r| r.1);
         let paths: Vec<String> = if name == "ApplyPatch" {
-            input.get("patch").and_then(Value::as_str).unwrap_or("").lines().filter_map(patch_file).collect()
+            patch_files(input.get("patch").and_then(Value::as_str).unwrap_or(""))
         } else {
             input.get("file_path").or_else(|| input.get("notebook_path")).and_then(Value::as_str).filter(|p| !p.is_empty()).map(str::to_string).into_iter().collect()
         };
@@ -98,6 +98,22 @@ pub fn changes(items: &[ChatItem]) -> Vec<FileChange> {
     }
     files.reverse();
     files
+}
+
+/// The files a patch leaves changed: each one it names, and for one it moves (`*** Move to:`
+/// after its `*** Update File:`), where it went.
+fn patch_files(patch: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for l in patch.lines() {
+        if let Some(to) = l.strip_prefix("*** Move to: ").map(str::trim).filter(|t| !t.is_empty()) {
+            if let Some(last) = out.last_mut() {
+                *last = to.to_string();
+            }
+        } else if let Some(p) = patch_file(l) {
+            out.push(p);
+        }
+    }
+    out
 }
 
 /// `*** Update File: a.rs` (and Add, Delete) in a patch: the file it names.
@@ -387,6 +403,14 @@ mod tests {
         let items = vec![call(1, "t", "ApplyPatch", json!({ "patch": "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-x\n+y\n*** Add File: b.txt\n+hi\n*** End Patch" }))];
         let c = changes(&items);
         assert_eq!(c.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b.txt", "src/a.rs"]);
+    }
+
+    #[test]
+    fn a_moved_file_is_listed_where_it_went() {
+        assert_eq!(
+            patch_files("*** Begin Patch\n*** Update File: src/old.rs\n*** Move to: src/new.rs\n@@\n-a\n+b\n*** Add File: c.txt\n+hi\n*** End Patch"),
+            ["src/new.rs", "c.txt"]
+        );
     }
 
     #[test]

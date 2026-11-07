@@ -1909,8 +1909,9 @@ button.nav-item { width: 100%; text-align: left; }
 .diff table { width: 100%; border-collapse: collapse; }
 .diff-gap { background: color-mix(in srgb, var(--raised) 60%, transparent); padding: 2px 12px; text-align: center; font-size: 12px; color: var(--fg-3); user-select: none; }
 .diff-del { background: var(--diff-del); }
-.diff-no { width: 1%; padding: 0; text-align: right; white-space: nowrap; color: var(--fg-3); user-select: none; }
-.diff-no > span { padding: 0 8px; }
+/* the panel's line numbers are buttons that take a comment; the chat's own stay as they are */
+.diff-no.pp-no { padding: 0; color: var(--fg-3); }
+.pp-no > span { padding: 0 8px; }
 .diff-no-button { display: block; width: 100%; padding: 0 8px; text-align: right; font: inherit; color: inherit; }
 .diff-no-button:hover { background: var(--hover); color: var(--fg); }
 .diff-no-on, .diff-no-on:hover { background: var(--hover); font-weight: 600; color: var(--fg); box-shadow: inset 2px 0 0 var(--fg); }

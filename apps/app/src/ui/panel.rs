@@ -554,7 +554,7 @@ pub fn DiffView(hunks: Vec<Hunk>, file: String, #[props(default)] review: Option
                                 let text = if l.text.is_empty() { " ".to_string() } else { l.text.clone() };
                                 rsx! {
                                     tr { key: "{i}", class: if l.add { "diff-add" } else if l.removed { "diff-del" } else { "" },
-                                        td { class: "diff-no",
+                                        td { class: "diff-no pp-no",
                                             if let Some(k) = review.clone() {
                                                 button {
                                                     class: if on { "diff-no-button diff-no-on" } else { "diff-no-button" },
