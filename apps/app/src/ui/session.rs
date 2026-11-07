@@ -187,6 +187,10 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
             },
         )
     });
+    // while the agent asks something, typing a command would answer it
+    let asking = screen.as_ref().is_some_and(|s| s.prompt.is_some());
+    let stopped = agent_info.and_then(|a| a.status_stopped) == Some(true);
+    let usage_status = status.clone();
     let of = panel::Of { host: host.clone(), pane: pane.clone(), ctx: ctx.clone(), here: page_here.clone(), side, agent, status, compact: def.and_then(|d| d.set.compact.clone()) };
     let busy = crate::changes::running(info.as_ref());
     let show_panel = agent.is_some() && panel_wide && settings.side_panel && !gone;
@@ -212,7 +216,18 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         ultracode: ultracode_on,
         shared: info.as_ref().is_some_and(|i| i.share.is_some()),
     };
-    let more = super::session_menu::items(&host, &pane, agent, &now);
+    let mut more = super::session_menu::items(&host, &pane, agent, &now);
+    if agent.is_some() && !asking {
+        let sheet = super::menu::Action::Control(super::controls::ControlAct { host: host.clone(), pane: pane.clone(), op: super::controls::ControlOp::Sheet });
+        more.insert(0, super::menu::Item::new("Session controls…", Icon::Shield, sheet));
+    }
+    let sheet_of = super::controls::SheetOf { asking, now: now.clone(), status: usage_status.clone(), info: info.clone() };
+    let control_sheets = controls.clone();
+    let open_sheet = {
+        let (host, pane) = (host.clone(), pane.clone());
+        move || super::controls::run(super::controls::ControlAct { host: host.clone(), pane: pane.clone(), op: super::controls::ControlOp::Sheet })
+    };
+    let open_sheet_too = open_sheet.clone();
     let mut menu_at = use_context::<Signal<Option<super::menu::Menu>>>();
     let has_pane = r.is_some();
     drop(c);
@@ -279,10 +294,24 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                             "{s.label()}"
                         }
                     }
+                    if agent.is_some() {
+                        super::usage::UsageChip { status: usage_status.clone(), info: info.clone(), stopped, on_open: move |_| open_sheet() }
+                    }
+                    // a phone gets the session's actions in the controls sheet
+                    if has_pane && confirmed && control_sheets.is_some() {
+                        button {
+                            class: "icon-button icon-button-lg press more-phone",
+                            r#type: "button",
+                            "aria-label": "More",
+                            title: "More",
+                            onclick: move |_| open_sheet_too(),
+                            Glyph { icon: Icon::Ellipsis, size: 17 }
+                        }
+                    }
                     if has_pane && confirmed {
                         button {
                             id: "session-more",
-                            class: "icon-button icon-button-lg press",
+                            class: if control_sheets.is_some() { "icon-button icon-button-lg press more-wide" } else { "icon-button icon-button-lg press" },
                             r#type: "button",
                             "aria-label": "More",
                             title: "More",
@@ -318,6 +347,9 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         }
                     }
                 }
+            }
+            if let Some(c) = control_sheets.clone() {
+                super::controls::ControlSheets { c, of: sheet_of }
             }
             div { class: "session-body",
             if gone {

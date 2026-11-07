@@ -7,13 +7,14 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 use inyon_chat_core::format::model_name;
-use inyon_protocol::{AgentCatalog, AgentKind, AgentModel, AgentStatus, ChatGoal, ChosenControls, ModeOption};
+use inyon_protocol::{AgentCatalog, AgentKind, AgentModel, AgentStatus, ChatGoal, ChatInfo, ChosenControls, ModeOption};
 
-use super::icons::{Glyph, Icon};
-use super::kit::{Busy, Field, Sheet};
+use super::icons::{AgentMark, Glyph, Icon};
+use super::kit::{Busy, Field, Segmented, Sheet, Toggle};
 use super::menu::{self, Action, Item};
-use super::session_menu::{SessionAct, SessionOp};
-use super::toast::{self, ToastTone};
+use super::session_menu::{Now, SessionAct, SessionOp};
+use super::toast::{self, confirm, Ask, ToastTone};
+use crate::route::Route;
 use crate::{api, platform};
 
 /// Agents whose model list the hub reads from the CLI (agy models, Codex's models cache).
@@ -41,6 +42,22 @@ pub fn effort_label(e: &str) -> String {
 }
 
 /// A catalog label without its provider ("OpenAI · GPT-5" → "GPT-5").
+/// A level as the controls sheet's row of levels names it, short enough for six side by side.
+pub fn effort_short(e: &str) -> String {
+    match e {
+        "default" => "Default".into(),
+        "none" => "None".into(),
+        "minimal" => "Min".into(),
+        "low" => "Low".into(),
+        "medium" => "Med".into(),
+        "high" => "High".into(),
+        "xhigh" => "X-high".into(),
+        "max" => "Max".into(),
+        "ultra" => "Ultra".into(),
+        e => e.into(),
+    }
+}
+
 fn short(label: &str) -> &str {
     label.rsplit(" · ").next().unwrap_or(label)
 }
@@ -423,6 +440,8 @@ pub enum ControlOp {
     DropChosen,
     /// OpenCode's providers sheet
     Providers,
+    /// the session controls sheet: everything the chips do, the switches and the Usage panel
+    Sheet,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -435,12 +454,14 @@ pub struct ControlAct {
 // one composer at a time, so its sheets can be opened from a menu
 static GOAL_OPEN: GlobalSignal<bool> = Signal::global(|| false);
 static PROVIDERS_OPEN: GlobalSignal<bool> = Signal::global(|| false);
+static SHEET_OPEN: GlobalSignal<bool> = Signal::global(|| false);
 /// bumped when a provider is connected or disconnected, so the model list is read again
 static MODELS_CHANGED: GlobalSignal<u32> = Signal::global(|| 0);
 
 fn close_sheets() {
     *GOAL_OPEN.write() = false;
     *PROVIDERS_OPEN.write() = false;
+    *SHEET_OPEN.write() = false;
 }
 
 pub fn open_goal() {
@@ -451,6 +472,7 @@ pub fn run(act: ControlAct) {
     let ControlAct { host, pane, op } = act;
     match op {
         ControlOp::Providers => *PROVIDERS_OPEN.write() = true,
+        ControlOp::Sheet => *SHEET_OPEN.write() = true,
         ControlOp::Setting(text, fail) => {
             spawn(async move {
                 setting(&host, &pane, &text, fail).await;
@@ -532,18 +554,13 @@ fn levels(agent: AgentKind, m: Option<&AgentModel>) -> Vec<String> {
 #[component]
 pub fn ControlChips(c: Controls) -> Element {
     let mut menu_at = use_context::<Signal<Option<menu::Menu>>>();
-    // a session that can't take picks closes what the chips opened
+    // a session that can't take picks closes a chip's menu (ControlSheets closes the sheets)
     let ready = c.ready;
     use_effect(use_reactive!(|ready| {
-        if !ready {
-            close_sheets();
-            if menu_at.peek().as_ref().is_some_and(|m| m.of_controls()) {
-                menu_at.set(None);
-            }
+        if !ready && menu_at.peek().as_ref().is_some_and(|m| m.of_controls()) {
+            menu_at.set(None);
         }
     }));
-    // and a sheet left open doesn't follow you to the next session
-    use_drop(close_sheets);
     let chips: Vec<Chip> = [c.model_chip(), c.effort_chip(), c.mode_chip()].into_iter().flatten().collect();
     let goal = c.goal_on().cloned();
     let has_goal = c.agent.def().set.goal.is_some();
@@ -603,6 +620,34 @@ pub fn ControlChips(c: Controls) -> Element {
                 }
             }
         }
+    }
+}
+
+/// What the session controls sheet needs besides the chips: whether the agent is asking
+/// something, what's switched on, and the numbers for its Usage part.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetOf {
+    pub asking: bool,
+    pub now: Now,
+    pub status: Option<AgentStatus>,
+    pub info: Option<ChatInfo>,
+}
+
+/// The sheets the chips and the header open, kept with the session rather than the message box
+/// so they open from the terminal view as well.
+#[component]
+pub fn ControlSheets(c: Controls, of: SheetOf) -> Element {
+    // a session that can't take picks closes them, and one left open doesn't follow you to the
+    // next session
+    let ready = c.ready;
+    use_effect(use_reactive!(|ready| {
+        if !ready {
+            close_sheets();
+        }
+    }));
+    use_drop(close_sheets);
+    rsx! {
+        ControlsSheet { c: c.clone(), of }
         GoalSheet { c: c.clone() }
         if c.agent == AgentKind::Opencode {
             super::setup::ProvidersSheet {
@@ -613,6 +658,249 @@ pub fn ControlChips(c: Controls) -> Element {
                     *PROVIDERS_OPEN.write() = false;
                     *MODELS_CHANGED.write() += 1;
                 },
+            }
+        }
+    }
+}
+
+/// One of the sheet's buttons under the switches: a session action, or one that asks first.
+#[derive(Clone, PartialEq)]
+struct Tile {
+    label: &'static str,
+    icon: Icon,
+    action: Action,
+    danger: bool,
+    /// a confirm before it goes (Clear)
+    ask: Option<(&'static str, &'static str, &'static str)>,
+}
+
+/// The buttons under the switches, as the web app's controls sheet lists them for `agent`.
+fn tiles(c: &Controls, now: &Now) -> Vec<Tile> {
+    let def = c.agent.def();
+    let kind = c.agent;
+    let session = |op: SessionOp| Action::Session(SessionAct { host: c.host.clone(), pane: c.pane.clone(), agent: Some(kind), op });
+    let tile = |label, icon, action| Tile { label, icon, action, danger: false, ask: None };
+    let mut v = Vec::new();
+    if let Some(cmd) = &def.set.compact {
+        v.push(tile("Compact", Icon::Shrink, session(SessionOp::Send(cmd.clone(), "Could not compact"))));
+    }
+    if matches!(kind, AgentKind::Claude | AgentKind::Antigravity | AgentKind::Codex | AgentKind::Opencode) {
+        v.push(tile(if kind == AgentKind::Opencode { "Undo" } else { "Rewind" }, Icon::RotateCcw, session(SessionOp::Rewind)));
+    }
+    if kind == AgentKind::Opencode {
+        v.push(tile("Redo", Icon::RotateCw, session(SessionOp::Send("/redo".into(), "Could not redo"))));
+        v.push(tile(if now.shared { "Unshare" } else { "Share" }, Icon::Link2, session(SessionOp::Share(!now.shared))));
+    }
+    if matches!(kind, AgentKind::Claude | AgentKind::Codex | AgentKind::Opencode) && now.session_id.is_some() {
+        v.push(tile("Fork", Icon::GitFork, session(SessionOp::Fork)));
+    }
+    if let Some(id) = &now.session_id {
+        v.push(tile("Copy ID", Icon::Copy, Action::Copy(id.clone())));
+    }
+    if let Some(cmd) = &def.set.clear {
+        v.push(Tile {
+            ask: Some(("Start a fresh conversation?", "The current one is saved and can be resumed later.", "Clear")),
+            ..tile("Clear", Icon::Trash2, session(SessionOp::Send(cmd.clone(), "Could not clear")))
+        });
+    }
+    v.push(tile("To shell", Icon::LogOut, session(SessionOp::Exit)));
+    v.push(Tile { danger: true, ..tile("End", Icon::CircleX, Action::EndSession { host: c.host.clone(), pane: c.pane.clone() }) });
+    v
+}
+
+/// The session controls sheet (MobileSheets.tsx ControlsSheet): model, effort and mode as
+/// buttons, the goal, Ultracode and Remote Control switches, the session's actions, and its
+/// Usage. Phones open it from the header's ⋯; every size from the usage chip and Session
+/// controls… in the menu. While the agent asks something, only the Usage part stays.
+#[component]
+fn ControlsSheet(c: Controls, of: SheetOf) -> Element {
+    // it opens only while the session can take picks
+    let open = SHEET_OPEN() && c.ready;
+    let chats = use_context::<Signal<crate::state::Chats>>();
+    let here = use_context::<Signal<Route>>();
+    let hub = use_context::<Signal<crate::state::Hub>>();
+    let close = move || *SHEET_OPEN.write() = false;
+    let run = move |a: Action| menu::run(a, chats, here, hub);
+    let def = c.agent.def();
+    let kind = c.agent;
+    let session = {
+        let (host, pane) = (c.host.clone(), c.pane.clone());
+        move |op: SessionOp| Action::Session(SessionAct { host: host.clone(), pane: pane.clone(), agent: Some(kind), op })
+    };
+    let (ultra, remote) = (session.clone(), session.clone());
+    let goal = c.goal_on().map(|g| g.condition.clone());
+    let goal_sub = match (&goal, &c.goal) {
+        (Some(g), _) => g.clone(),
+        (None, Some(g)) if g.met => "Last goal met".into(),
+        _ => "Keep working until a condition is met".into(),
+    };
+    let clear_goal = def.set.clear_goal.clone();
+    let efforts: Vec<(String, String)> =
+        (kind == AgentKind::Opencode).then(|| "default".to_string()).into_iter().chain(c.efforts.iter().cloned()).map(|e| (e.clone(), effort_short(&e))).collect();
+    let effort = c.effort.clone().unwrap_or_else(|| if kind == AgentKind::Opencode { "default".into() } else { String::new() });
+    let rc_where = if kind == AgentKind::Antigravity { "Antigravity" } else { "claude.ai" };
+    let tiles = tiles(&c, &of.now);
+    let compact = def.set.compact.clone().map(|cmd| {
+        let a = session(SessionOp::Send(cmd, "Could not compact"));
+        EventHandler::new(move |_| run(a.clone()))
+    });
+    let models = c.models.clone();
+    let modes = c.modes.clone();
+    let cc = c.clone();
+    let cm = c.clone();
+    let ce = c.clone();
+    rsx! {
+        Sheet {
+            open,
+            on_close: move |_| close(),
+            title: def.name.clone(),
+            icon: rsx! { AgentMark { kind, size: 24, decorative: true } },
+            div { class: "csheet",
+                if of.asking {
+                    div { class: "csheet-asking", role: "status",
+                        "{def.name} is asking you something. Answer it in the chat, and the model, effort and mode controls come back."
+                    }
+                } else {
+                    if !models.is_empty() || kind == AgentKind::Opencode {
+                        div {
+                            div { class: "csheet-label", "Model" }
+                            div { class: "csheet-models",
+                                for m in models {
+                                    button {
+                                        key: "{m.id}",
+                                        class: if cm.model.as_deref() == Some(m.id.as_str()) { "csheet-model csheet-model-on press" } else { "csheet-model press" },
+                                        r#type: "button",
+                                        "aria-pressed": "{cm.model.as_deref() == Some(m.id.as_str())}",
+                                        onclick: {
+                                            let a = cm.act(ControlOp::Setting(cm.model_command(&m.id).unwrap_or_default(), "Could not switch model"));
+                                            move |_| run(a.clone())
+                                        },
+                                        span { class: "csheet-model-name", "{m.label}" }
+                                        if let Some(n) = &m.note {
+                                            span { class: "csheet-model-note", "{n}" }
+                                        }
+                                    }
+                                }
+                            }
+                            if kind == AgentKind::Opencode {
+                                button { class: "csheet-link press", r#type: "button", onclick: move |_| { close(); *PROVIDERS_OPEN.write() = true },
+                                    Glyph { icon: Icon::Plug, size: 14 }
+                                    "Connect a provider…"
+                                }
+                            }
+                        }
+                    }
+                    if !c.efforts.is_empty() {
+                        div {
+                            div { class: "csheet-label", "Reasoning effort" }
+                            Segmented {
+                                full: true,
+                                label: "Reasoning effort",
+                                value: effort,
+                                options: efforts,
+                                on_change: move |v: String| run(ce.act(ControlOp::Setting(ce.effort_command(&v).unwrap_or_default(), "Could not change effort"))),
+                            }
+                        }
+                    }
+                    if !modes.is_empty() {
+                        div {
+                            div { class: "csheet-label", if kind == AgentKind::Opencode { "Agent" } else { "Permission mode" } }
+                            div { class: "csheet-modes",
+                                for m in modes {
+                                    button {
+                                        key: "{m.id}",
+                                        class: if mode_matches(cc.mode.as_deref(), &m.id, kind) { "csheet-mode csheet-mode-on press" } else { "csheet-mode press" },
+                                        r#type: "button",
+                                        "aria-pressed": "{mode_matches(cc.mode.as_deref(), &m.id, kind)}",
+                                        onclick: {
+                                            let a = cc.act(ControlOp::Mode(m.id.clone()));
+                                            move |_| run(a.clone())
+                                        },
+                                        "{m.label}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if def.set.goal.is_some() || def.set.ultracode.is_some() || def.set.rc.is_some() {
+                        div { class: "csheet-rows",
+                            if def.set.goal.is_some() {
+                                div { class: "csheet-row",
+                                    Glyph { icon: Icon::Target, size: 16, class: "fg-3" }
+                                    button { class: "csheet-row-words", r#type: "button", onclick: move |_| { close(); open_goal() },
+                                        span { class: "csheet-row-title", "Goal" }
+                                        span { class: "csheet-row-sub truncate", "{goal_sub}" }
+                                    }
+                                    Toggle {
+                                        on: goal.is_some(),
+                                        label: "Goal",
+                                        on_change: {
+                                            let a = clear_goal.map(|cmd| c.act(ControlOp::Setting(cmd, "Could not clear goal")));
+                                            move |v: bool| if v { close(); open_goal() } else if let Some(a) = a.clone() { run(a) }
+                                        },
+                                    }
+                                }
+                            }
+                            if def.set.ultracode.is_some() {
+                                div { class: "csheet-row",
+                                    Glyph { icon: Icon::Gauge, size: 16, class: if c.ultracode { "ultracode-mark" } else { "fg-3" } }
+                                    div { class: "csheet-row-words",
+                                        span { class: "csheet-row-title", "Ultracode" }
+                                        span { class: "csheet-row-sub truncate", if c.ultracode { "On · a dynamic workflow for every task" } else { "Off" } }
+                                    }
+                                    Toggle { on: c.ultracode, label: "Ultracode", on_change: move |v: bool| run(ultra(SessionOp::Ultracode(v))) }
+                                }
+                            }
+                            if def.set.rc.is_some() {
+                                div { class: "csheet-row",
+                                    Glyph { icon: Icon::RadioTower, size: 16, class: "fg-3" }
+                                    div { class: "csheet-row-words",
+                                        span { class: "csheet-row-title", "Remote Control" }
+                                        span { class: "csheet-row-sub truncate",
+                                            if of.now.remote.is_some() { "On · reachable from {rc_where}" } else { "Off" }
+                                        }
+                                    }
+                                    if let Some(url) = of.now.remote.clone() {
+                                        a { class: "csheet-open", href: "{url}", target: "_blank", rel: "noreferrer", "Open" }
+                                    }
+                                    Toggle { on: of.now.remote.is_some(), label: "Remote Control", on_change: move |v: bool| run(remote(SessionOp::RemoteControl(v))) }
+                                }
+                            }
+                        }
+                    }
+                    div { class: "csheet-tiles",
+                        for t in tiles {
+                            button {
+                                key: "{t.label}",
+                                class: if t.danger { "csheet-tile csheet-tile-danger press" } else { "csheet-tile press" },
+                                r#type: "button",
+                                onclick: {
+                                    let t = t.clone();
+                                    move |_| {
+                                        let t = t.clone();
+                                        // Fork and End take you elsewhere, so the sheet goes first
+                                        if matches!(t.action, Action::EndSession { .. } | Action::Session(SessionAct { op: SessionOp::Fork, .. })) {
+                                            close();
+                                        }
+                                        match t.ask {
+                                            Some((title, body, yes)) => {
+                                                spawn(async move {
+                                                    if confirm(Ask { title: title.into(), body: Some(body.into()), yes: yes.into(), ..Ask::default() }).await {
+                                                        run(t.action);
+                                                    }
+                                                });
+                                            }
+                                            None => run(t.action),
+                                        }
+                                    }
+                                },
+                                Glyph { icon: t.icon, size: 16 }
+                                "{t.label}"
+                            }
+                        }
+                    }
+                }
+                super::usage::UsagePanel { status: of.status.clone(), info: of.info.clone(), agent: Some(kind), on_compact: compact }
             }
         }
     }
@@ -905,5 +1193,26 @@ mod tests {
         assert_eq!(hint(&claude(Reported { status: Some(&s), chosen: Some(&one), ..Default::default() })).as_deref(), Some("Keeps High"));
         let two = ChosenControls { mode: Some("plan".into()), ..one };
         assert_eq!(hint(&claude(Reported { status: Some(&s), chosen: Some(&two), ..Default::default() })).as_deref(), Some("Cancels every waiting switch"));
+    }
+
+    #[test]
+    fn the_sheet_lists_the_web_apps_actions_for_each_agent() {
+        let labels = |c: &Controls, now: &Now| tiles(c, now).into_iter().map(|t| t.label).collect::<Vec<_>>();
+        let with_id = Now { session_id: Some("abc".into()), ..Now::default() };
+        assert_eq!(labels(&claude(Reported::default()), &with_id), ["Compact", "Rewind", "Fork", "Copy ID", "Clear", "To shell", "End"]);
+        // no conversation yet: nothing to fork or copy
+        assert_eq!(labels(&claude(Reported::default()), &Now::default()), ["Compact", "Rewind", "Clear", "To shell", "End"]);
+        let opencode = Controls::of("box", "Box", "%1", AgentKind::Opencode, Reported::default());
+        let l = labels(&opencode, &Now { shared: true, ..Now::default() });
+        assert!(l.contains(&"Undo") && l.contains(&"Redo") && l.contains(&"Unshare"));
+        // Clear asks first, End is the one in red
+        let t = tiles(&claude(Reported::default()), &with_id);
+        assert_eq!(t.iter().find(|t| t.label == "Clear").and_then(|t| t.ask).map(|a| a.0), Some("Start a fresh conversation?"));
+        assert_eq!(t.iter().filter(|t| t.danger).map(|t| t.label).collect::<Vec<_>>(), ["End"]);
+    }
+
+    #[test]
+    fn levels_fit_six_across() {
+        assert_eq!(["default", "minimal", "medium", "xhigh", "ultra", "odd"].map(effort_short), ["Default", "Min", "Med", "X-high", "Ultra", "odd"]);
     }
 }
