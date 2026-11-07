@@ -13,6 +13,7 @@ import path from 'node:path'
 import { chromium, devices, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
 import { info, overview } from './demo.ts'
+import { resetShares, shareRoute, shares } from './share-hub.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -66,6 +67,9 @@ const state = {
   minted: 0,
   /** what the hub's last clean-up took off, until dismissed */
   cleaned: { pages: [] } as { at?: number; days?: number; pages: unknown[] },
+  /** the socket is refused, as behind a proxy that drops WebSockets; then GET /api/pages fails too */
+  noSocket: false,
+  listFails: false,
 }
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
@@ -111,6 +115,7 @@ const server = Bun.serve({
     const url = new URL(req.url)
     const p = url.pathname
     const json = (body: unknown, status = 200) => Response.json(body, { status })
+    if (p === '/ws2' && state.noSocket) return new Response('no upgrade', { status: 502 })
     if (p === '/ws2') return srv.upgrade(req, { data: { subs: new Set<string>() } }) ? undefined : new Response('no upgrade', { status: 400 })
     if (p === '/api/session') return json({ authed: true, setup: false, setupCode: false })
     if (p.startsWith('/api/')) {
@@ -118,6 +123,10 @@ const server = Bun.serve({
       state.calls.push({ method: req.method, path: p + url.search, body })
     }
     if (p === '/api/settings') return json({})
+    const shared = shareRoute(req.method, p, state.calls.at(-1)?.body)
+    if (shared) return shared
+    // the list over REST, for when the socket doesn't come
+    if (p === '/api/pages' && req.method === 'GET') return state.listFails ? json({ error: 'The hub is busy' }, 503) : json({ pages: state.pages })
     if (p === '/api/pages-cleaned') {
       if (req.method === 'DELETE') state.cleaned = { pages: [] }
       return req.method === 'DELETE' ? json({ ok: true }) : json(state.cleaned)
@@ -222,6 +231,7 @@ async function until(ok: () => boolean | Promise<boolean>, ms = 6000) {
 /** The app's stylesheet is in: Dioxus adds it as the app starts, so the first screen can come before it. */
 const styled = (page: Page) => page.waitForFunction(() => getComputedStyle(document.querySelector('.shell') ?? document.body).display === 'flex')
 
+const wide = (size: string) => size === '1440'
 const menuItems = (page: Page) => page.getByRole('menu').locator('.menu-item').allTextContents()
 const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {})
 // the cold-start intro has its own check (settings.ts); here it would cover the first screen
@@ -246,6 +256,9 @@ const reset = () => {
   state.cleaned = { at: Date.now(), days: 14, pages: [{ host: 'local', slug: 'old-plan', name: 'Old plan', folder: '/home/sam/code/storefront/private/plans/old-plan' }, { host: 'local', slug: 'spike', name: 'Search spike', folder: '/home/sam/code/storefront/private/plans/spike' }] }
   state.pages = pages(Date.now())
   state.hosts = hosts()
+  state.noSocket = false
+  state.listFails = false
+  resetShares()
   publishPages()
   publishOverview()
 }
@@ -656,16 +669,169 @@ try {
     await page.getByRole('button', { name: 'Back to Blueprints' }).waitFor()
     await ctx.close()
   }
+
+  // ---- sharing a blueprint: Share… from every menu, the sheet, a link for your network and for anyone ----
+  for (const [size, opts] of [['390', phone], ['1440', desktop]] as const) {
+    for (const scheme of ['light', 'dark'] as const) {
+      reset()
+      const ctx = await browser.newContext({ ...opts, colorScheme: scheme })
+      await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base })
+      const page = await ctx.newPage()
+      watch(page)
+      const label = `share ${size} ${scheme}`
+      const isWide = wide(size)
+      await page.goto(`${base}/next/blueprints${isWide ? '/local/checkout-redesign' : ''}`)
+      await styled(page)
+      // from the card's ⋯ (phone) or the tree's right click (desktop), after Open in browser
+      if (isWide) await page.locator('.tree-row', { hasText: 'Checkout redesign' }).click({ button: 'right' })
+      else await page.locator('.page-card', { hasText: 'Checkout redesign' }).getByRole('button', { name: 'More for Checkout redesign' }).click()
+      const items = await menuItems(page)
+      check(items.join('|').includes('Open in browser') && items.join('|').includes('Share…|Revoke links|Show folder|Remove'), `${label}: Share… before Revoke links (${items.join('|')})`)
+      await page.getByRole('menuitem', { name: 'Share…' }).click()
+      const sheet = page.getByRole('dialog', { name: 'Share “Checkout redesign”' })
+      await sheet.waitFor()
+      await sheet.getByText('None yet.').waitFor()
+      // the sheet has finished rising, so a forced click lands on it rather than below the window
+      await sheet.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)))
+      // no public address yet: only your network, with the way to Settings
+      const network = sheet.getByRole('radio', { name: /People on your network/ })
+      const anyone = sheet.getByRole('radio', { name: /Anyone with the link/ })
+      check((await network.getAttribute('aria-checked')) === 'true', `${label}: your network by default`)
+      check((await anyone.getAttribute('aria-disabled')) === 'true', `${label}: anyone needs an address first`)
+      check(await sheet.getByText('Set an address for shared links in').isVisible(), `${label}: says where to set one`)
+      check((await sheet.getByRole('link', { name: 'Settings › Blueprints' }).getAttribute('href')) === '/next/settings#blueprints', `${label}: the link to Settings`)
+      await anyone.click({ force: true })
+      check((await network.getAttribute('aria-checked')) === 'true', `${label}: a choice that's off can't be picked`)
+      const days = sheet.getByRole('radiogroup', { name: 'Expires after' })
+      check((await days.getByRole('radio').allTextContents()).join(',') === '1 day,7 days,30 days', `${label}: the three lengths`)
+      check((await days.getByRole('radio', { name: '7 days' }).getAttribute('aria-checked')) === 'true', `${label}: 7 days unless picked`)
+      await days.getByRole('radio', { name: '30 days' }).click()
+      await sheet.getByRole('button', { name: 'Create link' }).click()
+      const url = sheet.getByTestId('share-url')
+      await url.waitFor()
+      check((await url.textContent()) === `${base}/share/tok1/`, `${label}: a network link on this hub's address (${await url.textContent()})`)
+      check(JSON.stringify(called('POST', '/api/pages/local/checkout-redesign/shares').at(-1)?.body) === JSON.stringify({ public: false, days: 30 }), `${label}: asked for 30 days on the network`)
+      check(await sheet.getByText("Copy it now: the hub keeps only a fingerprint of it, so it can't show it again.").isVisible(), `${label}: shown once`)
+      check(await until(async () => (await sheet.getByRole('button', { name: 'Copied' }).count()) === 1), `${label}: copied as it's made`)
+      check((await page.evaluate(() => navigator.clipboard.readText())) === `${base}/share/tok1/`, `${label}: the link is on the clipboard`)
+      const live = sheet.locator('.share-link-row')
+      await live.first().waitFor()
+      check((await live.locator('.share-link-title').textContent()) === 'Your network', `${label}: the live link's audience`)
+      check(/^ends in 30 days · 0 opens · made [A-Z][a-z]{2} \d+$/.test((await live.locator('.share-link-meta').textContent()) ?? ''), `${label}: its line (${await live.locator('.share-link-meta').textContent()})`)
+      await page.screenshot({ path: path.join(shots, `share-${size}-${scheme}.png`) })
+      await layout(page, label)
+      // revoked from the sheet
+      await live.getByRole('button', { name: 'Revoke' }).click()
+      await page.locator('.toast', { hasText: 'Link revoked' }).waitFor()
+      check(await until(async () => (await sheet.getByText('None yet.').count()) === 1), `${label}: the revoked link leaves the list`)
+      check(!shares.links.length, `${label}: revoked on the hub`)
+      await sheet.getByRole('button', { name: 'Done' }).click()
+      await sheet.waitFor({ state: 'detached' })
+
+      // with a public address: anyone with the link, from the viewer's own ⋯
+      shares.address = 'https://share.example.com'
+      if (!isWide) {
+        await page.locator('.page-card', { hasText: 'Checkout redesign' }).click()
+        await page.locator('iframe.page-frame').waitFor()
+        await page.getByRole('button', { name: 'More', exact: true }).click()
+        const more = await menuItems(page)
+        check(more.at(-2) === 'Share…' && more.at(-1) === 'Open studio', `${label}: the viewer's ⋯ shares, before the machine (${more.join('|')})`)
+      } else {
+        await page.getByRole('button', { name: 'More for Checkout redesign' }).click()
+        check((await menuItems(page))[0] === 'Share…', `${label}: Share… first in the viewer's ⋯ (${await menuItems(page)})`)
+      }
+      await page.getByRole('menuitem', { name: 'Share…' }).click()
+      await sheet.waitFor()
+      await sheet.getByText('None yet.').waitFor()
+      check(await sheet.getByText('Opens at share.example.com, through the proxy you set up.').isVisible(), `${label}: where links for anyone open`)
+      await anyone.click()
+      check((await anyone.getAttribute('aria-checked')) === 'true', `${label}: anyone picked`)
+      check(await sheet.getByText("Every file in the blueprint's folder opens with the link, research notes too.").isVisible(), `${label}: the folder note`)
+      // the arrows move between the two
+      await anyone.focus()
+      await page.keyboard.press('ArrowUp')
+      check((await network.getAttribute('aria-checked')) === 'true', `${label}: arrows pick`)
+      await page.keyboard.press('ArrowDown')
+      await sheet.getByRole('button', { name: 'Create link' }).click()
+      await url.waitFor()
+      check((await url.textContent()) === 'https://share.example.com/share/tok2/', `${label}: a link for anyone on the public address (${await url.textContent()})`)
+      check(called('POST', '/api/pages/local/checkout-redesign/shares').at(-1)?.body?.public === true && called('POST', '/api/pages/local/checkout-redesign/shares').at(-1)?.body?.days === 7, `${label}: asked for anyone, 7 days`)
+      await sheet.locator('.share-link-row', { hasText: 'Anyone with the link' }).waitFor()
+      await page.screenshot({ path: path.join(shots, `share-public-${size}-${scheme}.png`) })
+      await layout(page, `${label} public`)
+      await sheet.getByRole('button', { name: 'Copied' }).click()
+      await page.locator('.toast', { hasText: 'Copied the link' }).waitFor()
+      await ctx.close()
+    }
+  }
+
+  // ---- Share… on a session's side view, and the list without the socket ----
+  // (narrower than 1180 px, so the button opens the side view; the side panel's tab lists the same rows)
+  {
+    reset()
+    const ctx = await browser.newContext({ ...desktop, viewport: { width: 1100, height: 900 }, colorScheme: 'light' })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.goto(`${base}/next/m/local/p/11`)
+    await styled(page)
+    await page.getByRole('button', { name: 'Blueprints: 2, changed' }).click()
+    const side = page.getByRole('complementary', { name: 'Blueprints' })
+    await side.locator('.side-row', { hasText: 'Checkout redesign' }).click({ button: 'right' })
+    check((await menuItems(page)).includes('Share…'), `side: the row's menu shares (${await menuItems(page)})`)
+    await page.keyboard.press('Escape')
+    await side.locator('.side-row', { hasText: 'Checkout redesign' }).click()
+    await side.locator('iframe.page-frame').waitFor()
+    await side.getByRole('button', { name: 'More for Checkout redesign' }).click()
+    check((await menuItems(page))[0] === 'Share…', `side: the side view's ⋯ shares (${await menuItems(page)})`)
+    await page.getByRole('menuitem', { name: 'Share…' }).click()
+    await page.getByRole('dialog', { name: 'Share “Checkout redesign”' }).getByText('None yet.').waitFor()
+    // the Settings link closes the sheet and opens Blueprints in Settings
+    // inside the radio that's off, as in the web app, so Playwright counts it as disabled
+    await page.getByRole('link', { name: 'Settings › Blueprints' }).click({ force: true })
+    check(await until(() => /\/next\/settings#blueprints$/.test(page.url())), `side: to Settings › Blueprints (${page.url()})`)
+    await page.getByRole('heading', { name: 'Settings', exact: true }).waitFor()
+    check(await until(async () => !(await page.getByRole('dialog', { name: /^Share/ }).count())), 'side: the sheet closed on the way to Settings')
+    await ctx.close()
+  }
+  for (const [size, opts] of [['390', phone], ['1440', desktop]] as const) {
+    reset()
+    state.noSocket = true
+    state.listFails = true
+    const ctx = await browser.newContext({ ...opts, colorScheme: 'dark' })
+    const page = await ctx.newPage()
+    watch(page)
+    const label = `no socket ${size}`
+    await page.goto(`${base}/next/blueprints`)
+    await styled(page)
+    // the stream never comes: the list is fetched instead, and says why when that fails too
+    const alert = page.locator('.pages-error')
+    check(await until(async () => (await alert.count()) === 1, 8000), `${label}: an error line instead of "Loading" for good`)
+    check((await alert.textContent()) === 'The hub is busy', `${label}: the hub's words (${await alert.textContent()})`)
+    check((await alert.getAttribute('role')) === 'alert', `${label}: read out`)
+    await page.screenshot({ path: path.join(shots, `pages-no-socket-error-${size}-dark.png`) })
+    state.listFails = false
+    await page.reload()
+    await styled(page)
+    const row = wide(size) ? page.locator('.tree-row', { hasText: 'Checkout redesign' }) : page.locator('.page-card', { hasText: 'Checkout redesign' })
+    check(await until(async () => (await row.count()) === 1, 8000), `${label}: the list over REST`)
+    check(called('GET', '/api/pages').length >= 2, `${label}: asked GET /api/pages`)
+    check(!(await alert.count()), `${label}: no error line once it came`)
+    if (wide(size)) check(await until(async () => /\/next\/blueprints\/local\//.test(page.url())), `${label}: the desktop opens a page from it (${page.url()})`)
+    await page.screenshot({ path: path.join(shots, `pages-no-socket-${size}-dark.png`) })
+    await layout(page, label)
+    await ctx.close()
+  }
 } finally {
   await browser.close()
   server.stop(true)
 }
 
-// a site without a matrix answers its HEAD with a 404, which the browser logs
-const unexpected = errors.filter((e) => !/WebSocket|status of 404/.test(e))
+// a site without a matrix answers its HEAD with a 404, which the browser logs, and so are the
+// refused socket and the list that fails on purpose
+const unexpected = errors.filter((e) => !/WebSocket|status of (404|502|503)/.test(e))
 check(!unexpected.length, `errors in the page: ${unexpected.join(' | ')}`)
 if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: Blueprints at 390x844 and 1440x900 in light and dark, the sandboxed frame and its theme, live progress, changed marks, menus by ⋯, right click and long press, parts, notes, devices, revoke, remove with Undo, add, the Folder sheet, and the pages on a machine, a session (side panel and sheet) and a reply; screenshots in ${shots}`)
+console.log(`ok: Blueprints at 390x844 and 1440x900 in light and dark, the sandboxed frame and its theme, live progress, changed marks, menus by ⋯, right click and long press, parts, notes, devices, revoke, remove with Undo, add, the Folder sheet, and the pages on a machine, a session (side panel and sheet) and a reply, sharing a blueprint, and the list without the socket; screenshots in ${shots}`)

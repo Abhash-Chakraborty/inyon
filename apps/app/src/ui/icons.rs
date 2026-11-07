@@ -129,6 +129,9 @@ pub enum Icon {
     ShieldAlert,
     Coins,
     LayoutPanelLeft,
+    // sharing a blueprint
+    Share2,
+    Users,
 }
 
 #[component]
@@ -730,6 +733,19 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     rect { width: "7", height: "18", x: "3", y: "3", rx: "1" }
                     rect { width: "7", height: "7", x: "14", y: "3", rx: "1" }
                     rect { width: "7", height: "7", x: "14", y: "14", rx: "1" }
+                },
+                Icon::Share2 => rsx! {
+                    circle { cx: "18", cy: "5", r: "3" }
+                    circle { cx: "6", cy: "12", r: "3" }
+                    circle { cx: "18", cy: "19", r: "3" }
+                    line { x1: "8.59", x2: "15.42", y1: "13.51", y2: "17.49" }
+                    line { x1: "15.41", x2: "8.59", y1: "6.51", y2: "10.49" }
+                },
+                Icon::Users => rsx! {
+                    path { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }
+                    path { d: "M16 3.128a4 4 0 0 1 0 7.744" }
+                    path { d: "M22 21v-2a4 4 0 0 0-3-3.87" }
+                    circle { cx: "9", cy: "7", r: "4" }
                 },
                 Icon::Star => rsx! {
                     path { d: "M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" }

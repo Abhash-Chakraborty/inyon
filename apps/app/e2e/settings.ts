@@ -15,6 +15,7 @@ import path from 'node:path'
 import { chromium, devices, type BrowserContext, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
 import { overview } from './demo.ts'
+import { passed, resetShares, shareRoute, shares } from './share-hub.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -87,6 +88,7 @@ const state = {
   update: { current: VERSION, latest: '0.25.1', canUpdate: true, running: false } as Entry,
   temp: temp(Date.now()),
   calls: [] as { method: string; path: string; body?: any }[],
+  noShares: false,
 }
 const called = (method: string, p: string) => state.calls.filter((c) => c.method === method && c.path === p)
 
@@ -116,6 +118,19 @@ function companionPane(kind: string) {
   }
 }
 
+const BLUEPRINTS = [
+  { host: 'local', slug: 'checkout-redesign', name: 'Checkout redesign', project: '/home/sam/code/storefront', by: 'claude', added: Date.now() - 26 * HOUR, folder: '/home/sam/code/storefront/private/plans/checkout-redesign' },
+  { host: 'local', slug: 'passkeys', name: 'Passkeys rollout', project: '/home/sam/code/accounts', by: 'codex', added: Date.now() - 3 * HOUR, folder: '/home/sam/code/accounts/private/plans/passkeys' },
+]
+/** Two live links, as a hub with a few shared blueprints lists them. */
+function liveLinks() {
+  const now = Date.now()
+  shares.links = [
+    { id: 's1', host: 'local', slug: 'checkout-redesign', public: false, created: now - DAY, expires: now + 6 * DAY + HOUR, opens: 1 },
+    { id: 's2', host: 'local', slug: 'passkeys', public: true, created: now - 2 * HOUR, expires: now + 5 * HOUR + 10 * 60_000, opens: 3 },
+  ]
+}
+
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 const server = Bun.serve({
@@ -132,6 +147,10 @@ const server = Bun.serve({
       body = req.method === 'GET' || req.method === 'DELETE' ? undefined : await req.json().catch(() => undefined)
       state.calls.push({ method: req.method, path: p + url.search, body })
     }
+    // a hub from before shared links has none of their routes
+    if (state.noShares && /^\/api\/(shares|share-address)/.test(p)) return json({ error: 'Not found' }, 404)
+    const shared = shareRoute(req.method, p, body)
+    if (shared) return shared
     if (p === '/api/settings') {
       if (req.method === 'PUT') {
         if (state.settingsFail) return json({ error: 'The disk is full' }, 500)
@@ -290,6 +309,8 @@ const server = Bun.serve({
         ws.data.subs.add('overview')
         ws.send(frame())
       }
+      // the blueprints shared links name
+      if (msg.t === 'sub' && msg.stream === 'pages') ws.send(JSON.stringify({ t: 'snapshot', stream: 'pages', epoch: 1, seq: 1, rows: { pages: BLUEPRINTS } }))
       if (msg.t === 'ping') ws.send(JSON.stringify({ t: 'pong' }))
     },
   },
@@ -888,6 +909,156 @@ try {
   }
 
   // ---- the web app's screens with the same data, to compare ----
+  // ---- Settings › Blueprints: the address for shared links and every live link ----
+  for (const [size, opts] of [['390', phone], ['1440', desktop]] as const) {
+    for (const scheme of ['light', 'dark'] as const) {
+      resetShares()
+      liveLinks()
+      const ctx = await context({ ...opts, colorScheme: scheme })
+      await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base })
+      const page = await ctx.newPage()
+      watch(page)
+      const label = `shared links ${size} ${scheme}`
+      await page.goto(`${base}/next/settings#blueprints`)
+      await styled(page)
+      const address = page.locator('#share-address')
+      await address.waitFor()
+      check((await address.locator('.set-label').textContent()) === 'Address for shared links', `${label}: the address row`)
+      check((await address.locator('.set-hint').textContent()) === 'Off. Links stay on your network until you set one up.', `${label}: off until set up (${await address.locator('.set-hint').textContent()})`)
+      check(!(await address.getByRole('button', { name: 'Check' }).count()) && !(await address.getByRole('button', { name: 'Turn off' }).count()), `${label}: only Set up while it's off`)
+      const links = page.locator('.set-row', { hasText: 'Live links to your blueprints, on every machine.' })
+      await links.waitFor()
+      const rows = links.locator('.share-link-row')
+      check((await rows.locator('.share-link-title').allTextContents()).join('|') === 'Checkout redesign|Passkeys rollout', `${label}: each link names its blueprint (${await rows.locator('.share-link-title').allTextContents()})`)
+      check(/^Your network · ends in 6 days · 1 open · made [A-Z][a-z]{2} \d+$/.test((await rows.nth(0).locator('.share-link-meta').textContent()) ?? ''), `${label}: a network link's line (${await rows.nth(0).locator('.share-link-meta').textContent()})`)
+      check(/^Anyone with the link · ends in 5 h · 3 opens · made /.test((await rows.nth(1).locator('.share-link-meta').textContent()) ?? ''), `${label}: a public link's line (${await rows.nth(1).locator('.share-link-meta').textContent()})`)
+      await address.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: path.join(shots, `shared-links-${size}-${scheme}.png`) })
+      await layout(page, label)
+
+      // set up: a main domain is advised against, a subdomain gets its record and proxy config
+      await address.getByRole('button', { name: 'Set up' }).click()
+      const sheet = page.getByRole('dialog', { name: 'Address for shared links' })
+      await sheet.waitFor()
+      for (const t of ['Pick a subdomain', 'Point it at your proxy', 'Forward only /share/ to the hub', 'Save and check']) check(await sheet.getByRole('heading', { name: t, exact: true }).isVisible(), `${label}: step ${t}`)
+      const field = sheet.getByRole('textbox', { name: 'Name for shared links' })
+      check((await field.inputValue()) === '', `${label}: an empty name to start`)
+      const save = sheet.locator('.sheet-foot .button-primary')
+      check((await save.textContent()) === 'Check' && (await save.isDisabled()), `${label}: nothing to save or check yet (${await save.textContent()})`)
+      check((await sheet.locator('.share-code-text').textContent())?.startsWith('share.example.com {'), `${label}: the example until a name is typed`)
+      await field.fill('example.com')
+      check(/main domain.*share\.example\.com/.test((await sheet.getByRole('status').filter({ hasText: 'main domain' }).textContent()) ?? ''), `${label}: a main domain is advised against`)
+      await field.fill('share{{.example.com')
+      check((await sheet.getByRole('status').filter({ hasText: 'letters, digits' }).count()) === 1 && (await save.isDisabled()), `${label}: a name no certificate fits isn't saved`)
+      await field.fill('share.example.com')
+      check(!(await sheet.locator('.share-fine.warn').count()), `${label}: no advice for a subdomain`)
+      check((await save.textContent()) === 'Save and check', `${label}: a new name is saved first`)
+      check((await sheet.locator('tbody td').allTextContents()).join('|') === "A|share|your proxy's public IP", `${label}: the DNS record (${await sheet.locator('tbody td').allTextContents()})`)
+      check((await sheet.locator('.share-code-text').textContent())?.includes('reverse_proxy 127.0.0.1:4777'), `${label}: Caddy forwards to the hub`)
+      await sheet.getByRole('radiogroup', { name: 'Proxy' }).getByRole('radio', { name: 'Traefik' }).click()
+      check((await sheet.locator('.share-code-text').textContent())?.includes('Host(`share.example.com`) && PathPrefix(`/share/`)'), `${label}: Traefik's rule`)
+      await sheet.getByRole('radiogroup', { name: 'Proxy' }).getByRole('radio', { name: 'nginx' }).click()
+      check((await sheet.locator('.share-code-text').textContent())?.includes('proxy_set_header Host $host;'), `${label}: nginx keeps the Host header`)
+      await sheet.getByRole('button', { name: 'Copy the nginx example' }).click()
+      check(await until(async () => (await page.evaluate(() => navigator.clipboard.readText())).includes('server_name share.example.com;')), `${label}: the example copied`)
+      // saved, then checked: every line passes
+      await save.click()
+      const result = sheet.getByTestId('share-check')
+      await result.waitFor()
+      check((await result.locator('.share-check-title').allTextContents()).join('|') === 'share.example.com points at 203.0.113.4|Links reach this hub|Nothing else answers there', `${label}: the check's lines (${await result.locator('.share-check-title').allTextContents()})`)
+      check((await result.getByRole('img', { name: 'Done' }).count()) === 3, `${label}: all done`)
+      check(shares.calls.includes('PUT address https://share.example.com') && shares.calls.at(-1) === 'check', `${label}: saved, then checked (${shares.calls.join(', ')})`)
+      await toast(page, 'Shared links work').waitFor()
+      check(await sheet.getByRole('button', { name: 'Done' }).isVisible(), `${label}: Done once it works`)
+      check(await sheet.getByRole('button', { name: 'Check', exact: true }).isVisible(), `${label}: saved: the button only checks now`)
+      await page.screenshot({ path: path.join(shots, `share-setup-${size}-${scheme}.png`) })
+      await layout(page, `${label} setup`)
+      await sheet.getByRole('button', { name: 'Done' }).click()
+      await sheet.waitFor({ state: 'detached' })
+      check((await address.locator('.set-hint').textContent()) === 'share.example.com · Checked: links reach this hub.', `${label}: the address and its check (${await address.locator('.set-hint').textContent()})`)
+      check((await address.getByTestId('share-check').count()) === 1, `${label}: the result under it`)
+      check(await address.getByRole('button', { name: 'Change' }).isVisible(), `${label}: Change once set`)
+
+      // a check that finds the proxy answering for something else
+      shares.check = (a) => ({ ...passed(a), reach: { ok: false, fault: 'not-hub', status: 421 }, wall: { ok: false, open: [], unsure: [] } })
+      await address.getByRole('button', { name: 'Check', exact: true }).click()
+      await address.getByText('share.example.com answered 421, but not from this hub').waitFor()
+      check((await address.getByRole('img', { name: 'To fix' }).count()) === 1, `${label}: the line to fix is marked`)
+      check((await address.locator('.set-hint').textContent())?.endsWith('The last check found something to fix.'), `${label}: says so`)
+      await address.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: path.join(shots, `shared-links-check-${size}-${scheme}.png`) })
+      // Change opens the sheet on the saved name; a refused save says why
+      await address.getByRole('button', { name: 'Change' }).click()
+      await sheet.waitFor()
+      check((await field.inputValue()) === 'share.example.com', `${label}: the saved name in the field`)
+      await field.fill('hub.test')
+      shares.refuse = "That's the address you're using Inyon at."
+      await save.click()
+      await sheet.getByRole('alert').filter({ hasText: "That's the address you're using Inyon at." }).waitFor()
+      await sheet.getByRole('button', { name: 'Close' }).first().click()
+      await sheet.waitFor({ state: 'detached' })
+
+      // revoke one, then the rest
+      await rows.nth(0).getByRole('button', { name: 'Revoke' }).click()
+      await toast(page, 'Link revoked').waitFor()
+      check(await toast(page, 'Link revoked').getByText('The link to “Checkout redesign” stops working now.').isVisible(), `${label}: names the blueprint`)
+      check(await until(async () => (await rows.count()) === 1), `${label}: one link left`)
+      await links.getByRole('button', { name: 'Revoke all' }).click()
+      const ask = page.getByRole('dialog', { name: 'Revoke the shared link?' })
+      await ask.waitFor()
+      await ask.getByRole('button', { name: 'Revoke all' }).click()
+      await toast(page, 'Shared links revoked').waitFor()
+      await page.getByText('None live. Share a blueprint from its ⋯ menu.').waitFor()
+      check(!shares.links.length && shares.calls.includes('DELETE all'), `${label}: every link revoked on the hub`)
+
+      // turned off, after asking
+      await address.getByRole('button', { name: 'Turn off' }).click()
+      const off = page.getByRole('dialog', { name: 'Turn off the public address?' })
+      await off.waitFor()
+      await off.getByRole('button', { name: 'Turn off' }).click()
+      await toast(page, 'Public address off').waitFor()
+      check(await until(async () => (await address.locator('.set-hint').textContent()) === 'Off. Links stay on your network until you set one up.'), `${label}: off again`)
+      check(shares.address === null && !(await address.getByTestId('share-check').count()), `${label}: the address cleared and its check gone`)
+      await layout(page, `${label} after`)
+      await ctx.close()
+    }
+  }
+
+  // ---- an address INYON_SHARE_ORIGIN sets, and a hub from before shared links ----
+  {
+    resetShares()
+    Object.assign(shares, { address: 'https://share.example.com', fromEnv: true })
+    const ctx = await context({ ...desktop, colorScheme: 'light' })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.goto(`${base}/next/settings#blueprints`)
+    await styled(page)
+    const address = page.locator('#share-address')
+    await address.waitFor()
+    check((await address.locator('.set-hint').textContent()) === 'share.example.com · Links for anyone open here. Set by INYON_SHARE_ORIGIN.', `env: says who set it (${await address.locator('.set-hint').textContent()})`)
+    check(!(await address.getByRole('button', { name: 'Turn off' }).count()), 'env: no Turn off')
+    await address.getByRole('button', { name: 'Guide' }).click()
+    const sheet = page.getByRole('dialog', { name: 'Address for shared links' })
+    await sheet.waitFor()
+    check((await sheet.getByRole('textbox', { name: 'Name for shared links' }).getAttribute('readonly')) !== null, 'env: the name is read-only')
+    check(await sheet.getByText('Set by INYON_SHARE_ORIGIN on the hub.').isVisible(), 'env: and says why')
+    check(await sheet.getByRole('heading', { name: 'Check it' }).isVisible(), 'env: the last step only checks')
+    await sheet.getByRole('button', { name: 'Check', exact: true }).click()
+    await sheet.getByTestId('share-check').waitFor()
+    check(!shares.calls.some((c) => c.startsWith('PUT')), 'env: nothing saved')
+    await ctx.close()
+
+    state.noShares = true
+    const old = await context({ ...phone, colorScheme: 'dark' })
+    const p2 = await old.newPage()
+    watch(p2)
+    await p2.goto(`${base}/next/settings#blueprints`)
+    await styled(p2)
+    await p2.getByText("This hub can't share blueprints yet. Update it first.").waitFor()
+    await old.close()
+    state.noShares = false
+  }
+
   if (withReact) {
     for (const [size, opts] of [['390', phone], ['1440', desktop]] as const) {
       for (const scheme of ['light', 'dark'] as const) {
@@ -918,11 +1089,11 @@ try {
 }
 
 // a socket the test closes on purpose is logged by the browser
-// the pairing code's 403 asks for a fresh sign-in, on purpose
-const unexpected = errors.filter((e) => !/WebSocket|status of 404|status of 403|status of 500|status of 503/.test(e))
+// the pairing code's 403 asks for a fresh sign-in, on purpose, and so does a refused share address's 400
+const unexpected = errors.filter((e) => !/WebSocket|status of 400|status of 404|status of 403|status of 500|status of 503/.test(e))
 check(!unexpected.length, `errors in the page: ${unexpected.join(' | ')}`)
 if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: Settings at 390x844 and 1440x900 in light and dark, app and hub settings, custom agents, the companion and pairing an app, the password, the hub update and "Inyon was updated", notices and Web Push, ending a session, Temp files and the intro; screenshots in ${shots}`)
+console.log(`ok: Settings at 390x844 and 1440x900 in light and dark, app and hub settings, custom agents, the companion and pairing an app, the password, the hub update and "Inyon was updated", notices and Web Push, shared links and their address, ending a session, Temp files and the intro; screenshots in ${shots}`)

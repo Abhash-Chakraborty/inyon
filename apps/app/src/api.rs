@@ -1059,6 +1059,63 @@ pub async fn remove_page(host: &str, slug: &str) -> Result<(), ApiError> {
     request("DELETE", &page_path(host, Some(slug)), None).await.map(drop)
 }
 
+// ---------- shared links to a blueprint (hubs from 0.25.4) ----------
+
+use crate::shares::{MadeLink, ShareCheck, ShareList};
+
+#[derive(Serialize)]
+struct ShareBody {
+    public: bool,
+    days: u32,
+}
+
+#[derive(Serialize)]
+struct AddressBody<'a> {
+    address: &'a str,
+}
+
+/// The page's live shared links, and the hub's public address for them.
+pub async fn page_shares(host: &str, slug: &str) -> Result<ShareList, ApiError> {
+    parse(&request("GET", &format!("{}/shares", page_path(host, Some(slug))), None).await?)
+}
+
+/// A new shared link; its `url` is shown this once.
+pub async fn share_page(host: &str, slug: &str, public: bool, days: u32) -> Result<MadeLink, ApiError> {
+    parse(&request("POST", &format!("{}/shares", page_path(host, Some(slug))), json(&ShareBody { public, days })).await?)
+}
+
+pub async fn unshare_page(host: &str, slug: &str, id: &str) -> Result<(), ApiError> {
+    request("DELETE", &format!("{}/shares/{}", page_path(host, Some(slug)), inyon_chat_core::js::encode_uri_component(id)), None).await.map(drop)
+}
+
+/// Every live shared link on this hub.
+pub async fn shares() -> Result<ShareList, ApiError> {
+    parse(&request("GET", "/api/shares", None).await?)
+}
+
+pub async fn revoke_share(id: &str) -> Result<(), ApiError> {
+    request("DELETE", &format!("/api/shares/{}", inyon_chat_core::js::encode_uri_component(id)), None).await.map(drop)
+}
+
+pub async fn revoke_all_shares() -> Result<(), ApiError> {
+    request("DELETE", "/api/shares", None).await.map(drop)
+}
+
+/// The public address for shared links ("" clears it).
+pub async fn set_share_address(address: &str) -> Result<ShareList, ApiError> {
+    parse(&request("PUT", "/api/share-address", json(&AddressBody { address })).await?)
+}
+
+/// Asks the hub to check its public address: the name, a request reaching it, nothing else let through.
+pub async fn check_share_address() -> Result<ShareCheck, ApiError> {
+    parse(&request("POST", "/api/share-address/check", None).await?)
+}
+
+/// Every page, as `GET /api/pages` lists them: the list when the pages stream doesn't come.
+pub async fn pages() -> Result<Vec<inyon_protocol::PageEntry>, ApiError> {
+    parse::<inyon_protocol::PageList>(&request("GET", "/api/pages", None).await?).map(|l| l.pages)
+}
+
 /// Whether a file of a page's site is there: a HEAD request without the app's cookie, as the page's
 /// own frame would ask.
 #[cfg(target_arch = "wasm32")]
@@ -1312,6 +1369,15 @@ mod tests {
         assert_eq!(back["newer"]["x"], 1);
         assert_eq!(back["autoResume"], true);
         assert!(back.get("customAgents").is_none());
+    }
+
+    #[test]
+    fn share_routes_and_bodies_match_the_web_app() {
+        assert_eq!(format!("{}/shares", page_path("hub:h1/box", Some("plan"))), "/api/pages/hub%3Ah1%2Fbox/plan/shares");
+        assert_eq!(serde_json::to_string(&ShareBody { public: true, days: 7 }).unwrap(), r#"{"public":true,"days":7}"#);
+        assert_eq!(serde_json::to_string(&AddressBody { address: "" }).unwrap(), r#"{"address":""}"#);
+        let l: inyon_protocol::PageList = serde_json::from_str(r#"{"pages":[]}"#).unwrap();
+        assert!(l.pages.is_empty());
     }
 
     #[test]
