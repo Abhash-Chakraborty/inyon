@@ -12,6 +12,7 @@ use super::organize::{pick_click, row_items, wakes_at_here, ORG, SELECTION};
 use crate::format::{self, Clock};
 use crate::model::{self, AgentPane, Filter, Shown};
 use crate::organize::{key_of, note_line, Key};
+use crate::route::Route;
 use crate::state::Hub;
 use crate::{api, platform};
 use inyon_chat_core::organize::{mark_for, place_of, shown_title, sort_panes, Place};
@@ -74,9 +75,9 @@ pub fn Overview() -> Element {
         div { class: "scroll",
             header { class: "topbar",
                 div { class: "topbar-row",
-                    span { class: "phone-only", Logo { connecting: !h.connected, target: true } }
+                    span { class: "phone-only", Logo { connecting: h.offline(), target: true } }
                     span { class: "topbar-counts mono wide-only", {model::counts_line(&h.hosts, panes.len())} }
-                    if !h.connected {
+                    if h.offline() {
                         span { class: "reconnecting",
                             Glyph { icon: Icon::WifiOff, size: 14 }
                             "Reconnecting"
@@ -105,7 +106,7 @@ pub fn Overview() -> Element {
                             div { class: "empty-icon", Logo { class: "mark-drawn logo-28" } }
                             p { class: "empty-title", "No machines yet" }
                             p { class: "empty-text", "Pair a machine or add one over SSH to see the coding agents running in tmux on it." }
-                            a { class: "button button-primary button-md press empty-action", href: "/next/machines?add=1", "Add a machine →" }
+                            a { class: "button button-primary button-md press empty-action", href: Route::Machines { add: true }.href(), "Add a machine →" }
                         }
                     } else {
                         div {
@@ -224,7 +225,7 @@ pub fn Overview() -> Element {
                         section {
                             div { class: "section-label",
                                 h2 { "Machines" }
-                                a { class: "section-link", href: "/next/machines", "Manage →" }
+                                a { class: "section-link", href: Route::Machines { add: false }.href(), "Manage →" }
                             }
                             {machines(&h.hosts, clock)}
                         }
@@ -253,6 +254,9 @@ fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
     let items = r.map(|r| row_items(r, &org, &sel, clock, cfg!(target_arch = "wasm32"))).unwrap_or_default();
     let press = menu::long_press(items.clone());
     let Some(r) = r else { return rsx! {} };
+    // a question from the copy kept in the browser may be long answered, and a tap on it would
+    // answer whatever asks now: answers wait for the hub's own overview
+    let live = h.confirmed();
     let (p1, p2, p3, p4) = (press.clone(), press.clone(), press.clone(), press);
     let a = r.agent();
     let shown = Shown::of(a, r.host);
@@ -324,7 +328,7 @@ fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
             }
             div { class: "card-line", {model::card_line(r, clock)} }
             div { class: "card-foot mono",
-                if waiting && r.host.status == HostStatus::Online {
+                if waiting && live && r.host.status == HostStatus::Online {
                     Answers { host: r.host.config.id.clone(), pane: r.pane.id.clone(), href: href.clone(), options }
                 } else {
                     span { class: "truncate", {model::model_line(a)} }

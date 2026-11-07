@@ -330,7 +330,7 @@ pub fn SettingsPage() -> Element {
         div { class: "scroll",
             header { class: "topbar",
                 div { class: "topbar-row",
-                    span { class: "phone-only", Logo { connecting: !h.connected, target: true } }
+                    span { class: "phone-only", Logo { connecting: h.offline(), target: true } }
                     h1 { class: "topbar-title", "Settings" }
                 }
             }
@@ -1304,7 +1304,10 @@ fn Account() -> Element {
                     // signed out only once the hub has ended the sign-in, or a reload would bring it back
                     spawn(async move {
                         match api::logout().await {
-                            Ok(()) => auth.set(Auth::SignedOut { setup: false, code: false }),
+                            Ok(()) => {
+                                super::signed_out();
+                                auth.set(Auth::SignedOut { setup: false, code: false })
+                            }
                             Err(e) => toast::toast("Could not sign out", Some(e.message), ToastTone::Error),
                         }
                     });

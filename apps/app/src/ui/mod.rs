@@ -71,18 +71,38 @@ fn fonts() -> String {
 }
 
 async fn check(mut auth: Signal<Auth>) {
-    auth.set(match api::session().await {
+    let next = match api::session().await {
         Ok(s) if s.authed => Auth::SignedIn,
-        Ok(s) => Auth::SignedOut { setup: s.setup, code: s.setup_code },
-        // the hub didn't answer: the form, whose submit says why it can't go on
+        Ok(s) => {
+            signed_out();
+            Auth::SignedOut { setup: s.setup, code: s.setup_code }
+        }
+        // the hub didn't answer: the app drawn from the browser's copy stays, saying it's
+        // reconnecting (the socket asks again once it's up); otherwise the form, whose submit says
+        // why it can't go on
+        Err(_) if *auth.peek() == Auth::SignedIn => Auth::SignedIn,
         Err(_) => Auth::SignedOut { setup: false, code: false },
-    });
+    };
+    // already drawn from the kept copy: a confirmed sign-in changes nothing on screen
+    if *auth.peek() != next {
+        auth.set(next);
+    }
+}
+
+/// Signed out: the copies kept in this browser go with the sign-in.
+pub fn signed_out() {
+    crate::snapshot::clear();
 }
 
 #[component]
 pub fn App() -> Element {
-    let auth = use_signal(|| Auth::Checking);
-    use_hook(move || spawn(check(auth)));
+    // with a copy of the last overview to show, the app draws it before the hub confirms the
+    // sign-in; a session that ran out turns into the sign-in form a moment later
+    let auth = use_signal(|| if crate::snapshot::overview().is_some() { Auth::SignedIn } else { Auth::Checking });
+    use_hook(move || {
+        crate::snapshot::install();
+        spawn(check(auth))
+    });
     // the intro once per tab session, over the page as it loads; the mark lands on the header's
     let intro = use_hook(intro::due);
     rsx! {
@@ -90,7 +110,10 @@ pub fn App() -> Element {
         document::Link { rel: "preload", href: GEIST, r#as: "font", r#type: "font/woff2", crossorigin: "anonymous" }
         style { {fonts()} }
         match auth() {
-            Auth::Checking => rsx! {},
+            // the Overview's shape, where it lands once the sign-in check answers
+            Auth::Checking => rsx! {
+                div { class: "opening", kit::Waiting { label: "Opening Inyon" } }
+            },
             Auth::SignedOut { setup, code } => rsx! {
                 login::Login { setup, needs_code: code, on_done: move |_| { spawn(check(auth)); } }
             },
@@ -106,7 +129,8 @@ pub fn App() -> Element {
 /// route.
 #[component]
 fn Connected(auth: Signal<Auth>) -> Element {
-    let mut hub = use_context_provider(|| Signal::new(Hub::default()));
+    // the machines as this browser last saw them paint first; the hub's overview replaces them
+    let mut hub = use_context_provider(|| Signal::new(Hub::kept(crate::snapshot::overview())));
     let mut chats = use_context_provider(|| Signal::new(Chats::default()));
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "phone")), allow(unused_mut, unused_variables))]
     let mut here = use_context_provider(|| Signal::new(route::current()));
@@ -129,8 +153,20 @@ fn Connected(auth: Signal<Auth>) -> Element {
         state::reset_feed();
         pages::PAGES.write().pages = None;
         organize::reset();
+        if hub.peek().stale {
+            if let Some(org) = crate::snapshot::organize() {
+                organize::kept(org);
+            }
+        }
         let (outbox, inbox) = socket::channel();
         let out = outbox.clone();
+        // a first connection that neither opens nor fails for a while says it's reconnecting
+        spawn(async move {
+            platform::sleep(SETTLE_MS).await;
+            if !hub.peek().settled {
+                hub.write().settled = true;
+            }
+        });
         spawn(socket::run(inbox, move |ev| match ev {
             socket::Event::Up => {
                 connect::record_up();
@@ -146,16 +182,24 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 for sub in chats.peek().subs() {
                     out.send(state::wire2(&sub));
                 }
+                // earlier messages asked for while no socket was open never went; each chat
+                // starts over from its snapshot anyway
+                if chats.peek().map.values().any(|e| e.loading_more) {
+                    for e in chats.write().map.values_mut() {
+                        e.loading_more = false;
+                    }
+                }
             }
             socket::Event::Down(why) => {
                 connect::record_down(&why);
-                if hub.peek().connected {
+                if hub.peek().connected || !hub.peek().settled {
                     hub.write().set_connected(false);
                 }
                 // the hub refuses the socket once the session has expired
                 spawn(async move {
                     if let Ok(s) = api::session().await {
                         if !s.authed {
+                            signed_out();
                             auth.set(Auth::SignedOut { setup: s.setup, code: s.setup_code });
                         }
                     }
@@ -166,6 +210,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
                     // read without subscribing, so an unchanged overview doesn't redraw the screen
                     let (hosts, resync) = state::with_feed(|feed| feed.overview(&f, &hub.peek(), now()));
                     if let Some(hosts) = hosts {
+                        crate::snapshot::save_overview(hosts.clone());
                         hub.write().set_hosts(hosts);
                     }
                     if let Some(m) = resync {
@@ -184,6 +229,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 Incoming::Frame(f) if f.stream() == Some(ORGANIZE) => {
                     let (org, resync) = state::with_feed(|feed| feed.organize(&f));
                     if let Some(org) = org {
+                        crate::snapshot::save_organize(org.clone());
                         organize::set(org);
                     }
                     if let Some(m) = resync {
@@ -192,9 +238,15 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 }
                 Incoming::Frame(f) => {
                     // a chat nobody has open is dropped without a redraw
-                    if f.stream().is_some_and(|k| chats.peek().get(k).is_some()) {
-                        if let Some(m) = chats.write().apply(&f, now()) {
+                    if let Some(k) = f.stream().filter(|k| chats.peek().get(k).is_some()) {
+                        let resync = chats.write().apply(&f, now());
+                        if let Some(m) = resync {
                             out.send(state::wire2(&m));
+                        }
+                        // its last page, kept for the next time the app opens
+                        let kept = chats.peek().get(k).and_then(|e| e.chat.snapshot());
+                        if let Some(kept) = kept {
+                            crate::snapshot::save_chat(k, kept);
                         }
                     }
                 }
@@ -216,6 +268,9 @@ fn Connected(auth: Signal<Auth>) -> Element {
         notices::PushWatch {}
     }
 }
+
+/// How long the first connection may take before the screens say it's reconnecting.
+const SETTLE_MS: u32 = 2500;
 
 /// Unix ms, for the chat model.
 pub fn now() -> u64 {

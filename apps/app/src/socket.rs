@@ -44,6 +44,22 @@ impl Outbox {
         #[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
         let _ = self.0.unbounded_send(json);
     }
+
+    /// Sends now, on the open socket, for a page going away: the queue behind [`Outbox::send`]
+    /// would only be read after the page is gone. False when no socket is open in the browser,
+    /// where nothing is sent and the caller keeps the message to send once it can; the phone's
+    /// queue doesn't go away with a page, so there it's queued.
+    pub fn send_now(&self, json: String) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            imp::send_now(&json)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.send(json);
+            true
+        }
+    }
 }
 
 /// The outbox, and the socket's end of it for [`run`].
@@ -95,6 +111,16 @@ mod imp {
     use inyon_protocol::{compat::CATALOG, ClientMsg};
     use wasm_bindgen::{closure::Closure, JsCast};
 
+    thread_local! {
+        /// the socket while it's open, for [`send_now`]
+        static OPEN: std::cell::RefCell<Option<web_sys::WebSocket>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// Sends on the open socket at once; false when none is open.
+    pub fn send_now(text: &str) -> bool {
+        OPEN.with(|o| o.borrow().as_ref().filter(|ws| ws.ready_state() == web_sys::WebSocket::OPEN).is_some_and(|ws| ws.send_with_str(text).is_ok()))
+    }
+
     const PING_MS: f64 = 25_000.0;
     const DEAD_MS: f64 = 55_000.0;
     const QUIET_AFTER_MS: f64 = 15_000.0;
@@ -124,6 +150,7 @@ mod imp {
 
     impl Drop for Conn {
         fn drop(&mut self) {
+            OPEN.with(|o| o.borrow_mut().take());
             self.ws.set_onopen(None);
             self.ws.set_onmessage(None);
             self.ws.set_onclose(None);
@@ -246,6 +273,7 @@ mod imp {
                         heard = now();
                         next_ping = now() + PING_MS;
                         send_raw(conn, &hello());
+                        OPEN.with(|o| *o.borrow_mut() = Some(conn.ws.clone()));
                         on(Event::Up);
                         if quiet {
                             send(conn, &ClientMsg::Quiet { on: true });

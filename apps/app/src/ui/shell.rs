@@ -152,10 +152,10 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
     rsx! {
         aside { class: "sidebar",
             div { class: "sidebar-head",
-                Logo { connecting: !h.connected, target: true }
+                Logo { connecting: h.offline(), target: true }
                 span { class: "brand", "Inyon" }
                 span { class: "chip chip-quiet", title: "The new app, which takes over from the current one in 1.0", "Preview" }
-                if !h.connected {
+                if h.offline() {
                     button {
                         class: "sidebar-offline icon-button press",
                         r#type: "button",
@@ -179,7 +179,7 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                 }
             }
             nav { class: "sidebar-nav",
-                a { class: nav_class(overview), href: "/next/", "aria-current": overview.then_some("page"),
+                a { class: nav_class(overview), href: Route::Overview.href(), "aria-current": overview.then_some("page"),
                     Glyph { icon: Icon::LayoutGrid, size: 16 }
                     "Overview"
                 }
@@ -187,14 +187,14 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                 sidebar::SessionList { current }
             }
             div { class: "sidebar-foot",
-                a { class: nav_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
+                a { class: nav_class(on_machines), href: Route::Machines { add: false }.href(), "aria-current": on_machines.then_some("page"),
                     Glyph { icon: Icon::Monitor, size: 16 }
                     "Machines"
                     if total > 0 {
                         span { class: "nav-count mono tabular", title: "{online} of {total} online", "{count}" }
                     }
                 }
-                a { class: nav_class(on_pages), href: "/next/blueprints", "aria-current": on_pages.then_some("page"),
+                a { class: nav_class(on_pages), href: Route::Pages { page: None }.href(), "aria-current": on_pages.then_some("page"),
                     Glyph { icon: Icon::PanelsTopLeft, size: 16 }
                     "Blueprints"
                     if changed > 0 {
@@ -207,7 +207,7 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                         span { class: "nav-count mono tabular", "{pages_total}" }
                     }
                 }
-                a { class: nav_class(on_settings), href: "/next/settings", "aria-current": on_settings.then_some("page"),
+                a { class: nav_class(on_settings), href: Route::Settings.href(), "aria-current": on_settings.then_some("page"),
                     Glyph { icon: Icon::Settings, size: 16 }
                     "Settings"
                 }
@@ -228,7 +228,7 @@ fn TabBar(section: Section) -> Element {
     let waiting = model::agent_panes(&hub.read().hosts).iter().filter(|r| r.agent().state == inyon_protocol::AgentState::Waiting).count();
     rsx! {
         nav { class: "tabbar",
-            a { class: tab_class(overview), href: "/next/", "aria-current": overview.then_some("page"),
+            a { class: tab_class(overview), href: Route::Overview.href(), "aria-current": overview.then_some("page"),
                 span { class: "tab-icon",
                     Glyph { icon: Icon::LayoutGrid, size: 21 }
                     if waiting > 0 {
@@ -237,7 +237,7 @@ fn TabBar(section: Section) -> Element {
                 }
                 "Overview"
             }
-            a { class: tab_class(on_pages), href: "/next/blueprints", "aria-current": on_pages.then_some("page"),
+            a { class: tab_class(on_pages), href: Route::Pages { page: None }.href(), "aria-current": on_pages.then_some("page"),
                 span { class: "tab-icon",
                     Glyph { icon: Icon::PanelsTopLeft, size: 21 }
                     if changed > 0 {
@@ -249,11 +249,11 @@ fn TabBar(section: Section) -> Element {
             button { class: "tab tab-new", r#type: "button", "aria-label": "New session", onclick: move |_| quick::new_session(hub, &mut here),
                 span { class: "tab-plus press", Glyph { icon: Icon::Plus, size: 20 } }
             }
-            a { class: tab_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
+            a { class: tab_class(on_machines), href: Route::Machines { add: false }.href(), "aria-current": on_machines.then_some("page"),
                 Glyph { icon: Icon::Monitor, size: 21 }
                 "Machines"
             }
-            a { class: tab_class(on_settings), href: "/next/settings", "aria-current": on_settings.then_some("page"),
+            a { class: tab_class(on_settings), href: Route::Settings.href(), "aria-current": on_settings.then_some("page"),
                 Glyph { icon: Icon::Settings, size: 21 }
                 "Settings"
             }

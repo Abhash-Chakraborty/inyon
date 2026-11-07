@@ -105,7 +105,7 @@ pub fn handle(msg: &ServerMsg, here: &Route, hosts: &[HostState]) {
                 Tone::Warn => ToastTone::Warn,
                 Tone::Error => ToastTone::Error,
             },
-            href: t.href.map(|h| format!("{BASE}{h}")),
+            href: t.href.map(|h| crate::route::app_href(&h)),
             action: None,
             agent: t.agent,
         });
@@ -114,7 +114,7 @@ pub fn handle(msg: &ServerMsg, here: &Route, hosts: &[HostState]) {
         match e {
             Effect::Haptic(k) => haptic(k),
             Effect::BrowserNotify { title, body, href, tag } => {
-                dom::show_notice(&title, &body, &tag, Some(&format!("{BASE}{href}")));
+                dom::show_notice(&title, &body, &tag, Some(&crate::route::app_href(&href)));
             }
             Effect::ClearNotification { tag } => dom::close_notice(&tag),
             Effect::Toast { .. } | Effect::NativeNotify { .. } => {}

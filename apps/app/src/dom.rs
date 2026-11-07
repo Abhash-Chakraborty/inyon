@@ -760,10 +760,42 @@ mod imp {
             }
         }
     }
+
+    /// Calls `f` when the page is hidden or goes away (switching apps, closing the tab, a
+    /// reload), while it's held; dropping it takes the listeners off.
+    pub struct Leaving(Closure<dyn Fn(web_sys::Event)>);
+
+    impl Drop for Leaving {
+        fn drop(&mut self) {
+            let Some(w) = web_sys::window() else { return };
+            let _ = w.remove_event_listener_with_callback("pagehide", self.0.as_ref().unchecked_ref());
+            if let Some(d) = w.document() {
+                let _ = d.remove_event_listener_with_callback("visibilitychange", self.0.as_ref().unchecked_ref());
+            }
+        }
+    }
+
+    pub fn on_leave(f: impl Fn() + 'static) -> Option<Leaving> {
+        let w = web_sys::window()?;
+        let d = w.document()?;
+        let cb = Closure::<dyn Fn(web_sys::Event)>::new(move |e: web_sys::Event| {
+            let hidden = web_sys::window().and_then(|w| w.document()).is_some_and(|d| d.visibility_state() == web_sys::VisibilityState::Hidden);
+            if e.type_() == "pagehide" || hidden {
+                f();
+            }
+        });
+        let _ = w.add_event_listener_with_callback("pagehide", cb.as_ref().unchecked_ref());
+        let _ = d.add_event_listener_with_callback("visibilitychange", cb.as_ref().unchecked_ref());
+        Some(Leaving(cb))
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
+    pub struct Leaving;
+    pub fn on_leave(_f: impl Fn() + 'static) -> Option<Leaving> {
+        None
+    }
     pub fn scroll_metrics(_id: &str) -> Option<(f64, f64, f64)> {
         None
     }

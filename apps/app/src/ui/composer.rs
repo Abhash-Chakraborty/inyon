@@ -203,7 +203,8 @@ fn remove_file(key: &str, id: &str) {
 }
 
 /// `draft`: the pane's draft as the hub last sent it (its text, when, and whether the terminal
-/// wrote it). `controls`: the model, effort and mode, as one line.
+/// wrote it). `controls`: the model, effort and mode, as one line. `disabled` keeps anything
+/// from going out; `offline` also greys the box out (not while the first connection opens).
 #[component]
 pub fn Composer(
     host: String,
@@ -211,6 +212,7 @@ pub fn Composer(
     agent: String,
     working: bool,
     disabled: bool,
+    #[props(default)] offline: bool,
     draft: Option<(String, u64, bool)>,
     controls: String,
     on_sent: EventHandler<()>,
@@ -242,25 +244,32 @@ pub fn Composer(
         });
     }
     let typed = use_hook(|| Rc::new(Cell::new(0u32)));
+    // your edit: shown at once, sent to the hub once typing pauses, or once the socket is up when
+    // that's later (a message for a socket not yet open is dropped)
+    let unsent = use_hook(|| Rc::new(RefCell::new(None::<String>)));
 
     // a draft from the terminal or another device
     {
-        let synced = synced.clone();
+        let (synced, unsent, typed) = (synced.clone(), unsent.clone(), typed.clone());
         use_effect(use_reactive!(|draft| {
             let Some((server, _, terminal)) = draft else { return };
             if adopt(&server, &synced.borrow(), &text.peek(), *focused.peek()) {
+                // an edit still waiting to go would put the old text back over it
+                unsent.borrow_mut().take();
+                typed.set(typed.get() + 1);
                 *synced.borrow_mut() = server.clone();
                 text.set(server);
                 from_terminal.set(terminal);
             }
         }));
     }
-    // ready to type on arrival, except on a phone, where that would pop the keyboard up
-    use_hook(|| {
-        if !dom::coarse() {
+    // ready to type on arrival and once it can send again, except on a phone, where that would
+    // pop the keyboard up
+    use_effect(use_reactive!(|offline| {
+        if !offline && !dom::coarse() {
             spawn(async { dom::focus(BOX) });
         }
-    });
+    }));
     use_effect(move || {
         let _ = text.read();
         dom::autosize(BOX, 0.4);
@@ -275,34 +284,65 @@ pub fn Composer(
             }
         }
     };
-    // your edit: shown at once, sent to the hub once typing pauses
+    let off = use_hook(|| Rc::new(Cell::new(disabled)));
+    off.set(disabled);
     let set_text = {
-        let (typed, push_draft) = (typed.clone(), push_draft.clone());
+        let (typed, push_draft, unsent, off) = (typed.clone(), push_draft.clone(), unsent.clone(), off.clone());
         move |v: String| {
             let (mut text, mut from_terminal) = (text, from_terminal);
             text.set(v.clone());
             from_terminal.set(false);
             let n = typed.get() + 1;
             typed.set(n);
-            let (typed, push) = (typed.clone(), push_draft.clone());
+            *unsent.borrow_mut() = Some(v.clone());
+            let (typed, push, unsent, off) = (typed.clone(), push_draft.clone(), unsent.clone(), off.clone());
             spawn(async move {
                 platform::sleep(DRAFT_MS).await;
-                if typed.get() == n {
+                if typed.get() == n && !off.get() {
+                    unsent.borrow_mut().take();
                     push(v);
                 }
             });
         }
     };
+    // leaving the app (or reloading) mid-sentence: the draft goes now, not in half a second, and
+    // on the socket itself, since the page may be gone before the app's queue is read
+    let _leaving = use_hook(|| {
+        let (typed, synced, unsent, out, host, pane) = (typed.clone(), synced.clone(), unsent.clone(), out.clone(), host.clone(), pane.clone());
+        Rc::new(dom::on_leave(move || {
+            let Some(value) = unsent.borrow().clone() else { return };
+            if *synced.borrow() == value {
+                unsent.borrow_mut().take();
+                return;
+            }
+            // with no socket open it stays unsent, for the timer or the reconnect to send
+            if out.send_now(state::wire(&ClientMsg::Draft { host: host.clone(), pane: pane.clone(), text: value.clone() })) {
+                unsent.borrow_mut().take();
+                // the timer's push is then stale
+                typed.set(typed.get() + 1);
+                *synced.borrow_mut() = value;
+            }
+        }))
+    });
     let on_input = {
         let set_text = set_text.clone();
         move |e: FormEvent| set_text(e.value())
     };
 
+    // the edit that waited for the socket goes out once the box can send
+    {
+        let (unsent, push_draft) = (unsent.clone(), push_draft.clone());
+        use_effect(use_reactive!(|disabled| {
+            if !disabled {
+                if let Some(v) = unsent.borrow_mut().take() {
+                    push_draft(v);
+                }
+            }
+        }));
+    }
     // pastes, dropped files and typing with nothing focused, from anywhere on the page. The
     // page's listener decides at once whether the app takes the event (so the browser's own
     // handling can be stopped), and this task, inside the app, does the rest.
-    let off = use_hook(|| Rc::new(Cell::new(disabled)));
-    off.set(disabled);
     let live = use_hook(|| Rc::new(RefCell::new((host.clone(), pane.clone()))));
     *live.borrow_mut() = (host.clone(), pane.clone());
     let listener = use_hook(|| {
@@ -367,7 +407,7 @@ pub fn Composer(
     let can_send = (!text.read().trim().is_empty() || !ready.is_empty()) && !uploading && !failed && !disabled;
     let mode = button(working, can_send, uploading || failed);
     let do_send = {
-        let (host, pane, key, synced, typed) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone());
+        let (host, pane, key, synced, typed, unsent) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone(), unsent.clone());
         move || {
             let list = attach::of(&key);
             let (uploading, failed, ready) = attach::summary(&list);
@@ -382,6 +422,7 @@ pub fn Composer(
             }
             // the box empties here and on the hub; the terminal's line is cleared by the send
             typed.set(typed.get() + 1);
+            unsent.borrow_mut().take();
             *synced.borrow_mut() = String::new();
             text.set(String::new());
             from_terminal.set(false);
@@ -410,17 +451,18 @@ pub fn Composer(
         }
     };
     let hold = {
-        let (host, pane, key, synced, typed) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone());
+        let (host, pane, key, synced, typed, unsent) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone(), unsent.clone());
         move || {
             let msg = text.peek().trim().to_string();
             // the hub holds text only
             if msg.is_empty() || !attach::of(&key).is_empty() {
                 return;
             }
-            let (host, pane, synced, typed) = (host.clone(), pane.clone(), synced.clone(), typed.clone());
+            let (host, pane, synced, typed, unsent) = (host.clone(), pane.clone(), synced.clone(), typed.clone(), unsent.clone());
             spawn(async move {
                 if api::hold(&host, &pane, &msg).await.is_ok() {
                     typed.set(typed.get() + 1);
+                    unsent.borrow_mut().take();
                     *synced.borrow_mut() = String::new();
                     text.set(String::new());
                 }
@@ -461,7 +503,7 @@ pub fn Composer(
     let note = attach::note(uploading, failed).unwrap_or(if !text.read().is_empty() && from_terminal() { "From the terminal" } else { "" });
     let touch = dom::coarse();
     let (mut do_send, mut stop) = (do_send, stop);
-    let box_class = match (disabled, dragging()) {
+    let box_class = match (offline, dragging()) {
         (true, _) => "composer-box composer-off",
         (false, true) => "composer-box composer-drag",
         _ => "composer-box",
@@ -484,7 +526,7 @@ pub fn Composer(
                     class: "composer-text",
                     rows: "1",
                     value: "{text}",
-                    disabled,
+                    disabled: offline,
                     placeholder: "{placeholder}",
                     "aria-label": "Message {agent}",
                     oninput: on_input,

@@ -190,6 +190,7 @@ pub fn ConnectHelpHost() -> Element {
     let act = move |a: StepAction| match a {
         StepAction::SignIn => {
             *OPEN.write() = false;
+            super::signed_out();
             auth.set(super::Auth::SignedOut { setup: false, code: false });
         }
     };
