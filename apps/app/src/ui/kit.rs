@@ -11,7 +11,7 @@ use crate::{dom, platform};
 /// How long a sheet takes to go away (its exit animation), before it leaves the page.
 const SHEET_EXIT_MS: u32 = 200;
 
-/// A sheet: from the bottom on a phone, a centred dialog from tablet width up. Esc and the
+/// A sheet: from the bottom on a phone, a centred dialog from tablet width up. Esc, back and the
 /// backdrop close it, focus goes in and stays in while it's open, and comes back where it was.
 #[component]
 pub fn Sheet(
@@ -26,6 +26,7 @@ pub fn Sheet(
     let mut shown = use_signal(|| open);
     let mut gen = use_signal(|| 0u32);
     let id = use_hook(|| format!("sheet-{}", dom::random_id()));
+    super::back::use_layer(open, true, move || on_close.call(()));
     {
         let id = id.clone();
         use_effect(use_reactive!(|open| {
@@ -371,6 +372,11 @@ pub fn Select(value: String, options: Vec<Opt>, title: String, on_change: EventH
             dom::focus(&field);
         }
     };
+    // back and Esc close the list alone, as the top layer; on a phone its Sheet is the layer
+    {
+        let mut close = close.clone();
+        super::back::use_layer(open() && !sheet(), true, move || close(true));
+    }
     let pick = {
         let value = value.clone();
         move |v: String| {

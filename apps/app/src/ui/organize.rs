@@ -1,6 +1,7 @@
 //! Pins, parking, snoozes, tags and notes in this app (from 1.1; the hub keeps them from 0.24, see
 //! inyon-protocol's organize.rs): what the session menu and the bulk menu offer, the changes they
-//! send, the Tags, Note and Rename sheets, and the bar that acts on several selected sessions.
+//! send, the Snooze, Tags, Note and Rename sheets, and the bar that acts on several selected
+//! sessions.
 //! Menus carry an [`OrgOp`] as data, so a menu still works after its row scrolled away.
 
 use dioxus::prelude::*;
@@ -46,8 +47,8 @@ pub fn kept(org: Organize) {
 pub enum OrgOp {
     Pin(Vec<Key>, bool),
     Park(Vec<Key>, bool),
-    /// None ends the snooze
-    Snooze(Vec<Key>, Option<SnoozeFor>),
+    /// until when, and whether to say so when it's back; None ends the snooze
+    Snooze(Vec<Key>, Option<(SnoozeFor, bool)>),
     /// a tag, added or taken off
     Tag(Vec<Key>, String, bool),
     CloseWhenDone(Key, bool),
@@ -62,6 +63,8 @@ pub enum OrgOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrgSheet {
+    /// how long to snooze these sessions for
+    Snooze(Vec<Key>),
     /// a new tag for these sessions
     Tags(Vec<Key>),
     Note(Key),
@@ -189,7 +192,10 @@ pub fn patch_for(op: &OrgOp, m: Option<&SessionMark>, now: u64, wake: &dyn Fn(Sn
             // a snooze that's over can't be put back; none is
             let was = m.and_then(|m| m.snoozed_until).filter(|t| *t > now);
             match until {
-                Some(p) => Some((json!({ "snoozedUntil": wake(*p) }), json!({ "snoozedUntil": was }))),
+                Some((p, tell)) => {
+                    let told = m.and_then(|m| m.snooze_notice).filter(|_| was.is_some());
+                    Some((json!({ "snoozedUntil": wake(*p), "snoozeNotice": tell.then_some(true) }), json!({ "snoozedUntil": was, "snoozeNotice": told })))
+                }
                 None => was.map(|t| (json!({ "snoozedUntil": null }), json!({ "snoozedUntil": t }))),
             }
         }
@@ -227,7 +233,7 @@ pub fn told(op: &OrgOp, n: usize, name: &str, clock: Clock) -> Option<String> {
         OrgOp::Park(_, true) => many("Parked"),
         OrgOp::Park(_, false) => many("Unparked"),
         OrgOp::Pin(_, on) => many(if *on { "Pinned" } else { "Unpinned" }),
-        OrgOp::Snooze(_, Some(p)) => {
+        OrgOp::Snooze(_, Some((p, _))) => {
             let at = wakes_at_here(wake(*p, clock), clock);
             Some(if n == 1 { format!("Snoozed until {at}") } else { format!("Snoozed {n} sessions until {at}") })
         }
@@ -362,12 +368,9 @@ pub fn run(op: OrgOp, hub: Signal<Hub>) {
 
 // ---------- the menus ----------
 
-fn snooze_items(keys: &[Key], clock: Clock) -> Vec<Item> {
-    [(SnoozeFor::Hour, "1 hour"), (SnoozeFor::ThreeHours, "3 hours"), (SnoozeFor::Tomorrow, "Tomorrow morning"), (SnoozeFor::NextWeek, "Next week")]
-        .into_iter()
-        .map(|(p, label)| Item::new(label, Icon::Clock3, Action::Org(OrgOp::Snooze(keys.to_vec(), Some(p)))).hint(wakes_at_here(wake(p, clock), clock)))
-        .collect()
-}
+/// How long a snooze can be for, as the Snooze sheet offers it (lib/organize.ts SNOOZE_CHOICES).
+const SNOOZE_CHOICES: [(SnoozeFor, &str); 4] =
+    [(SnoozeFor::Hour, "For an hour"), (SnoozeFor::ThreeHours, "For three hours"), (SnoozeFor::Tomorrow, "Until tomorrow morning"), (SnoozeFor::NextWeek, "Until next week")];
 
 /// The tags to offer: this session's own first, then the rest in use, most used first.
 fn tag_items(keys: &[Key], org: &Organize, mine: &[String], toggle: bool) -> Vec<Item> {
@@ -437,7 +440,7 @@ pub fn session_items(r: &PaneRef, org: &Org, clock: Clock, tabs: bool) -> Vec<It
         v.push(if asleep {
             Item::new("Unsnooze", Icon::AlarmClockOff, Action::Org(OrgOp::Snooze(keys.clone(), None)))
         } else {
-            Item::sub("Snooze", Icon::AlarmClock, snooze_items(&keys, clock))
+            Item::new("Snooze…", Icon::AlarmClock, Action::Org(OrgOp::Sheet(OrgSheet::Snooze(keys.clone()))))
         });
         v.push(if parked {
             Item::new("Unpark", Icon::ArchiveRestore, Action::Org(OrgOp::Park(keys.clone(), false)))
@@ -483,7 +486,7 @@ pub fn bulk_items(keys: &[Key], org: &Organize, clock: Clock) -> Vec<Item> {
         if c.snoozed {
             Item::new("Unsnooze selected", Icon::AlarmClockOff, Action::Org(OrgOp::Snooze(k.clone(), None)))
         } else {
-            Item::sub("Snooze selected", Icon::AlarmClock, snooze_items(&k, clock))
+            Item::new("Snooze selected…", Icon::AlarmClock, Action::Org(OrgOp::Sheet(OrgSheet::Snooze(k.clone()))))
         },
         Item::sub("Tag selected as", Icon::Tag, tag_items(&k, org, &[], false)),
         Item::new("Clear selection", Icon::X, Action::Org(OrgOp::ClearSelection)).separated(),
@@ -562,10 +565,67 @@ pub fn OrgSheets() -> Element {
     let open = SHEET_OPEN();
     let close = move |_| *SHEET_OPEN.write() = false;
     match SHEET() {
+        Some(OrgSheet::Snooze(keys)) => rsx! { SnoozeSheet { open, on_close: close, keys } },
         Some(OrgSheet::Tags(keys)) => rsx! { TagSheet { open, on_close: close, keys } },
         Some(OrgSheet::Note(k)) => rsx! { NoteSheet { open, on_close: close, k } },
         Some(OrgSheet::Rename(k)) => rsx! { RenameSheet { open, on_close: close, k } },
         None => rsx! {},
+    }
+}
+
+/// Hides one session or several until a time this device picks, and can raise a notice when it's
+/// back (OrganizeSheets.tsx's SnoozeSheet). The times are worked out on the tap, so a sheet left
+/// open a while doesn't snooze for less.
+#[component]
+fn SnoozeSheet(open: bool, on_close: EventHandler<()>, keys: Vec<Key>) -> Element {
+    let mut tell = use_signal(|| false);
+    let hub = use_context::<Signal<Hub>>();
+    {
+        let keys = keys.clone();
+        use_effect(use_reactive!(|open| {
+            if open {
+                let org = &ORG.peek().org;
+                tell.set(keys.len() == 1 && mark_for(org, &keys[0].0, &keys[0].1).and_then(|m| m.snooze_notice) == Some(true));
+            }
+        }));
+    }
+    let clock = platform::clock();
+    let finished = super::notices::PREFS.read().notify_done;
+    rsx! {
+        Sheet {
+            open,
+            on_close: move |_| on_close.call(()),
+            title: "Snooze",
+            icon: rsx! { Glyph { icon: Icon::AlarmClock, size: 16, class: "fg-3" } },
+            p { class: "sheet-text snooze-lede", "It moves to Parked and snoozed on every device and comes back on its own. The agent keeps running." }
+            div { class: "snooze-choices",
+                for (p , label) in SNOOZE_CHOICES {
+                    {
+                        let keys = keys.clone();
+                        rsx! {
+                            button {
+                                key: "{label}",
+                                class: "snooze-choice",
+                                r#type: "button",
+                                onclick: move |_| {
+                                    on_close.call(());
+                                    run(OrgOp::Snooze(keys.clone(), Some((p, tell()))), hub);
+                                },
+                                span { class: "snooze-label truncate", "{label}" }
+                                span { class: "snooze-at mono tabular", "until {wakes_at_here(wake(p, clock), clock)}" }
+                            }
+                        }
+                    }
+                }
+            }
+            div { class: "snooze-tell",
+                span { class: "snooze-tell-label", "Tell me when it's back" }
+                super::kit::Toggle { on: tell(), label: "Tell me when it's back", on_change: move |v| tell.set(v) }
+            }
+            if tell() && !finished {
+                p { class: "snooze-off", "It comes with the finished notices, which are off on this device. Turn on “When an agent finishes” in Settings to get it." }
+            }
+        }
     }
 }
 
@@ -838,6 +898,8 @@ pub fn SelectionBar() -> Element {
         }
     }
     let org = ORG.read().clone();
+    // back and Esc let go of the selection, as the newest layer (not while typing: Esc is the box's)
+    super::back::use_layer(!sel.is_empty() && org.loaded, false, || SELECTION.write().clear());
     if sel.is_empty() || !org.loaded {
         return rsx! {};
     }
@@ -868,7 +930,7 @@ pub fn SelectionBar() -> Element {
                     if c.snoozed {
                         run(OrgOp::Snooze(k3.clone(), None), hub);
                     } else {
-                        menu::drop_down(&mut menu, "select-snooze", snooze_items(&k3, platform::clock()));
+                        open_sheet(OrgSheet::Snooze(k3.clone()));
                     }
                 },
                 Glyph { icon: if c.snoozed { Icon::AlarmClockOff } else { Icon::AlarmClock }, size: 16 }
@@ -927,8 +989,12 @@ mod tests {
         let full = mark(json!({ "tags": ["a", "b", "c", "d", "e", "f", "g", "h"] }));
         assert_eq!(p(OrgOp::Tag(vec![k("%1")], "i".into(), true), Some(&full)), None, "eight tags at most");
         // a snooze: the time by this device's clock; undo puts back an earlier snooze still running
-        let (change, back) = p(OrgOp::Snooze(vec![k("%1")], Some(SnoozeFor::Hour)), None).unwrap();
-        assert_eq!((change, back), (json!({ "snoozedUntil": NOW + 3_600_000 }), json!({ "snoozedUntil": null })));
+        let (change, back) = p(OrgOp::Snooze(vec![k("%1")], Some((SnoozeFor::Hour, false))), None).unwrap();
+        assert_eq!((change, back), (json!({ "snoozedUntil": NOW + 3_600_000, "snoozeNotice": null }), json!({ "snoozedUntil": null, "snoozeNotice": null })));
+        // "Tell me when it's back", and Undo puts back the notice an earlier snooze had
+        let told = mark(json!({ "snoozedUntil": NOW + 60_000, "snoozeNotice": true }));
+        let (change, back) = p(OrgOp::Snooze(vec![k("%1")], Some((SnoozeFor::Hour, true))), Some(&told)).unwrap();
+        assert_eq!((change, back), (json!({ "snoozedUntil": NOW + 3_600_000, "snoozeNotice": true }), json!({ "snoozedUntil": NOW + 60_000, "snoozeNotice": true })));
         let asleep = mark(json!({ "snoozedUntil": NOW + 60_000 }));
         assert_eq!(p(OrgOp::Snooze(vec![k("%1")], None), Some(&asleep)), Some((json!({ "snoozedUntil": null }), json!({ "snoozedUntil": NOW + 60_000 }))));
         assert_eq!(patch_for(&OrgOp::Snooze(vec![k("%1")], None), Some(&asleep), NOW + 60_000, &|_| 0), None, "its time is up already");
@@ -1042,8 +1108,8 @@ mod tests {
         assert_eq!(told(&OrgOp::Park(one.clone(), true), 3, "", CLOCK).as_deref(), Some("Parked 3 sessions"));
         assert_eq!(told(&OrgOp::Pin(one.clone(), true), 1, "x", CLOCK), None, "a pin shows for itself");
         assert_eq!(told(&OrgOp::Pin(one.clone(), false), 2, "", CLOCK).as_deref(), Some("Unpinned 2 sessions"));
-        assert_eq!(told(&OrgOp::Snooze(one.clone(), Some(SnoozeFor::Hour)), 1, "x", CLOCK).as_deref(), Some("Snoozed until 13:00"));
-        assert_eq!(told(&OrgOp::Snooze(one.clone(), Some(SnoozeFor::Tomorrow)), 2, "x", CLOCK).as_deref(), Some("Snoozed 2 sessions until Wed 9:00"));
+        assert_eq!(told(&OrgOp::Snooze(one.clone(), Some((SnoozeFor::Hour, false))), 1, "x", CLOCK).as_deref(), Some("Snoozed until 13:00"));
+        assert_eq!(told(&OrgOp::Snooze(one.clone(), Some((SnoozeFor::Tomorrow, true))), 2, "x", CLOCK).as_deref(), Some("Snoozed 2 sessions until Wed 9:00"));
         assert_eq!(told(&OrgOp::Tag(one, "review".into(), true), 4, "", CLOCK).as_deref(), Some("Tagged #review on 4 sessions"));
     }
 
@@ -1068,11 +1134,10 @@ mod tests {
         let panes = model::all_panes(&h);
         let org = Org { org: serde_json::from_value(json!({ "v": 2, "sessions": [{ "id": "s-1", "host": "box", "pane": "%2", "live": true, "pinned": 0, "parked": true, "tags": ["ui"], "note": "x", "closeWhenDone": true }] })).unwrap(), loaded: true };
         let m = session_items(&panes[0], &org, CLOCK, true);
-        assert_eq!(labels(&m), ["Open", "Open terminal", "Open in new tab", "Rename…", "Pin", "Snooze", "Park", "Tag as", "Copy", "More", "Select", "End session…"]);
+        assert_eq!(labels(&m), ["Open", "Open terminal", "Open in new tab", "Rename…", "Pin", "Snooze…", "Park", "Tag as", "Copy", "More", "Select", "End session…"]);
         assert_eq!(m[11].action, Action::EndSession { host: "box".into(), pane: "%1".into() });
-        let snooze = m[5].sub.as_ref().unwrap();
-        assert_eq!(labels(snooze), ["1 hour", "3 hours", "Tomorrow morning", "Next week"]);
-        assert_eq!(snooze[2].hint.as_deref(), Some("Wed 9:00"));
+        // Snooze… opens the Snooze sheet, as in the web app
+        assert_eq!(m[5].action, Action::Org(OrgOp::Sheet(OrgSheet::Snooze(vec![k("%1")]))));
         let tags = m[7].sub.as_ref().unwrap();
         assert_eq!(labels(tags), ["#ui", "New tag…"]);
         assert_eq!(tags[0].checked, Some(false));
@@ -1080,7 +1145,7 @@ mod tests {
         assert_eq!(labels(m[9].sub.as_ref().unwrap()), ["Note…", "Close when done"]);
         // the other one is pinned, parked, tagged, noted and closing
         let m = session_items(&panes[1], &org, CLOCK, false);
-        assert_eq!(labels(&m), ["Open", "Open terminal", "Rename…", "Unpin", "Snooze", "Unpark", "Tag as", "Copy", "More", "Select", "End session…"]);
+        assert_eq!(labels(&m), ["Open", "Open terminal", "Rename…", "Unpin", "Snooze…", "Unpark", "Tag as", "Copy", "More", "Select", "End session…"]);
         assert_eq!(m[6].sub.as_ref().unwrap()[0].checked, Some(true));
         assert_eq!(m[6].sub.as_ref().unwrap()[0].action, Action::Org(OrgOp::Tag(vec![k("%2")], "ui".into(), false)), "a tick takes it off");
         let more = m[8].sub.as_ref().unwrap();
@@ -1097,7 +1162,7 @@ mod tests {
         .unwrap();
         let both = vec![k("%1"), k("%2")];
         let m = bulk_items(&both, &org, CLOCK);
-        assert_eq!(labels(&m), ["2 sessions selected", "Unpin selected", "Park selected", "Snooze selected", "Tag selected as", "Clear selection"]);
+        assert_eq!(labels(&m), ["2 sessions selected", "Unpin selected", "Park selected", "Snooze selected…", "Tag selected as", "Clear selection"]);
         assert!(m[0].header);
         assert_eq!(m[2].action, Action::Org(OrgOp::Park(both.clone(), true)));
         // tags in use are offered to add, none ticked
