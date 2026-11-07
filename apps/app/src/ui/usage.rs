@@ -159,6 +159,167 @@ fn lines(added: Option<f64>, removed: Option<f64>) -> Element {
     }
 }
 
+/// The ring's colour: red when nearly full or the numbers stopped, amber past 60%, else ink.
+fn ring_tone(pct: f64, warn: bool) -> &'static str {
+    if warn || pct >= 85.0 {
+        "var(--danger)"
+    } else if pct >= 60.0 {
+        "var(--warn)"
+    } else {
+        "var(--accent)"
+    }
+}
+
+/// A small ring for how full the context window is.
+#[component]
+fn ContextRing(pct: Option<f64>, warn: bool) -> Element {
+    let v = pct.unwrap_or(0.0).clamp(0.0, 100.0);
+    let c = 2.0 * std::f64::consts::PI * 8.0;
+    rsx! {
+        span { class: "context-ring", "aria-hidden": "true",
+            svg { view_box: "0 0 20 20",
+                circle { cx: "10", cy: "10", r: "8", fill: "none", stroke: "var(--line-strong)", stroke_width: "2.2" }
+                circle {
+                    cx: "10",
+                    cy: "10",
+                    r: "8",
+                    fill: "none",
+                    stroke: ring_tone(v, warn),
+                    stroke_width: "2.2",
+                    stroke_linecap: "round",
+                    stroke_dasharray: "{v / 100.0 * c} {c}",
+                }
+            }
+        }
+    }
+}
+
+/// One plan window in the summary: its name, when it resets, how much is used.
+fn summary_row(label: &str, w: Option<f::LiveWindow>, now: f64) -> Element {
+    let Some(w) = w else { return rsx! {} };
+    let tone = if w.pct >= 85.0 {
+        "fg-danger"
+    } else if w.pct >= 60.0 {
+        "fg-warn"
+    } else {
+        ""
+    };
+    rsx! {
+        div {
+            div { class: "usage-sum-row",
+                span { class: "fg-2", "{label}" }
+                span { class: "fg-3", {if w.reset { "reset".to_string() } else { f::resets_in(w.resets_at, now) }} }
+                span { class: "tabular usage-sum-pct {tone}", "{w.pct.round()}%" }
+            }
+            Meter { pct: w.pct }
+        }
+    }
+}
+
+/// Context, plan limits, cost, time and lines in one small card (Usage.tsx UsageSummary): what
+/// the usage chip's hover shows.
+#[component]
+pub fn UsageSummary(status: Option<AgentStatus>, info: Option<ChatInfo>, stopped: bool) -> Element {
+    let (st, inf) = (status.as_ref(), info.as_ref());
+    let ctx = context_of(st, inf);
+    let stats = inf.map(|i| &i.stats);
+    let pick = |a: Option<inyon_protocol::Num>, b: Option<inyon_protocol::Num>| a.or(b).map(|n| n.0);
+    let now = platform::clock().now;
+    let five = f::live_window(st.and_then(|s| s.five_hour.as_ref()), now);
+    let week = f::live_window(st.and_then(|s| s.seven_day.as_ref()), now);
+    let agent = inf.and_then(|i| i.agent);
+    let cost = pick(st.and_then(|s| s.cost_usd), stats.and_then(|s| s.cost_usd));
+    let dur = pick(st.and_then(|s| s.duration_ms), stats.and_then(|s| s.duration_ms)).filter(|d| *d > 0.0);
+    let running = dur.map(f::duration).or(stats.and_then(|s| s.started_at.clone()).map(|s| f::since(s, now))).unwrap_or_else(|| "—".into());
+    let added = pick(st.and_then(|s| s.lines_added), stats.and_then(|s| s.lines_added));
+    let removed = pick(st.and_then(|s| s.lines_removed), stats.and_then(|s| s.lines_removed));
+    let compactions = stats.map_or(0, |s| s.compactions);
+    let pct_line = match ctx.pct {
+        Some(p) => format!("{}% used", p.round()),
+        None if ctx.compacted => "Compacted · size shows after the next reply".into(),
+        None => "Not reported yet".into(),
+    };
+    let new_account = st.and_then(|s| s.stale.as_ref()).and_then(|s| s.limits) == Some(StaleLimits::Account);
+    let cost_word = match (cost, agent) {
+        (None, Some(AgentKind::Antigravity | AgentKind::Codex)) => "Not reported".to_string(),
+        _ => f::money(cost),
+    };
+    rsx! {
+        div { class: "usage-sum",
+            div {
+                div { class: "usage-sum-row",
+                    span { class: "usage-sum-title", "Context" }
+                    span { class: "tabular usage-sum-side", {context_line(&ctx)} }
+                }
+                Meter { pct: ctx.pct.unwrap_or(0.0) }
+                div { class: "usage-sum-note",
+                    "{pct_line}"
+                    if compactions > 0 {
+                        " · compacted {compactions}×"
+                    }
+                }
+            }
+            if five.is_some() || week.is_some() {
+                div { class: "usage-sum-part",
+                    {summary_row("5-hour", five, now)}
+                    {summary_row("Weekly", week, now)}
+                }
+            }
+            if new_account {
+                div { class: "usage-sum-part fg-3", "New account: its limits show after the next reply." }
+            }
+            if stopped {
+                div { class: "usage-sum-part fg-3", "Cost and effort paused; reconnecting…" }
+            }
+            div { class: if shows_cost(agent) { "usage-sum-part usage-sum-grid usage-sum-three" } else { "usage-sum-part usage-sum-grid" },
+                if shows_cost(agent) {
+                    div {
+                        div { class: "fg-3", "Cost" }
+                        div { class: "tabular usage-sum-value", "{cost_word}" }
+                    }
+                }
+                div {
+                    div { class: "fg-3", "Running" }
+                    div { class: "tabular usage-sum-value", "{running}" }
+                }
+                div {
+                    div { class: "fg-3", "Lines" }
+                    div { class: "tabular usage-sum-value", {lines(added, removed)} }
+                }
+            }
+        }
+    }
+}
+
+/// Context and limits at a glance in the session header (SessionHeader.tsx UsageChip): the
+/// ring, how full it is from 640 px, the 5-hour window from 1024 px. Hovering or focusing it on
+/// a desktop shows [`UsageSummary`]; a click opens the session controls sheet.
+#[component]
+pub fn UsageChip(status: Option<AgentStatus>, info: Option<ChatInfo>, stopped: bool, on_open: EventHandler<()>) -> Element {
+    let ctx = context_of(status.as_ref(), info.as_ref());
+    let five = f::live_window(status.as_ref().and_then(|s| s.five_hour.as_ref()), platform::clock().now);
+    let amount = match ctx.pct {
+        Some(p) => format!("{}%", p.round()),
+        None => f::tokens(ctx.used),
+    };
+    rsx! {
+        div { class: "usage-chip-wrap",
+            button { class: "usage-chip press", r#type: "button", "aria-label": "Usage and limits", onclick: move |_| on_open.call(()),
+                ContextRing { pct: ctx.pct, warn: stopped }
+                span { class: "tabular usage-chip-pct", "{amount}" }
+                if let Some(w) = five {
+                    span { class: "tabular usage-chip-five", "· 5h {w.pct.round()}%" }
+                }
+            }
+            div { class: "usage-hover",
+                div { class: "usage-hover-card",
+                    UsageSummary { status, info, stopped }
+                }
+            }
+        }
+    }
+}
+
 /// Context window, plan limits, cost, time and session details. `on_compact` adds Compact now
 /// for an agent that can.
 #[component]
@@ -295,6 +456,15 @@ mod tests {
 
     fn status(v: serde_json::Value) -> AgentStatus {
         serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn the_ring_turns_amber_then_red() {
+        assert_eq!(ring_tone(10.0, false), "var(--accent)");
+        assert_eq!(ring_tone(60.0, false), "var(--warn)");
+        assert_eq!(ring_tone(85.0, false), "var(--danger)");
+        // numbers that stopped coming are red whatever they said
+        assert_eq!(ring_tone(5.0, true), "var(--danger)");
     }
 
     fn info(stats: serde_json::Value) -> ChatInfo {

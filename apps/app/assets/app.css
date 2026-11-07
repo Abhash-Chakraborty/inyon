@@ -2116,3 +2116,63 @@ button.nav-item { width: 100%; text-align: left; }
 .ultracode-mark { animation: ultracode-breathe 2.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .ultracode-box::after, .ultracode-label, .ultracode-mark { animation: none; } }
 .goal-lede { margin-bottom: 16px; }
+
+/* ---------- the session controls sheet (MobileSheets.tsx ControlsSheet) and the header's usage chip ---------- */
+.csheet { display: flex; flex-direction: column; gap: 20px; }
+.csheet-asking { border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--warn-soft) 50%, transparent); padding: 10px 14px; font-size: 13px; color: var(--fg-2); }
+.csheet-label { margin-bottom: 8px; font-size: 13px; font-weight: 500; color: var(--fg-2); }
+.csheet-models { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.csheet-model { display: flex; min-width: 0; flex-direction: column; border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; text-align: left; transition: background-color var(--dur-small) var(--ease-out-soft); }
+.csheet-model:hover { background: var(--hover); }
+.csheet-model-on, .csheet-model-on:hover { border-color: var(--accent); background: var(--accent-soft); }
+.csheet-model-name { font-size: 14px; font-weight: 600; }
+.csheet-model-note { font-size: 12px; color: var(--fg-3); }
+.csheet-link { margin-top: 8px; display: inline-flex; height: 36px; align-items: center; gap: 6px; border-radius: 9999px; padding: 0 10px; font-size: 13px; color: var(--fg-2); }
+.csheet-link:hover { background: var(--hover); color: var(--fg); }
+.csheet-modes { display: flex; flex-wrap: wrap; gap: 6px; }
+.csheet-mode { height: 36px; border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; font-size: 13px; color: var(--fg-2); transition: background-color var(--dur-small) var(--ease-out-soft); }
+.csheet-mode:hover { background: var(--hover); }
+.csheet-mode-on, .csheet-mode-on:hover { border-color: var(--accent); background: var(--accent-soft); font-weight: 500; color: var(--fg); }
+.csheet-rows { border: 1px solid var(--line); border-radius: 24px; }
+.csheet-rows > * + * { border-top: 1px solid var(--line); }
+.csheet-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.csheet-row-words { display: flex; min-width: 0; flex: 1; flex-direction: column; text-align: left; }
+.csheet-row-title { font-size: 14px; font-weight: 500; }
+.csheet-row-sub { font-size: 12px; color: var(--fg-3); }
+.csheet-open { flex-shrink: 0; border: 1px solid var(--line-strong); border-radius: 9999px; padding: 4px 10px; font-size: 12.5px; font-weight: 500; }
+.csheet-open:hover { background: var(--hover); }
+.csheet-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 8px; }
+.csheet-tile { display: flex; height: 64px; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); border-radius: 16px; font-size: 12px; transition: background-color var(--dur-small) var(--ease-out-soft); }
+.csheet-tile .icon { color: var(--fg-2); }
+.csheet-tile:hover { background: var(--hover); }
+.csheet-tile-danger, .csheet-tile-danger .icon { color: var(--danger); }
+
+.context-ring { position: relative; display: flex; width: 18px; height: 18px; flex-shrink: 0; }
+.context-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.usage-chip-wrap { position: relative; flex-shrink: 0; }
+.usage-chip { display: flex; height: 32px; align-items: center; gap: 8px; border-radius: 9999px; padding: 0 6px; font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); transition: background-color var(--dur-small) var(--ease-out-soft); }
+.usage-chip:hover { background: var(--hover); }
+.usage-chip-pct, .usage-chip-five { display: none; }
+.usage-chip-five { color: var(--fg-3); }
+@media (min-width: 640px) { .usage-chip-pct { display: inline; } }
+@media (min-width: 768px) { .usage-chip { padding: 0 10px; } }
+@media (min-width: 1024px) { .usage-chip-five { display: inline; } }
+/* the card fades in on hover or focus, and out a little quicker; phones open the sheet instead */
+.usage-hover { pointer-events: none; visibility: hidden; position: absolute; top: 100%; right: 0; z-index: 30; width: 290px; padding-top: 8px; opacity: 0; transition: opacity var(--dur-exit) ease-in, visibility var(--dur-exit) ease-in; }
+.usage-chip-wrap:hover .usage-hover, .usage-chip-wrap:focus-within .usage-hover { pointer-events: auto; visibility: visible; opacity: 1; transition-duration: var(--dur-small); transition-timing-function: var(--ease-out-soft); }
+@media (max-width: 767.98px) { .usage-hover { display: none; } }
+.usage-hover-card { border: 1px solid var(--line); border-radius: 24px; background: var(--panel); padding: 16px; box-shadow: var(--shadow-lg); }
+.usage-sum { display: flex; flex-direction: column; gap: 12px; font-size: 12px; }
+.usage-sum-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.usage-sum-title { font-weight: 600; color: var(--fg); }
+.usage-sum-side, .usage-sum-pct { margin-left: auto; }
+.usage-sum-side { color: var(--fg-2); }
+.usage-sum-pct { font-weight: 600; }
+.usage-sum-note { margin-top: 4px; color: var(--fg-3); }
+.usage-sum-part { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.usage-sum-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.usage-sum-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.usage-sum-value { font-weight: 600; color: var(--fg); }
+.more-phone { display: none; }
+@media (max-width: 767.98px) { .more-phone { display: flex; } .more-wide { display: none; } }
+@media (prefers-reduced-motion: reduce) { .usage-hover { transition: opacity var(--dur-exit) linear; } }
