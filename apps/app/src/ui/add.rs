@@ -19,6 +19,8 @@ use crate::{api, dom};
 pub enum ActionSheet {
     NewSession(String),
     Edit(String),
+    /// Add a machine, over whatever screen is showing (+ with no machine online)
+    Add,
 }
 
 static ACTION: GlobalSignal<Option<ActionSheet>> = Signal::global(|| None);
@@ -37,6 +39,7 @@ pub fn ActionSheets() -> Element {
     let close = move |_| *ACTION_OPEN.write() = false;
     match ACTION() {
         Some(ActionSheet::NewSession(id)) => rsx! { NewSessionSheet { open, on_close: close, host: id } },
+        Some(ActionSheet::Add) => rsx! { MachineSheet { open, on_close: close, edit: None } },
         Some(ActionSheet::Edit(id)) => {
             let edit = hub.read().hosts.iter().find(|h| h.config.id == id).map(|h| h.config.clone());
             rsx! { MachineSheet { open: open && edit.is_some(), on_close: close, edit } }

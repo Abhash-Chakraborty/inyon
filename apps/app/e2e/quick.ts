@@ -335,13 +335,13 @@ try {
     await page.keyboard.press('Escape')
     await newSheet.waitFor({ state: 'detached' })
 
-    // a right click on nothing in particular: Search… and New session…, with their keys
+    // a right click on nothing in particular: Back and Reload, then Search… and New session…, with their keys
     await page.goto(`${base}/next/`)
     await page.locator('.card').nth(3).waitFor()
     await page.locator('.topbar').click({ button: 'right', position: { x: 700, y: 30 } })
     await page.locator('.menu').waitFor()
     const pageMenu = await page.locator('.menu .menu-item').evaluateAll((els) => els.map((e) => [...e.childNodes].filter((n) => n.nodeType !== Node.COMMENT_NODE).map((n) => n.textContent?.trim()).filter(Boolean).join(' ')))
-    check(pageMenu.join('|') === `Search… ${searchKey}|New session… ${newKey}`, `${label}: the menu on empty space (${pageMenu})`)
+    check(pageMenu.join('|') === `Back|Reload|Search… ${searchKey}|New session… ${newKey}`, `${label}: the menu on empty space (${pageMenu})`)
     await page.locator('.menu .menu-item', { hasText: 'Search…' }).click()
     await quick.waitFor()
     await layout(page, label)
@@ -355,8 +355,13 @@ try {
     for (const h of state.hosts) h.status = 'error'
     publish('overview')
     await page.waitForTimeout(200)
+    const at = page.url()
     await start.click()
-    check(await until(() => page.url().endsWith('/next/machines?add=1')), `${label}: with nothing online it adds a machine (${page.url()})`)
+    const add = page.getByRole('dialog', { name: 'Add a machine' })
+    check(await until(async () => (await add.count()) === 1), `${label}: with nothing online it adds a machine`)
+    check(page.url() === at, `${label}: over the screen it was on (${page.url()})`)
+    await page.keyboard.press('Escape')
+    await add.waitFor({ state: 'detached' })
     await ctx.close()
   }
 
