@@ -224,7 +224,7 @@ fn remove_file(key: &str, id: &str) {
 }
 
 /// `draft`: the pane's draft as the hub last sent it (its text, when, and whether the terminal
-/// wrote it). `controls`: the model, effort and mode, as one line. `disabled` keeps anything
+/// wrote it). `controls`: the model, effort, mode and goal chips. `disabled` keeps anything
 /// from going out; `offline` also greys the box out (not while the first connection opens).
 #[component]
 pub fn Composer(
@@ -235,7 +235,7 @@ pub fn Composer(
     disabled: bool,
     #[props(default)] offline: bool,
     draft: Option<(String, u64, bool)>,
-    controls: String,
+    controls: Option<super::controls::Controls>,
     on_sent: EventHandler<()>,
 ) -> Element {
     let chats = use_context::<Signal<Chats>>();
@@ -561,12 +561,18 @@ pub fn Composer(
         (false, true) => "composer-box composer-drag",
         _ => "composer-box",
     };
+    // Claude Code's ultracode is on: the box carries the label Claude draws on its own
+    let ultracode = controls.as_ref().is_some_and(|c| c.ultracode);
+    let box_class = if ultracode { format!("{box_class} ultracode-box") } else { box_class.to_string() };
     rsx! {
         div { id: ZONE, class: "composer fade-in",
             div {
                 class: box_class,
                 // measured again once the page's styles and fonts settle, or the width changes
                 onresize: move |_| dom::autosize(BOX, 0.4),
+                if ultracode {
+                    span { class: "ultracode-label", "aria-hidden": "true", "ultracode" }
+                }
                 if !list.is_empty() {
                     div { class: "attach-row no-scrollbar",
                         for a in list {
@@ -592,8 +598,8 @@ pub fn Composer(
                     if touch {
                         ToolButton { label: "Take a photo", onpress: move |_| files::pick(PICK_PHOTO), Glyph { icon: Icon::Camera, size: 17 } }
                     }
-                    if !controls.is_empty() {
-                        span { class: "composer-controls mono truncate", title: "Model, effort and mode", "{controls}" }
+                    if let Some(c) = controls.clone() {
+                        super::controls::ControlChips { c }
                     }
                     span { class: "composer-note truncate", "{note}" }
                     button {

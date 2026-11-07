@@ -5,6 +5,7 @@ mod add;
 mod chat;
 mod composer;
 mod connect;
+mod controls;
 mod icons;
 mod kit;
 mod login;
