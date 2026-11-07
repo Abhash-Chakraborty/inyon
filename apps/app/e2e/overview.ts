@@ -698,7 +698,20 @@ try {
     await page.keyboard.press('Enter')
     await page.getByText('The pane closed').waitFor()
     await page.screenshot({ path: path.join(shots, 'terminal-390-light-closed.png') })
-    await page.getByRole('button', { name: 'Reconnect' }).click()
+    const reconnect = page.getByRole('button', { name: 'Reconnect' })
+    // nothing of the terminal's own may sit over the cover: the WebGL renderer's link layer is a
+    // canvas with a z-index, and it can still be there when the pane closes (a stand-in here)
+    const onTop = await reconnect.evaluate((b) => {
+      const layer = document.createElement('canvas')
+      layer.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:2'
+      document.querySelector('#term-screen')?.append(layer)
+      const r = b.getBoundingClientRect()
+      const hit = b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+      layer.remove()
+      return hit
+    })
+    check(onTop, `terminal: Reconnect is on top of the ${renderer} renderer's layers`)
+    await reconnect.click({ timeout: 5_000 })
     check((await frames('term.open', 1, at)).length === 1, 'terminal: Reconnect opens it again')
 
     // the hub restarting: the socket comes back and the terminal opens on it again

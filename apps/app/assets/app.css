@@ -880,8 +880,9 @@ input:focus-visible { outline: none; }
 .term { display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--bg); }
 .term-stage { position: relative; min-height: 0; flex: 1; }
 /* xterm.js fills this; the padding keeps the text off the edges, and the phone keyboard's share is
-   added to the bottom by term.ts where the keyboard covers the page */
-.term-screen { position: absolute; inset: 0; padding: 6px 4px 0 8px; }
+   added to the bottom by term.ts where the keyboard covers the page. It's isolated so the WebGL
+   renderer's link layer, which has a z-index, stays under the covers and the status drawn after it */
+.term-screen { position: absolute; inset: 0; isolation: isolate; padding: 6px 4px 0 8px; }
 .term-screen .xterm { height: 100%; }
 /* xterm.css paints the viewport black, and it runs a few pixels past the last row */
 .term-screen .xterm .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
