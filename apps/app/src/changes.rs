@@ -16,6 +16,8 @@ pub struct Edit {
     pub input: Value,
     pub meta: Option<ToolResultMeta>,
     pub ts: String,
+    /// its result has come
+    pub done: bool,
 }
 
 /// A file the agent edited in this conversation, with every edit in the order made.
@@ -28,8 +30,9 @@ pub struct FileChange {
     pub created: bool,
 }
 
+/// The lines `s` holds: none when it's empty, and a last newline doesn't start another.
 fn lines_of(s: &str) -> u64 {
-    s.split('\n').count() as u64
+    s.lines().count() as u64
 }
 
 /// Every file the agent edited in this conversation, the one edited last first. A failed edit
@@ -62,7 +65,7 @@ pub fn changes(items: &[ChatItem]) -> Vec<FileChange> {
                 Some(at) => files.remove(at),
                 None => FileChange { path: p.clone(), edits: vec![], add: 0, del: 0, created: false },
             };
-            f.edits.push(Edit { name: name.clone(), input: input.clone(), meta: meta.cloned(), ts: ts.clone() });
+            f.edits.push(Edit { name: name.clone(), input: input.clone(), meta: meta.cloned(), ts: ts.clone(), done: r.is_some() });
             let s = |k: &str| input.get(k).and_then(Value::as_str);
             if let Some(patch) = meta.and_then(|m| m.patch.as_ref()).filter(|p| !p.is_empty()) {
                 for h in patch {
@@ -79,6 +82,13 @@ pub fn changes(items: &[ChatItem]) -> Vec<FileChange> {
             } else if name == "Edit" && s("new_string").is_some() {
                 f.add += lines_of(s("new_string").unwrap_or(""));
                 f.del += lines_of(s("old_string").unwrap_or(""));
+            } else if name == "MultiEdit" {
+                // without the result's patch, each of its edits counts as an Edit would
+                for e in input.get("edits").and_then(Value::as_array).into_iter().flatten() {
+                    let s = |k: &str| e.get(k).and_then(Value::as_str).unwrap_or("");
+                    f.add += lines_of(s("new_string"));
+                    f.del += lines_of(s("old_string"));
+                }
             }
             if meta.and_then(|m| m.created) == Some(true) {
                 f.created = true;
@@ -205,7 +215,7 @@ pub fn append_to(draft: &str, text: &str) -> String {
 // ---------- preview ----------
 
 /// The dev servers the chat's last 400 items mention (`localhost:5173`, `my-box:3000`), as
-/// addresses on `hostname`, the six mentioned last.
+/// addresses on `hostname`, the six mentioned last (one mentioned again counts as mentioned then).
 pub fn preview_suggestions(items: &[ChatItem], hostname: &str) -> Vec<String> {
     let mut out: Vec<String> = vec![];
     for i in &items[items.len().saturating_sub(400)..] {
@@ -217,14 +227,32 @@ pub fn preview_suggestions(items: &[ChatItem], hostname: &str) -> Vec<String> {
         for port in ports(t) {
             if (3000..=5999).contains(&port) || (8000..=8009).contains(&port) {
                 let u = format!("http://{hostname}:{port}");
-                if !out.contains(&u) {
-                    out.push(u);
-                }
+                out.retain(|x| *x != u);
+                out.push(u);
             }
         }
     }
     let skip = out.len().saturating_sub(6);
     out.split_off(skip)
+}
+
+/// Where the browser reaches a dev server on the session's machine: the hub's own name for the
+/// hub's machine, an SSH server's own address, and nothing for a machine joined over its link,
+/// whose address the browser doesn't know.
+pub fn server_host(kind: inyon_protocol::HostKind, target: Option<&str>, hub: &str) -> Option<String> {
+    use inyon_protocol::HostKind;
+    match kind {
+        HostKind::Local => Some(hub.to_string()).filter(|h| !h.is_empty()),
+        HostKind::Ssh => {
+            let t = target?.rsplit('@').next()?;
+            let name = match t.strip_prefix('[') {
+                Some(v6) => format!("[{}]", v6.split(']').next()?),
+                None => t.split(':').next()?.to_string(),
+            };
+            (!name.is_empty()).then_some(name)
+        }
+        _ => None,
+    }
 }
 
 /// The ports of every `http(s)://name:port` in `t`, where the name is `localhost`, `127.0.0.1` or
@@ -263,22 +291,14 @@ pub fn preview_address(typed: &str) -> String {
     }
 }
 
-/// `scheme://host[:port]` of a link, lower case and without a default port; None when it isn't one.
-pub fn origin(url: &str) -> Option<String> {
-    let (scheme, rest) = url.split_once("://")?;
-    let scheme = scheme.to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
+/// `scheme://host[:port]` of a link as the browser reads it (lower case, `%68` decoded, no
+/// default port); None when it isn't an http or https link.
+pub fn origin(link: &str) -> Option<String> {
+    let u = url::Url::parse(link.trim()).ok()?;
+    if !matches!(u.scheme(), "http" | "https") || u.host_str().is_none_or(str::is_empty) {
         return None;
     }
-    let host = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?.to_ascii_lowercase();
-    if host.is_empty() {
-        return None;
-    }
-    let host = match (scheme.as_str(), host.strip_suffix(":80"), host.strip_suffix(":443")) {
-        ("http", Some(h), _) | ("https", _, Some(h)) => h.to_string(),
-        _ => host,
-    };
-    Some(format!("{scheme}://{host}"))
+    Some(u.origin().ascii_serialization())
 }
 
 /// Why the Preview tab won't show an address: it is Inyon itself (this app, or a hub it's paired
@@ -380,6 +400,21 @@ mod tests {
     }
 
     #[test]
+    fn counts_without_a_patch_take_no_empty_last_line_and_add_up_a_multiedit() {
+        let items = vec![
+            call(1, "t1", "Edit", json!({ "file_path": "a.rs", "old_string": "gone\n", "new_string": "" })),
+            call(2, "t2", "MultiEdit", json!({ "file_path": "b.rs", "edits": [{ "old_string": "a", "new_string": "b\nc" }, { "old_string": "d\ne", "new_string": "f" }] })),
+            result(3, "t2", false, None),
+        ];
+        let c = changes(&items);
+        let of = |p: &str| c.iter().find(|f| f.path == p).map(|f| (f.add, f.del));
+        assert_eq!(of("a.rs"), Some((0, 1)));
+        assert_eq!(of("b.rs"), Some((3, 3)));
+        // an edit whose result hasn't come yet is still under way
+        assert_eq!(c.iter().map(|f| (f.path.as_str(), f.edits[0].done)).collect::<Vec<_>>(), [("b.rs", true), ("a.rs", false)]);
+    }
+
+    #[test]
     fn a_diffs_lines_are_numbered_in_their_own_file() {
         let h = vec![
             Hunk { old_start: 10, new_start: 12, lines: vec![" a".into(), "-b".into(), "+c".into(), "\\ No newline at end of file".into(), " d".into()] },
@@ -426,6 +461,22 @@ mod tests {
             text(2, "see https://my-box:3000, not http://localhost:22 or http://localhost:9000 or http://a.b:3000 or http://localhost:30001x"),
         ];
         assert_eq!(preview_suggestions(&items, "studio"), ["http://studio:5173", "http://studio:8000", "http://studio:3000"]);
+        // seven servers, then the first again: it's one of the six mentioned last
+        let many: Vec<ChatItem> = (0..7).map(|n| text(n, &format!("http://localhost:{}", 5170 + n))).chain([text(8, "back on http://localhost:5170")]).collect();
+        let six = preview_suggestions(&many, "studio");
+        assert_eq!(six.len(), 6);
+        assert_eq!(six.last().map(String::as_str), Some("http://studio:5170"));
+        assert!(!six.contains(&"http://studio:5171".to_string()));
+    }
+
+    #[test]
+    fn dev_servers_are_suggested_where_the_browser_can_reach_them() {
+        use inyon_protocol::HostKind;
+        assert_eq!(server_host(HostKind::Local, None, "studio").as_deref(), Some("studio"));
+        assert_eq!(server_host(HostKind::Ssh, Some("sam@build.lan"), "studio").as_deref(), Some("build.lan"));
+        assert_eq!(server_host(HostKind::Ssh, Some("build.lan:2222"), "studio").as_deref(), Some("build.lan"));
+        assert_eq!(server_host(HostKind::Ssh, Some("sam@[fd00::1]:22"), "studio").as_deref(), Some("[fd00::1]"));
+        assert_eq!(server_host(HostKind::Node, None, "studio"), None);
     }
 
     #[test]
@@ -438,6 +489,10 @@ mod tests {
         assert_eq!(preview_address("box:3000"), "http://box:3000");
         assert_eq!(preview_address("https://x"), "https://x");
         assert_eq!(origin("HTTP://Box:80/a?b"), Some("http://box".into()));
+        // as the browser reads the address: an escaped letter is the same host
+        assert!(preview_refused("https://%68ub.example/api/not-found", &apps));
+        assert!(preview_refused("https://HUB.example./", &["https://hub.example.".to_string()]));
+        assert_eq!(origin("ftp://hub.example"), None);
     }
 
     #[test]

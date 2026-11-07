@@ -34,10 +34,13 @@ pub fn context_of(status: Option<&AgentStatus>, info: Option<&ChatInfo>) -> Cont
     } else {
         stats.and_then(|s| s.context_tokens).map(|n| n.0).or(if transcript_newer { None } else { status.and_then(|s| s.context_used).map(|n| n.0) })
     };
-    let pct = match (live, status.and_then(|s| s.context_pct)) {
-        (true, Some(p)) => Some(p.0),
+    let reported = status.and_then(|s| s.context_pct).map(|p| p.0);
+    let pct = match (live, reported) {
+        (true, Some(p)) => Some(p),
         _ => match (used, size) {
-            (Some(u), Some(s)) if u > 0.0 => Some((u / s * 100.0).min(100.0)),
+            (Some(u), Some(s)) => Some((u / s * 100.0).min(100.0)),
+            // a share with no count beside it, while the transcript has nothing newer
+            (None, _) if !transcript_newer => reported,
             _ => None,
         },
     };
@@ -98,8 +101,9 @@ fn Meter(pct: f64, #[props(default)] class: String) -> Element {
 }
 
 #[component]
-fn RateRow(label: String, window: Option<inyon_protocol::RateWindow>) -> Element {
-    let clock = platform::clock();
+fn RateRow(label: String, window: Option<inyon_protocol::RateWindow>, now: f64) -> Element {
+    // `now` comes from the panel's tick, so the countdown and a window's reset move on with it
+    let clock = crate::format::Clock { now, ..platform::clock() };
     let Some(w) = f::live_window(window.as_ref(), clock.now) else { return rsx! {} };
     let tone = if w.pct >= 85.0 {
         "fg-danger"
@@ -236,8 +240,8 @@ pub fn UsagePanel(status: Option<AgentStatus>, info: Option<ChatInfo>, agent: Op
                             }
                         }
                     }
-                    RateRow { label: "5-hour window", window: st.and_then(|s| s.five_hour.clone()) }
-                    RateRow { label: "Weekly", window: st.and_then(|s| s.seven_day.clone()) }
+                    RateRow { label: "5-hour window", window: st.and_then(|s| s.five_hour.clone()), now: now }
+                    RateRow { label: "Weekly", window: st.and_then(|s| s.seven_day.clone()), now: now }
                 }
             }
             div { class: "usage-stats",
@@ -311,6 +315,13 @@ mod tests {
         let c = context_of(Some(&live), Some(&i));
         assert_eq!((c.used, c.pct, c.compacted), (Some(12000.0), Some(6.0), true));
         assert_eq!(context_of(None, None), Context::default());
+        // a share reported with no count, and a count of nothing in a known window
+        let pct_only = status(json!({ "contextPct": 40, "updatedAt": 1000 }));
+        assert_eq!(context_of(Some(&pct_only), None).pct, Some(40.0));
+        let empty = status(json!({ "contextUsed": 0, "contextSize": 200000, "updatedAt": 1000 }));
+        assert_eq!(context_of(Some(&empty), None).pct, Some(0.0));
+        let i = info(json!({ "contextTokens": 0, "contextAt": 9000, "turns": 1, "compactions": 1 }));
+        assert_eq!(context_of(Some(&status(json!({ "contextSize": 200000, "updatedAt": 1000 }))), Some(&i)).pct, Some(0.0));
     }
 
     #[test]

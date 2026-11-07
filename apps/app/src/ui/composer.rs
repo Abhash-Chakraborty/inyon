@@ -33,8 +33,9 @@ const DRAFT_MS: u32 = 450;
 
 /// Text another part of the session's screen adds to its message box (lib/compose.ts): a file
 /// mention from the Files tab, or review comments from a diff. Numbered, so the same text twice
-/// still lands.
-static COMPOSE: GlobalSignal<Option<(u64, String, String)>> = Signal::global(|| None);
+/// still lands, and kept in order until the box takes them, so two at once both land.
+static COMPOSE: GlobalSignal<Vec<(u64, String, String)>> = Signal::global(Vec::new);
+static COMPOSE_N: GlobalSignal<u64> = Signal::global(|| 0);
 
 /// Adds `text` to the session's message box, where it can still be changed before sending; false
 /// when that chat's box isn't on screen.
@@ -43,8 +44,9 @@ pub fn compose(host: &str, pane: &str, text: &str) -> bool {
     if !OPEN_BOXES.with(|b| b.borrow().get(&key).is_some_and(|n| *n > 0)) {
         return false;
     }
-    let n = COMPOSE.peek().as_ref().map_or(0, |c| c.0) + 1;
-    *COMPOSE.write() = Some((n, key, text.to_string()));
+    let n = *COMPOSE_N.peek() + 1;
+    *COMPOSE_N.write() = n;
+    COMPOSE.write().push((n, key, text.to_string()));
     true
 }
 
@@ -361,16 +363,18 @@ pub fn Composer(
                 }
             })
         });
-        let seen = use_hook(|| Rc::new(Cell::new(COMPOSE.peek().as_ref().map_or(0, |c| c.0))));
+        let seen = use_hook(|| Rc::new(Cell::new(*COMPOSE_N.peek())));
         let set_text = set_text.clone();
         use_effect(move || {
-            let Some((n, k, t)) = COMPOSE() else { return };
-            if k != key || n <= seen.get() {
-                return;
+            let mine: Vec<(u64, String)> = COMPOSE().iter().filter(|(n, k, _)| *k == key && *n > seen.get()).map(|(n, _, t)| (*n, t.clone())).collect();
+            let Some(last) = mine.last().map(|m| m.0) else { return };
+            seen.set(last);
+            {
+                let key = key.clone();
+                spawn(async move { COMPOSE.write().retain(|(n, k, _)| *k != key || *n > last) });
             }
-            seen.set(n);
             // read the box first: a borrow held while set_text writes it would panic
-            let next = crate::changes::append_to(&text.peek(), &t);
+            let next = mine.iter().fold(text.peek().clone(), |box_text, (_, t)| crate::changes::append_to(&box_text, t));
             set_text(next);
             spawn(async {
                 dom::focus(BOX);

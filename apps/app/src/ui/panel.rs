@@ -5,7 +5,7 @@
 //! up it sits beside the chat; below that the header's Activity button opens the same bodies in a
 //! sheet.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::future::Future;
 use std::rc::Rc;
@@ -112,6 +112,9 @@ static FILES_GO: GlobalSignal<Option<(u64, bool, String)>> = Signal::global(|| N
 /// A file to show the diff of in the working tree, from its right-click menu.
 static TREE_PICK: GlobalSignal<Option<String>> = Signal::global(|| None);
 static OP_N: GlobalSignal<u64> = Signal::global(|| 0);
+/// Bumped when a right-click menu's Mention puts a path in the box, so the phone's sheet over the
+/// box gets out of the way.
+static MENTIONED: GlobalSignal<u64> = Signal::global(|| 0);
 
 /// What the panel's right-click menus do.
 #[derive(Debug, Clone, PartialEq)]
@@ -130,7 +133,9 @@ pub enum PanelOp {
 pub fn run(op: PanelOp) {
     match op {
         PanelOp::Mention { host, pane, path } => {
-            mention(&host, &pane, &path);
+            if mention(&host, &pane, &path) {
+                *MENTIONED.write() += 1;
+            }
         }
         PanelOp::Open(dir, path) => {
             let n = *OP_N.peek() + 1;
@@ -156,6 +161,8 @@ struct Load<T> {
     data: Option<T>,
     error: Option<String>,
     busy: bool,
+    /// `data` is for the key before: shown while the next answer comes, but not to act on
+    stale: bool,
 }
 
 fn use_load<K, T, F, Fut>(key: K, load: F) -> (Signal<Load<T>>, Signal<u32>)
@@ -165,15 +172,21 @@ where
     F: Fn(K) -> Fut + 'static,
     Fut: Future<Output = Result<T, ApiError>> + 'static,
 {
-    let mut state = use_signal(|| Load { data: None, error: None, busy: true });
+    let mut state = use_signal(|| Load { data: None, error: None, busy: true, stale: false });
     let rev = use_signal(|| 0u32);
     let load = use_hook(|| Rc::new(load));
     let gen = use_hook(|| Rc::new(Cell::new(0u32)));
+    let last = use_hook(|| Rc::new(RefCell::new(None::<K>)));
     use_effect(use_reactive!(|key| {
         let _ = rev();
         let n = gen.get() + 1;
         gen.set(n);
-        state.write().busy = true;
+        let moved = last.borrow().as_ref().is_some_and(|k| *k != key);
+        *last.borrow_mut() = Some(key.clone());
+        let mut s = state.write();
+        s.busy = true;
+        s.stale |= moved;
+        drop(s);
         let fut = load(key.clone());
         let gen = gen.clone();
         spawn(async move {
@@ -183,6 +196,7 @@ where
             }
             let mut s = state.write();
             s.busy = false;
+            s.stale = false;
             match r {
                 Ok(d) => {
                     s.data = Some(d);
@@ -247,7 +261,7 @@ pub fn SidePanel(of: Of, tab: Signal<Tab>, closing: bool) -> Element {
     let list = tabs(changes.len(), running, pages, on);
     let at = list.iter().position(|t| t.0 == on).unwrap_or(0);
     let ids: Vec<Tab> = list.iter().map(|t| t.0).collect();
-    let suggestions = changes::preview_suggestions(&items, &hostname());
+    let suggestions = suggestions(&items, &of.host, &hub.read());
     let mut tab_w = tab;
     let route = use_context::<Signal<crate::route::Route>>();
     // the tab row scrolls sideways like every other (kit.rs Segmented): the picked tab comes into
@@ -344,6 +358,13 @@ pub fn ActivitySheet(of: Of, open: bool, on_close: EventHandler<()>) -> Element 
     }
     let on = tab();
     let composed = EventHandler::new(move |_| on_close.call(()));
+    let seen = use_hook(|| Rc::new(Cell::new(*MENTIONED.peek())));
+    use_effect(move || {
+        let n = MENTIONED();
+        if seen.replace(n) != n {
+            on_close.call(());
+        }
+    });
     rsx! {
         Sheet { open, on_close, wide: true, title: "Activity",
             div { class: "pp-sheet-tabs",
@@ -368,7 +389,7 @@ pub fn ActivitySheet(of: Of, open: bool, on_close: EventHandler<()>) -> Element 
                 match on {
                     Tab::Changes => rsx! { ChangesTab { host: of.host.clone(), pane: of.pane.clone(), changes: changes::changes(&items), on_composed: composed } },
                     Tab::Files => rsx! { FilesTab { host: of.host.clone(), pane: of.pane.clone(), on_composed: composed } },
-                    Tab::Preview => rsx! { PreviewTab { store: key.clone(), suggestions: vec![] } },
+                    Tab::Preview => rsx! { PreviewTab { store: key.clone(), suggestions: suggestions(&items, &of.host, &hub.read()) } },
                     Tab::Pages => rsx! { div { class: "pp-pad", super::pages::PhonePages { here: of.here.clone() } } },
                     _ => rsx! { ActivityTab { host: of.host.clone(), pane: of.pane.clone(), info: info.clone() } },
                 }
@@ -382,9 +403,16 @@ pub fn ActivitySheet(of: Of, open: bool, on_close: EventHandler<()>) -> Element 
 /// subagent's conversation. Mounted once by the session's screen.
 #[component]
 pub fn PanelSheets(of: Of) -> Element {
+    // a task or subagent picked in one session isn't opened again in the next
+    let key = of.key();
+    use_effect(use_reactive!(|key| {
+        let _ = key;
+        *TASK.write() = None;
+        *SUB.write() = None;
+    }));
     rsx! {
         CommentSheet {}
-        TaskOutputSheet { host: of.host.clone() }
+        TaskOutputSheet { host: of.host.clone(), pane: of.pane.clone() }
         SubagentSheet { host: of.host.clone(), pane: of.pane.clone(), ctx: of.ctx.clone() }
     }
 }
@@ -400,8 +428,8 @@ fn ChangesTab(host: String, pane: String, changes: Vec<FileChange>, on_composed:
         tree.set(t);
         platform::save(CHANGES_KEY, if t { "tree" } else { "chat" });
     };
-    // what the chat has done lately: the tree looks again
-    let poke = changes.iter().map(|c| c.edits.len()).sum::<usize>();
+    // what the chat has done lately, an edit once more when its result comes: the tree looks again
+    let poke = changes.iter().flat_map(|c| &c.edits).map(|e| 1 + usize::from(e.done)).sum::<usize>();
     rsx! {
         div { class: "pp-col",
             div { class: "pp-seg",
@@ -761,7 +789,10 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                 let r = if what == "commit" {
                     let message = msg.peek().clone();
                     api::git_commit(&host, &pane, &message).await.map(|c| {
-                        msg.set(String::new());
+                        // a message typed while it committed stays
+                        if *msg.peek() == message {
+                            msg.set(String::new());
+                        }
                         format!("Committed {}", c.commit)
                     })
                 } else {
@@ -842,7 +873,8 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                     }
                 }
                 if let Some(c) = cur {
-                    TreeDiff { key: "{c.path}:{poke}:{files_len}", host: host.clone(), pane: pane.clone(), path: c.path.clone() }
+                    // read again with the status: Refresh, the agent's edits, a file coming or going
+                    TreeDiff { key: "{c.path}:{poke}:{files_len}:{rev}", host: host.clone(), pane: pane.clone(), path: c.path.clone() }
                 }
                 form {
                     class: "pp-commit",
@@ -942,7 +974,8 @@ fn FilesTab(host: String, pane: String, on_composed: Option<EventHandler<()>>) -
             div { class: "pp-scroll pp-list",
                 if let Some(e) = &d.error {
                     Empty { icon: Icon::Folder, title: "Couldn't open this folder", "{e}" }
-                } else if d.data.is_none() && d.busy {
+                } else if (d.data.is_none() || d.stale) && d.busy {
+                    // the folder before stays out of reach while this one is read
                     WaitRows { label: "Reading the folder", class: "pp-wait" }
                 } else if d.data.as_ref().is_none_or(|x| x.entries.is_empty()) {
                     Empty { icon: Icon::Folder, title: "Empty folder" }
@@ -1025,8 +1058,11 @@ fn FileViewer(host: String, pane: String, path: String, on_back: EventHandler<()
                         Some(api::FileView::Large { size, .. }) => rsx! {
                             Empty { icon: Icon::File, title: "Too large to show", {format!("{}.", f::bytes(*size))} }
                         },
-                        Some(api::FileView::Text { text, .. }) if md && !raw() => rsx! {
+                        Some(api::FileView::Text { text, truncated, size, .. }) if md && !raw() => rsx! {
                             div { class: "pp-md", super::md::Markdown { text: text.clone() } }
+                            if *truncated {
+                                div { class: "pp-truncated", {format!("Showing the first 512 KB of {}.", f::bytes(*size))} }
+                            }
                         },
                         Some(api::FileView::Text { text, truncated, size, .. }) => rsx! {
                             pre { class: "pp-code mono", code { "{text}" } }
@@ -1118,18 +1154,19 @@ pub fn task_line(t: &BackgroundTask, now: f64) -> String {
     match (t.status, t.r#type) {
         (TaskStatus::Running, TaskType::Monitor) => t.started_at.as_ref().map_or("Watching".into(), |s| format!("Watching · {}", f::since(s.clone(), now))),
         (TaskStatus::Running, _) => format!("Running · {}", t.started_at.as_ref().map(|s| f::since(s.clone(), now)).unwrap_or_default()),
-        (s, TaskType::Monitor) => format!("{}{}", status_word(s).to_lowercase(), t.started_at.as_ref().map(|x| format!(" · {}", f::since(x.clone(), now))).unwrap_or_default()),
+        // a monitor that ended says when it ended, as a task does
+        (s, TaskType::Monitor) => format!("{}{}", status_word(s).to_lowercase(), t.ended_at.as_ref().map(|x| format!(" · {} ago", f::since(x.clone(), now))).unwrap_or_default()),
         (s, _) => format!("{}{}", status_word(s), t.ended_at.as_ref().map(|x| format!(" · {} ago", f::since(x.clone(), now))).unwrap_or_default()),
     }
 }
 
 /// The line under a subagent: its kind, how it's doing, and whether it runs in the background.
 pub fn sub_line(a: &SubagentInfo, now: f64) -> String {
-    let since = a.started_at.as_ref().map(|s| f::since(s.clone(), now)).unwrap_or_default();
     let state = match a.status {
-        SubagentStatus::Running => format!("running {since}"),
+        SubagentStatus::Running => format!("running {}", a.started_at.as_ref().map(|s| f::since(s.clone(), now)).unwrap_or_default()),
         SubagentStatus::Error => "failed".into(),
-        SubagentStatus::Done => format!("done {since} ago"),
+        // the record says when it started, not when it finished
+        SubagentStatus::Done => "done".into(),
     };
     format!("{} · {state}{}", a.r#type.as_deref().unwrap_or("agent"), if a.background == Some(true) { " · background" } else { "" })
 }
@@ -1270,21 +1307,38 @@ fn ActivityTab(host: String, pane: String, info: Option<ChatInfo>) -> Element {
     }
 }
 
+/// Whether a scrolled box shows its end, give or take a line.
+pub fn at_bottom(top: f64, height: f64, client: f64) -> bool {
+    height - top - client < 24.0
+}
+
 /// How often a running task's output is read while its sheet is open (the sheet says so).
 const TASK_REFRESH_MS: u32 = 3000;
 
 #[component]
-fn TaskOutputSheet(host: String) -> Element {
-    let task = TASK();
+fn TaskOutputSheet(host: String, pane: String) -> Element {
+    let chats = use_context::<Signal<Chats>>();
+    // the task as the session reports it now, so one that ends while it's open says so
+    let task = TASK().map(|t| {
+        let c = chats.read();
+        let now = c.get(&inyon_protocol::chat_key(&host, &pane)).and_then(|e| e.chat.info.as_ref()).and_then(|i| i.tasks.iter().find(|x| x.id == t.id).cloned());
+        now.unwrap_or(t)
+    });
     let mut out = use_signal(|| None::<String>);
     let gen = use_hook(|| Rc::new(Cell::new(0u32)));
+    let shown = use_hook(|| Rc::new(RefCell::new(None::<String>)));
     let id = task.as_ref().map(|t| (t.id.clone(), t.output_file.clone(), t.status));
     {
         let host = host.clone();
         use_effect(use_reactive!(|id| {
             let n = gen.get() + 1;
             gen.set(n);
-            out.set(None);
+            // the same task read once more (it ended) keeps its output on screen meanwhile
+            let same = id.as_ref().is_some_and(|i| shown.borrow().as_deref() == Some(i.0.as_str()));
+            *shown.borrow_mut() = id.as_ref().map(|i| i.0.clone());
+            if !same {
+                out.set(None);
+            }
             let Some((id, path, status)) = id.clone() else { return };
             let (host, gen) = (host.clone(), gen.clone());
             spawn(async move {
@@ -1293,13 +1347,20 @@ fn TaskOutputSheet(host: String) -> Element {
                     if gen.get() != n {
                         return;
                     }
-                    out.set(Some(match r {
+                    let text = match r {
                         Ok(o) => o.output,
                         Err(e) => format!("Could not read output: {}", e.message),
-                    }));
-                    // to its end, once it's on screen
-                    platform::sleep(30).await;
-                    dom::set_scroll_top("pp-task-output", 1e9);
+                    };
+                    // followed to its end while you're at the end; read further up, it stays put
+                    let first = out.peek().is_none();
+                    let at_end = dom::scroll_metrics("pp-task-output").is_none_or(|(top, height, client)| at_bottom(top, height, client));
+                    if out.peek().as_deref() != Some(text.as_str()) {
+                        out.set(Some(text));
+                        if first || at_end {
+                            platform::sleep(30).await;
+                            dom::set_scroll_top("pp-task-output", 1e9);
+                        }
+                    }
                     if status != TaskStatus::Running {
                         return;
                     }
@@ -1343,32 +1404,54 @@ fn TaskOutputSheet(host: String) -> Element {
     }
 }
 
+/// The subagent's own transcript: the one its tool call names, else the one with its description
+/// when only one has it, never a guess between two.
+fn subagent_file<'a>(list: &'a [api::SubagentFile], tool: &str, desc: &str) -> Option<&'a api::SubagentFile> {
+    if let Some(hit) = list.iter().find(|x| x.tool_use_id.as_deref() == Some(tool)) {
+        return Some(hit);
+    }
+    let mut same = list.iter().filter(|x| x.tool_use_id.is_none() && x.description.as_deref() == Some(desc));
+    let one = same.next()?;
+    same.next().is_none().then_some(one)
+}
+
 #[component]
 fn SubagentSheet(host: String, pane: String, ctx: Ctx) -> Element {
     let chats = use_context::<Signal<Chats>>();
-    let sub = SUB();
+    let key = inyon_protocol::chat_key(&host, &pane);
+    let info = chats.read().get(&key).and_then(|e| e.chat.info.clone());
+    // the subagent as the session reports it now, so one that finishes while it's open says so
+    let sub = SUB().map(|s| info.as_ref().and_then(|i| i.subagents.iter().find(|x| x.tool_use_id == s.tool_use_id).cloned()).unwrap_or(s));
     let mut items = use_signal(|| None::<Vec<ChatItem>>);
     let mut err = use_signal(String::new);
     let gen = use_hook(|| Rc::new(Cell::new(0u32)));
-    let key = inyon_protocol::chat_key(&host, &pane);
-    let transcript = chats.read().get(&key).and_then(|e| e.chat.info.as_ref()).and_then(|i| i.transcript_path.clone());
+    let shown = use_hook(|| Rc::new(RefCell::new(None::<String>)));
+    let transcript = info.as_ref().and_then(|i| i.transcript_path.clone());
     let id = sub.as_ref().map(|s| (s.tool_use_id.clone(), s.description.clone(), s.status));
     {
         let host = host.clone();
         use_effect(use_reactive!(|id, transcript| {
             let n = gen.get() + 1;
             gen.set(n);
-            items.set(None);
-            err.set(String::new());
-            let (Some((tool, desc, status)), Some(transcript)) = (id.clone(), transcript.clone()) else { return };
+            // the same subagent read once more (it finished) keeps its conversation meanwhile
+            let same = id.as_ref().is_some_and(|i| shown.borrow().as_deref() == Some(i.0.as_str()));
+            *shown.borrow_mut() = id.as_ref().map(|i| i.0.clone());
+            if !same {
+                items.set(None);
+                err.set(String::new());
+            }
+            let Some((tool, desc, status)) = id.clone() else { return };
+            // tried again when the session's record turns up
+            let Some(transcript) = transcript.clone() else {
+                err.set("This session's conversation isn't available yet, so neither is the subagent's.".into());
+                return;
+            };
             let (host, gen) = (host.clone(), gen.clone());
             spawn(async move {
                 loop {
                     let r = async {
                         let list = api::subagents(&host, &transcript).await.map_err(|e| e.message)?;
-                        let hit =
-                            list.iter().find(|x| x.tool_use_id.as_deref() == Some(tool.as_str())).or_else(|| list.iter().find(|x| x.description.as_deref() == Some(desc.as_str())));
-                        let Some(hit) = hit else { return Err("This subagent did not save a transcript".to_string()) };
+                        let Some(hit) = subagent_file(&list, &tool, &desc) else { return Err("This subagent did not save a transcript".to_string()) };
                         api::transcript(&host, &hit.path).await.map_err(|e| e.message)
                     }
                     .await;
@@ -1376,7 +1459,10 @@ fn SubagentSheet(host: String, pane: String, ctx: Ctx) -> Element {
                         return;
                     }
                     match r {
-                        Ok(v) => items.set(Some(v)),
+                        Ok(v) => {
+                            err.set(String::new());
+                            items.set(Some(v));
+                        }
                         Err(e) => err.set(e),
                     }
                     if status != SubagentStatus::Running {
@@ -1435,6 +1521,13 @@ fn hostname() -> String {
         Some(v6) => format!("[{}]", v6.split(']').next().unwrap_or("")),
         None => h.split(':').next().unwrap_or("").to_string(),
     }
+}
+
+/// The dev servers the chat mentions, on the session's machine as the browser reaches it; none
+/// when the browser can't (a machine joined over its link).
+fn suggestions(items: &[ChatItem], host: &str, hub: &crate::state::Hub) -> Vec<String> {
+    let at = hub.hosts.iter().find(|h| h.config.id == host).and_then(|h| changes::server_host(h.config.kind, h.config.target.as_deref(), &hostname()));
+    at.map_or_else(Vec::new, |at| changes::preview_suggestions(items, &at))
 }
 
 /// This app's own address and the hub's, which the Preview tab won't show.
@@ -1543,7 +1636,7 @@ mod tests {
     }
 
     #[test]
-    fn task_and_subagent_lines_read_as_the_web_app_writes_them() {
+    fn task_and_subagent_lines_say_how_long_and_when_they_ended() {
         use inyon_chat_core::format::Moment;
         let now = "2026-11-05T10:01:30Z".ms();
         let iso = |s: &str| s.to_string();
@@ -1555,10 +1648,15 @@ mod tests {
         assert_eq!(task_line(&t, now), "Completed · 5s ago");
         let m: BackgroundTask = serde_json::from_value(json!({ "id": "m", "type": "monitor", "description": "ci", "status": "running" })).unwrap();
         assert_eq!(task_line(&m, now), "Watching");
+        let m: BackgroundTask = serde_json::from_value(
+            json!({ "id": "m", "type": "monitor", "description": "ci", "status": "completed", "startedAt": iso("2026-11-05T09:00:00Z"), "endedAt": iso("2026-11-05T10:01:25Z") }),
+        )
+        .unwrap();
+        assert_eq!(task_line(&m, now), "completed · 5s ago");
         let a: SubagentInfo = serde_json::from_value(
             json!({ "toolUseId": "s", "type": "Explore", "description": "look", "status": "done", "background": true, "startedAt": iso("2026-11-05T10:01:25Z") }),
         )
         .unwrap();
-        assert_eq!(sub_line(&a, now), "Explore · done 5s ago · background");
+        assert_eq!(sub_line(&a, now), "Explore · done · background");
     }
 }

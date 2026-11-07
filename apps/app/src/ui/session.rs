@@ -248,14 +248,15 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         here: page_here.clone(),
                         side,
                         panel_on: show_panel && panel_tab() == Tab::Pages,
-                        on_panel: move |_| {
+                        // a plain shell has no side panel: its blueprints open in their own viewer
+                        on_panel: (agent.is_some() && !gone).then(|| EventHandler::new(move |_| {
                             if show_panel && *panel_tab.peek() == Tab::Pages {
                                 super::notices::set_prefs(|s| s.side_panel = false);
                             } else {
                                 super::notices::set_prefs(|s| s.side_panel = true);
                                 panel_tab.set(Tab::Pages);
                             }
-                        },
+                        })),
                     }
                     if let Some(s) = shown {
                         span { class: "pill session-pill",
