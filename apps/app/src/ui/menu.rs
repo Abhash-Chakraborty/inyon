@@ -54,6 +54,8 @@ pub enum Action {
     },
     /// the session header's ⋯: Remote Control, compact, rewind, fork, exit…
     Session(super::session_menu::SessionAct),
+    /// the composer's model, effort and mode menus
+    Control(super::controls::ControlAct),
     /// pins, parking, snoozes, tags and notes on one session or a selection (from 1.1)
     Org(super::organize::OrgOp),
     /// Quick access's own: a tab, a saved prompt sent, starred or removed (from 1.1)
@@ -244,6 +246,21 @@ pub fn drop_down(menu: &mut Signal<Option<Menu>>, anchor: &str, items: Vec<Item>
     }
     let (x, y) = dom::rect(anchor).map_or((8.0, 8.0), |(_, _, right, bottom)| ((right - 220.0).max(8.0), bottom + 4.0));
     menu.set(Some(Menu { x, y, items }));
+}
+
+/// A chip's menu at the bottom of the screen (the composer's model, effort and mode): over the
+/// chip with their left edges lined up.
+pub fn drop_up(menu: &mut Signal<Option<Menu>>, anchor: &str, items: Vec<Item>) {
+    if items.is_empty() {
+        return;
+    }
+    let (x, y) = dom::rect(anchor).map_or((8.0, 8.0), |(left, top, _, _)| (left, up_from(top, rows(&items))));
+    menu.set(Some(Menu { x, y, items }));
+}
+
+/// Where a menu of `n` rows starts so it ends just over something whose top is at `top`.
+pub fn up_from(top: f64, n: usize) -> f64 {
+    (top - 4.0 - (12.0 + 40.0 * n as f64)).max(8.0)
 }
 
 // ---------- a long press on a touch screen ----------
@@ -698,6 +715,7 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
         Action::Panel(op) => super::panel::run(op),
         Action::Settings(op) => super::settings::run(op),
         Action::Session(act) => super::session_menu::run(act, here),
+        Action::Control(act) => super::controls::run(act),
         Action::EndSession { host, pane } => {
             // from the session's own screen, the Overview after
             let own = matches!(&*here.peek(), Route::Session { host: h, pane: p, .. } if *h == host && *p == pane);

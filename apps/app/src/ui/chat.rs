@@ -135,11 +135,11 @@ fn load_more(chats: Signal<Chats>, key: &str, out: &Outbox) {
     out.send(state::wire2(&ClientMsg2::More { stream: key.to_string(), before }));
 }
 
-/// `controls`: the model, effort and mode as one line, for the message box. `connected`:
+/// `controls`: the model, effort, mode and goal chips for the message box. `connected`:
 /// messages can go to the agent; `offline`: the chat says it's reconnecting (not while the first
 /// connection is still opening).
 #[component]
-pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> Element {
+pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: Option<super::controls::Controls>) -> Element {
     let chats = use_context::<Signal<Chats>>();
     let out = outbox();
     let key = ctx.key.clone();

@@ -572,6 +572,38 @@ pub async fn ultracode(host: &str, pane: &str, on: bool) -> Result<(), ApiError>
     request("POST", &format!("{}/ultracode", pane_path(host, pane)), Some(serde_json::to_string(&On { on }).unwrap())).await.map(drop)
 }
 
+#[derive(Serialize)]
+struct Setting<'a> {
+    text: &'a str,
+    setting: bool,
+}
+
+/// A model, effort or goal change from the composer's controls: typed into the agent like a
+/// message, never shown as one.
+pub async fn setting(host: &str, pane: &str, text: &str) -> Result<(), ApiError> {
+    let body = serde_json::to_string(&Setting { text, setting: true }).unwrap();
+    request("POST", &format!("{}/send", pane_path(host, pane)), Some(body)).await.map(drop)
+}
+
+#[derive(Serialize)]
+struct Mode<'a> {
+    mode: &'a str,
+}
+
+pub async fn mode(host: &str, pane: &str, mode: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/mode", pane_path(host, pane)), Some(serde_json::to_string(&Mode { mode }).unwrap())).await.map(drop)
+}
+
+/// Forgets a model, effort or mode picked while the agent couldn't take it.
+pub async fn drop_chosen(host: &str, pane: &str) -> Result<(), ApiError> {
+    request("DELETE", &format!("{}/chosen", pane_path(host, pane)), None).await.map(drop)
+}
+
+/// The models (and OpenCode's agents) the machine's CLI offers now.
+pub async fn models(host: &str, pane: &str) -> Result<inyon_protocol::AgentCatalog, ApiError> {
+    parse(&request("GET", &format!("{}/models", pane_path(host, pane)), None).await?)
+}
+
 #[derive(Deserialize)]
 struct Forked {
     pane: String,

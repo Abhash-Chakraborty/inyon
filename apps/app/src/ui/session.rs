@@ -4,12 +4,12 @@
 //! views; a plain shell, or an agent that stays in its terminal, opens on the terminal.
 
 use dioxus::prelude::*;
-use inyon_chat_core::format::model_name;
 use inyon_chat_core::overview::{all_panes, pane_href, pane_title, terminal_name, PaneView};
 use inyon_chat_core::store::{ReplyFontSetting, Settings, ToolDetail};
 use inyon_protocol::{chat_key, AgentDef, AgentKind, ClientMsg2, ReplyFont, SkinTokens};
 
 use super::chat::ChatView;
+use super::controls::{Controls, Reported};
 use super::icons::{AgentMark, Glyph, Icon};
 use super::outbox;
 use super::panel::{self, ActivitySheet, PanelSheets, SidePanel, Tab};
@@ -23,12 +23,6 @@ use crate::{dom, format, platform};
 // each view rises in over the one it replaces
 const CHAT_KEY: &str = "chat";
 const TERMINAL_KEY: &str = "terminal";
-
-/// "Opus 4.8 · high · Plan": the model, effort and mode, as far as they're known.
-pub fn controls_line(model: Option<&str>, effort: Option<&str>, mode: Option<&str>, def: Option<&AgentDef>) -> String {
-    let mode = mode.filter(|m| !m.is_empty()).map(|m| def.and_then(|d| d.modes.iter().find(|o| o.id == m)).map_or(m.to_string(), |o| o.label.clone()));
-    [Some(model_name(model)), effort.map(str::to_string), mode].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
-}
 
 /// The reply font's class: the setting, or the agent's own when it's on Auto.
 pub fn font_class(setting: ReplyFontSetting, def: Option<&AgentDef>) -> &'static str {
@@ -118,6 +112,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let agent_info = r.and_then(|r| r.pane.agent.as_ref());
     let agent: Option<AgentKind> = agent_info.map(|a| a.kind).or(info.as_ref().and_then(|i| i.agent));
     let def = agent.map(|k| k.def());
+    let catalog = super::controls::use_catalog(&host, &pane, agent);
     let agent_name = agent_info.and_then(|a| a.custom.clone()).or(def.map(|d| d.name.clone())).unwrap_or_else(|| "the agent".into());
     let title = r
         .and_then(|r| r.pane.label.clone().filter(|l| !l.is_empty()).or_else(|| (r.pane.companion == Some(true)).then(|| "Companion".into())))
@@ -144,12 +139,6 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     .collect::<Vec<_>>()
     .join(" · ");
     let shown = r.and_then(|r| r.pane.agent.as_ref().map(|a| Shown::of(a, r.host)));
-    let controls = controls_line(
-        screen.as_ref().and_then(|s| s.model.as_deref()).or(info.as_ref().and_then(|i| i.model.as_deref())),
-        screen.as_ref().and_then(|s| s.effort.as_deref()),
-        screen.as_ref().and_then(|s| s.mode.as_deref()).or(info.as_ref().and_then(|i| i.mode.as_deref())),
-        def,
-    );
     // only the hub's own overview can say a pane is gone, not the copy a reload draws first
     // a chat page kept in the browser doesn't keep a pane alive; one the hub sends does
     let kept = c.get(&key).is_some_and(|e| e.chat.stale);
@@ -169,10 +158,35 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     };
     // the live numbers: Copilot and OpenCode report theirs in the transcript
     let live = agent_info.and_then(|a| a.status.clone());
+    let footer = live.clone();
     let status = match agent {
         Some(AgentKind::Copilot | AgentKind::Opencode) => info.as_ref().and_then(|i| i.status.clone()).or(live),
         _ => live,
     };
+    // the switch as the screen shows it, else as the hub last read it
+    let ultracode_on = screen.as_ref().and_then(|s| s.ultracode).or(agent_info.and_then(|a| a.ultracode)).or(info.as_ref().and_then(|i| i.ultracode)) == Some(true);
+    // the model, effort, mode and goal chips in the message box
+    let controls = agent.map(|kind| {
+        // OpenCode's footer names the model and variant it runs; its record keeps the numbers
+        let footer = footer.as_ref().filter(|l| kind == AgentKind::Opencode && l.model.is_some());
+        let reported = footer.or(status.as_ref());
+        Controls::of(
+            &host,
+            machine.as_deref().unwrap_or(&host),
+            &pane,
+            kind,
+            Reported {
+                catalog: catalog.as_ref(),
+                status: reported,
+                model: screen.as_ref().and_then(|s| s.model.as_deref()).or(info.as_ref().and_then(|i| i.model.as_deref())),
+                effort: screen.as_ref().and_then(|s| s.effort.as_deref()),
+                mode: screen.as_ref().and_then(|s| s.mode.as_deref()).or(agent_info.and_then(|a| a.mode.as_deref())).or(info.as_ref().and_then(|i| i.mode.as_deref())),
+                chosen: info.as_ref().and_then(|i| i.chosen.as_ref()),
+                goal: info.as_ref().and_then(|i| i.goal.as_ref()),
+                ultracode: ultracode_on,
+            },
+        )
+    });
     let of = panel::Of { host: host.clone(), pane: pane.clone(), ctx: ctx.clone(), here: page_here.clone(), side, agent, status, compact: def.and_then(|d| d.set.compact.clone()) };
     let busy = crate::changes::running(info.as_ref());
     let show_panel = agent.is_some() && panel_wide && settings.side_panel && !gone;
@@ -194,7 +208,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let now = super::session_menu::Now {
         session_id: session_id.clone(),
         remote: info.as_ref().and_then(|i| i.rc.as_ref()).map(|rc| rc.url.clone()),
-        ultracode: screen.as_ref().and_then(|s| s.ultracode).or(agent_info.and_then(|a| a.ultracode)).or(info.as_ref().and_then(|i| i.ultracode)) == Some(true),
+        ultracode: ultracode_on,
         shared: info.as_ref().is_some_and(|i| i.share.is_some()),
     };
     let more = super::session_menu::items(&host, &pane, agent, &now);
@@ -445,16 +459,6 @@ mod tests {
         assert_eq!(page_session(Some("a"), Some("b")).as_deref(), Some("a"));
         assert_eq!(page_session(None, Some("b")).as_deref(), Some("b"));
         assert_eq!(page_session(None, None), None);
-    }
-
-    #[test]
-    fn the_controls_read_as_one_line() {
-        let claude = AgentKind::Claude.def();
-        assert_eq!(controls_line(Some("claude-opus-4-6"), Some("high"), None, Some(claude)), "Opus 4.6 · high");
-        assert_eq!(controls_line(None, None, None, None), "");
-        let mode = claude.modes.first().expect("Claude Code has modes");
-        assert_eq!(controls_line(None, None, Some(&mode.id), Some(claude)), mode.label);
-        assert_eq!(controls_line(None, None, Some("custom"), None), "custom");
     }
 
     #[test]
