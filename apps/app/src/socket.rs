@@ -45,6 +45,13 @@ impl Outbox {
         let _ = self.0.unbounded_send(json);
     }
 
+    /// Tries the hub again now rather than at the end of the backoff wait (a refresh while out of
+    /// reach); on an open socket it only checks the connection with a ping.
+    pub fn wake(&self) {
+        #[cfg(target_arch = "wasm32")]
+        let _ = self.0.unbounded_send(imp::Raw::Online);
+    }
+
     /// Sends now, on the open socket, for a page going away: the queue behind [`Outbox::send`]
     /// would only be read after the page is gone. False when no socket is open in the browser,
     /// where nothing is sent and the caller keeps the message to send once it can; the phone's

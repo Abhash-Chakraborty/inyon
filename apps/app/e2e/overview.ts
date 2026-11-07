@@ -24,7 +24,11 @@ const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs'
 const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 
 const PASSWORD = 'correct horse'
-const state = { setup: false, setupCode: false, authed: false, refuse: false, answerFails: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0, controls: [] as Record<string, unknown>[] }
+const state = {
+  setup: false, setupCode: false, authed: false, refuse: false, answerFails: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0, controls: [] as Record<string, unknown>[],
+  /** the Overview's tools: paired phones, refreshes asked for, integrations turned on, and a change to the demo machines */
+  phones: [] as unknown[], refreshes: 0, integrations: [] as Record<string, unknown>[], tweak: undefined as undefined | ((hosts: any[]) => any[]), ovSeq: 1,
+}
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
 
@@ -41,8 +45,11 @@ function resetChats() {
 resetChats()
 const EPOCH = 1
 
+/** The machines as the stand-in hub reports them now. */
+const hostsNow = () => (state.tweak ? state.tweak(overview().hosts as any[]) : overview().hosts)
+
 function snapshot(stream: string) {
-  if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { hosts: overview().hosts } }
+  if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: state.ovSeq, rows: { hosts: hostsNow() } }
   const c = streams.get(stream)
   if (!c) return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { items: [] }, state: { loaded: true, hasMore: false } }
   return { t: 'snapshot', stream, epoch: EPOCH, seq: c.seq, rows: { items: c.items, live: [], queue: [] }, state: c.state }
@@ -56,6 +63,18 @@ function change(stream: string, parts: { append?: Record<string, unknown>[]; sta
   if (parts.state) Object.assign(c.state, parts.state)
   const frame = JSON.stringify({ t: 'delta', stream, epoch: EPOCH, from, seq: c.seq, ...(parts.append ? { append: { items: parts.append } } : {}), ...(parts.state ? { state: parts.state } : {}) })
   for (const ws of sockets) if (ws.data.subs.has(stream)) ws.send(frame)
+}
+
+/** The machines changed: every socket that follows the overview gets them again. */
+function publishOverview() {
+  state.ovSeq++
+  const frame = JSON.stringify(snapshot('overview'))
+  for (const ws of sockets) if (ws.data.subs.has('overview')) ws.send(frame)
+}
+
+/** A notice from the hub: an agent finished or asks something. */
+function notify(n: { host: string; pane: string; kind: 'done' | 'waiting'; title: string; body: string; agent?: string }) {
+  for (const ws of sockets) ws.send(JSON.stringify({ t: 'notify', ...n }))
 }
 
 /** The key an answer names its question by (inyon-protocol's prompt_key). */
@@ -118,6 +137,20 @@ const server = Bun.serve({
       }
       return json({ ok: true })
     }
+    // the Overview's tools: the phone card, Refresh and the integration card
+    if (p === '/api/phones' && req.method === 'GET') return json(state.phones)
+    if (p === '/api/phones/pair' && req.method === 'POST') return json({ id: 'p1', code: 'K7QX-2M4D', link: 'https://inyon.tech/pair#K7QX-2M4D', expiresAt: Date.now() + 600_000 })
+    if (p === '/api/refresh' && req.method === 'POST') {
+      state.refreshes++
+      return json({ ok: true })
+    }
+    const integration = /^\/api\/hosts\/([^/]+)\/integration$/.exec(p)
+    if (integration && req.method === 'POST') {
+      state.integrations.push({ host: decodeURIComponent(integration[1]!), ...(await req.json()) })
+      // the machine reports it on a moment later
+      setTimeout(publishOverview, 300)
+      return json({ ok: true })
+    }
     if (p === '/theme.js' || p.startsWith('/agents/') || p === '/icon.svg') return new Response(Bun.file(path.join(web, p)))
     if (p === '/next' || p.startsWith('/next/')) {
       const rel = p.replace(/^\/next\/?/, '')
@@ -142,7 +175,7 @@ const server = Bun.serve({
         ws.data.subs.add(msg.stream)
         // the overview and a chat that hasn't changed since `at`: up to date already
         const c = streams.get(msg.stream)
-        const seq = msg.stream === 'overview' ? 1 : (c?.seq ?? 1)
+        const seq = msg.stream === 'overview' ? state.ovSeq : (c?.seq ?? 1)
         if (msg.at?.epoch === EPOCH && msg.at.seq === seq) ws.send(JSON.stringify({ t: 'delta', stream: msg.stream, epoch: EPOCH, from: seq, seq }))
         else {
           // `slow` holds the lists back, as a hub that's slow to answer would
@@ -208,6 +241,16 @@ async function frames(t: string, n = 1, from = 0, ms = 8000): Promise<Frame[]> {
 const problems: string[] = []
 const check = (ok: unknown, what: string) => {
   if (!ok) problems.push(what)
+}
+
+/** Polls `f` until it's true or `ms` pass. */
+async function until(f: () => unknown | Promise<unknown>, ms = 5000): Promise<boolean> {
+  const end = Date.now() + ms
+  for (;;) {
+    if (await f()) return true
+    if (Date.now() > end) return false
+    await Bun.sleep(50)
+  }
 }
 
 /** Text smaller than 12px, or a page wider than its window. */
@@ -814,6 +857,236 @@ try {
     check(state.controls.at(-1)?.what === 'rewind' && state.controls.at(-1)?.pane === '12', `session menu: rewound ${JSON.stringify(state.controls.at(-1))}`)
     await ctx.close()
   }
+  // ---- the Overview's tools: the phone and integration cards, search, Show, ⋯ on a card, a
+  // machine's menu, Refresh and pull to refresh, Recent activity, at both sizes, light and dark ----
+  state.authed = true
+  resetChats()
+  /** Three more sessions on build-box (seven in all, so the search shows), and studio without the integration until it's turned on. */
+  const more = (hosts: any[]) => {
+    const box = hosts[1]
+    const like = box.sessions[0]
+    const add = (n: number, name: string, title: string, cwd: string) => {
+      const pane = { ...like.windows[0].panes[0], id: `%${n}`, title, cwd, agent: { ...like.windows[0].panes[0].agent, pid: 5000 + n, state: 'idle' } }
+      box.sessions.push({ ...like, id: `$${n}`, name, windows: [{ ...like.windows[0], id: `@${n}`, name: 'claude', panes: [pane] }] })
+    }
+    add(31, 'pricing', '✳ Draft the pricing page', '/home/sam/code/site')
+    add(32, 'ci', '✳ Bump the CI images', '/home/sam/code/infra')
+    add(33, 'search', '✳ Profile the search API', '/home/sam/code/search')
+    if (!state.integrations.length) hosts[0].integration = 'missing'
+    return hosts
+  }
+  const cards = (page: Page) => page.locator('.cards > .card')
+  for (const [w, h] of [[390, 844], [1440, 900]] as const)
+    for (const scheme of ['light', 'dark'] as const) {
+      const label = `tools ${w}x${h} ${scheme}`
+      const phone = w < 600
+      Object.assign(state, { tweak: more, phones: [], refreshes: 0, integrations: [] })
+      publishOverview()
+      const ctx = await browser.newContext({ ...(phone ? devices['iPhone 13'] : {}), viewport: { width: w, height: h }, colorScheme: scheme, reducedMotion: 'reduce' })
+      const page = await ctx.newPage()
+      watch(page)
+      await page.goto(`${base}/next/`)
+      await page.getByRole('heading', { name: 'Overview' }).waitFor()
+      await cards(page).nth(6).waitFor()
+      check((await cards(page).count()) === 7, `${label}: seven cards (${await cards(page).count()})`)
+
+      // the cards above the sessions: open on a phone, and the integration for studio
+      const phoneCard = page.locator('.line-card').filter({ hasText: 'Open this hub on your phone.' })
+      await phoneCard.waitFor()
+      check(await phoneCard.getByText('The Inyon app scans a code and reaches every machine here itself.').isVisible(), `${label}: the phone card's line`)
+      const plug = page.locator('.line-card').filter({ hasText: 'studio:' })
+      check(await plug.getByText(/turn on the integration for live usage limits, context and cost, instant updates and exact session matching\./).isVisible(), `${label}: the integration card's line`)
+      const search = page.getByRole('searchbox', { name: 'Search 7 sessions' })
+      check(await search.isVisible(), `${label}: a search box past six sessions`)
+      await layout(page, label)
+      await page.screenshot({ path: path.join(shots, `overview-tools-${w}-${scheme}.png`) })
+
+      // Refresh with a mouse, pull to refresh on a touch screen: every machine reads again
+      const refresh = page.getByRole('button', { name: 'Refresh' })
+      if (phone) {
+        check(!(await refresh.isVisible()), `${label}: no Refresh button on a phone`)
+        const cdp = await ctx.newCDPSession(page)
+        const touch = (type: string, y: number) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x: 195, y }] })
+        await touch('touchStart', 240)
+        for (let y = 260; y <= 460; y += 20) await touch('touchMove', y)
+        check((await page.locator('.pull-mark').evaluate((el) => getComputedStyle(el).opacity)) === '1', `${label}: the mark comes down with the finger`)
+        await page.screenshot({ path: path.join(shots, `overview-tools-${w}-${scheme}-pull.png`) })
+        await touch('touchEnd', 460)
+        await page.locator('.pull-mark[role="status"]').waitFor({ timeout: 2000 }).catch(() => problems.push(`${label}: the mark reels while it refreshes`))
+        check(await until(() => state.refreshes === 1), `${label}: a pull refreshes (${state.refreshes})`)
+        await page.locator('.pull-mark[role="status"]').waitFor({ state: 'detached', timeout: 3000 }).catch(() => problems.push(`${label}: the mark goes back after refreshing`))
+        // a short pull does nothing
+        await touch('touchStart', 240)
+        await touch('touchMove', 300)
+        await touch('touchEnd', 300)
+        await page.waitForTimeout(300)
+        check(state.refreshes === 1, `${label}: a short pull doesn't refresh`)
+      } else {
+        await refresh.click()
+        check(await page.locator('.refresh-logo.mark-reeling').isVisible(), `${label}: the mark reels while it refreshes`)
+        check(await until(() => state.refreshes === 1), `${label}: Refresh asks the hub (${state.refreshes})`)
+        await page.locator('.refresh-logo.mark-reeling').waitFor({ state: 'detached', timeout: 3000 }).catch(() => problems.push(`${label}: the mark stops after refreshing`))
+      }
+
+      // the search: by title, nothing, Esc clears, Clear clears
+      await search.fill('pricing')
+      check(await until(async () => (await cards(page).count()) === 1), `${label}: the search narrows to one card`)
+      check(await cards(page).getByText('Draft the pricing page').isVisible(), `${label}: the card it found`)
+      await search.fill('#nothing zzz')
+      await page.getByText('No session matches “#nothing zzz”.').waitFor()
+      check(await page.getByText('Nothing here').isVisible(), `${label}: the empty search's title`)
+      await page.screenshot({ path: path.join(shots, `overview-tools-${w}-${scheme}-nothing.png`) })
+      await search.press('Escape')
+      check((await search.inputValue()) === '' && (await until(async () => (await cards(page).count()) === 7)), `${label}: Esc clears the search`)
+      await search.fill('billing')
+      check(await until(async () => (await cards(page).count()) === 1), `${label}: the search finds the folder`)
+      await page.getByRole('button', { name: 'Clear' }).click()
+      check((await search.inputValue()) === '' && (await until(async () => (await cards(page).count()) === 7)), `${label}: Clear clears the search`)
+
+      // Show: the waiting card comes into view with its first answer focused
+      await page.getByRole('button', { name: 'Show', exact: true }).click()
+      const focused = await page.waitForFunction(() => document.activeElement?.hasAttribute('data-answer') && !!document.activeElement.closest('.card-waiting'), null, { timeout: 3000 }).then(() => true, () => false)
+      check(focused, `${label}: Show focuses the waiting card's first answer`)
+      check(await page.locator('.card-waiting').evaluate((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight }), `${label}: Show brings the card into view`)
+
+      // a card's ⋯: always there on a touch screen, on hover with a mouse; the card's own menu
+      const card = cards(page).filter({ hasText: 'Fix flaky checkout test' })
+      const dots = card.getByRole('button', { name: 'Actions for Fix flaky checkout test' })
+      const shown = async () => Number(await dots.evaluate((el) => getComputedStyle(el).opacity))
+      if (phone) check((await shown()) === 1, `${label}: ⋯ shows on a touch screen`)
+      else {
+        check((await shown()) === 0, `${label}: ⋯ waits for the pointer`)
+        await card.hover()
+        await page.waitForTimeout(300)
+        check((await shown()) === 1, `${label}: ⋯ on hover`)
+      }
+      await dots.click()
+      const items = (await page.getByRole('menuitem').allTextContents()).map((t) => t.trim())
+      check(items[0] === 'Open' && items.includes('End session…'), `${label}: ⋯ opens the card's menu (${JSON.stringify(items)})`)
+      await page.screenshot({ path: path.join(shots, `overview-tools-${w}-${scheme}-menu.png`) })
+      await page.keyboard.press('Escape')
+      await page.getByRole('menu').waitFor({ state: 'detached', timeout: 2000 }).catch(() => problems.push(`${label}: Esc closes the card's menu`))
+
+      // a machine's row: its menu on a right click
+      const row = page.locator(phone ? '.machine-list .machine-row' : '.machine-table tbody tr').filter({ hasText: 'build-box' })
+      await row.scrollIntoViewIfNeeded()
+      await row.click({ button: 'right' })
+      const machineItems = (await page.getByRole('menuitem').allTextContents()).map((t) => t.trim())
+      check(machineItems[0] === 'Open' && machineItems.includes('Rename…') && machineItems.includes('Remove…'), `${label}: the machine's menu (${JSON.stringify(machineItems)})`)
+      await page.keyboard.press('Escape')
+
+      // Recent activity: what agents did, holding still under the pointer with "n new"
+      notify({ host: 'build-box', pane: '%13', kind: 'done', title: 'Write release notes', body: 'The notes are in docs/releases/0.25.md', agent: 'claude' })
+      const feed = page.locator('#activity')
+      await feed.waitFor()
+      await feed.getByText('Recent activity').waitFor()
+      check(await feed.locator('.activity-row').filter({ hasText: 'Write release notes · finished' }).isVisible(), `${label}: a finished turn in Recent activity`)
+      check((await feed.locator('.activity-row').first().getAttribute('href')) === '/next/m/build-box/p/13', `${label}: an activity row opens its session`)
+      if (!phone) {
+        await feed.hover()
+        notify({ host: 'local', pane: '%12', kind: 'waiting', title: 'Migrate auth to passkeys', body: 'Run bun test src/auth?', agent: 'codex' })
+        const fresh = feed.getByRole('button', { name: '1 new' })
+        await fresh.waitFor()
+        check((await feed.locator('.activity-row').count()) === 1, `${label}: the list holds still under the pointer`)
+        await fresh.click()
+        await feed.locator('.activity-row').filter({ hasText: 'Migrate auth to passkeys · needs you' }).waitFor()
+        await page.mouse.move(5, 5)
+      } else {
+        notify({ host: 'local', pane: '%12', kind: 'waiting', title: 'Migrate auth to passkeys', body: 'Run bun test src/auth?', agent: 'codex' })
+        await feed.locator('.activity-row').filter({ hasText: 'Migrate auth to passkeys · needs you' }).waitFor()
+      }
+      check((await feed.locator('.activity-row').first().textContent())?.includes('Migrate auth to passkeys'), `${label}: newest first`)
+      await feed.scrollIntoViewIfNeeded()
+      await layout(page, `${label} activity`)
+      await page.screenshot({ path: path.join(shots, `overview-tools-${w}-${scheme}-activity.png`) })
+
+      // the integration: Turn on, a toast, and the card goes once the machine reports it on
+      await page.locator('.scroll').evaluate((el) => el.scrollTo(0, 0))
+      await plug.getByRole('button', { name: 'Turn on' }).click()
+      await page.getByText('Claude integration on').waitFor()
+      check(JSON.stringify(state.integrations) === JSON.stringify([{ host: 'local', enable: true }]), `${label}: turned on at the hub (${JSON.stringify(state.integrations)})`)
+      await plug.waitFor({ state: 'detached', timeout: 5000 }).catch(() => problems.push(`${label}: the integration card goes once it's on`))
+
+      // the phone card: Show the code opens the sheet, Later puts it away for good
+      await phoneCard.getByRole('button', { name: 'Show the code' }).click()
+      const sheet = page.getByRole('dialog', { name: 'Open on your phone' })
+      await sheet.waitFor()
+      await sheet.getByRole('img', { name: 'Pairing code' }).waitFor({ timeout: 3000 }).catch(() => problems.push(`${label}: the sheet shows the code`))
+      await sheet.getByRole('button', { name: 'Close' }).click()
+      await sheet.waitFor({ state: 'detached', timeout: 3000 })
+      await phoneCard.getByRole('button', { name: 'Later' }).click()
+      await phoneCard.waitFor({ state: 'detached', timeout: 2000 }).catch(() => problems.push(`${label}: Later hides the phone card`))
+      check((await page.evaluate(() => localStorage.getItem('inyon.phoneCard.dismissed'))) === '1', `${label}: Later is kept`)
+      await page.reload()
+      await cards(page).nth(6).waitFor()
+      await page.waitForTimeout(500)
+      check(!(await page.getByText('Open this hub on your phone.').count()), `${label}: the phone card stays away after a reload`)
+      await ctx.close()
+    }
+
+  // ---- the empty Overview, and no machines at all ----
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' })
+    const page = await ctx.newPage()
+    watch(page)
+    state.tweak = (hosts) => hosts.map((x) => ({ ...x, sessions: [] }))
+    publishOverview()
+    await page.goto(`${base}/next/`)
+    await page.getByText('No agent sessions').waitFor()
+    check(await page.getByText('Start Claude Code, Codex or another agent in tmux on any machine, or press N to start one from here.').isVisible(), 'empty: the line names the key that works here')
+    state.tweak = () => []
+    publishOverview()
+    await page.getByText('No machines yet').waitFor()
+    await page.screenshot({ path: path.join(shots, 'overview-no-machines-1440-light.png') })
+    await page.getByRole('button', { name: 'Add a machine' }).click()
+    await page.getByRole('dialog', { name: 'Add a machine' }).waitFor()
+    check(new URL(page.url()).pathname === '/next/', 'no machines: Add a machine opens its sheet over the Overview')
+    await ctx.close()
+  }
+
+  // ---- cards that leave fade where they were, the others slide, a new one rises ----
+  {
+    state.tweak = undefined
+    publishOverview()
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.goto(`${base}/next/`)
+    await cards(page).nth(3).waitFor()
+    await page.waitForTimeout(600)
+    // what the cards' own styles do, as they happen
+    await page.evaluate(() => {
+      const w = window as any
+      w.__moves = []
+      w.__ghosts = 0
+      new MutationObserver((rs) => {
+        for (const r of rs) {
+          if (r.type === 'attributes' && (r.target as HTMLElement).style.transform.includes('translate')) w.__moves.push((r.target as HTMLElement).dataset.key)
+          for (const n of r.addedNodes) if ((n as HTMLElement).classList?.contains('flip-leave')) w.__ghosts++
+        }
+      }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style'] })
+    })
+    // build-box's first session ends: it fades out, the one beside it slides into its place
+    state.tweak = (hosts) => {
+      hosts[1].sessions = hosts[1].sessions.slice(1)
+      return hosts
+    }
+    publishOverview()
+    check(await until(() => page.evaluate(() => (window as any).__ghosts === 1)), 'animate: the card that left fades where it was')
+    check(await until(() => page.evaluate(() => (window as any).__moves.includes('build-box %14'))), `animate: the card beside it slides over (${await page.evaluate(() => JSON.stringify((window as any).__moves))})`)
+    await page.waitForTimeout(400)
+    check(!(await page.locator('.flip-leave').count()), 'animate: the faded copy goes')
+    check((await cards(page).count()) === 3, 'animate: three cards once it went')
+    // it comes back: it rises in at once, and the others don't come in again
+    state.tweak = undefined
+    publishOverview()
+    const back = cards(page).filter({ hasText: 'Write release notes' })
+    await back.waitFor()
+    const anim = await back.evaluate((el) => ({ name: getComputedStyle(el).animationName, delay: el.style.animationDelay }))
+    check(anim.name === 'slide-up' && anim.delay === '0ms', `animate: the new card rises at once (${JSON.stringify(anim)})`)
+    check((await cards(page).filter({ hasText: 'Tidy the billing API types' }).evaluate((el) => el.style.animationName || getComputedStyle(el).animationName)) === 'none', 'animate: a card that stayed doesn’t rise again')
+    await ctx.close()
+  }
 } finally {
   await browser.close()
   server.stop(true)
@@ -827,4 +1100,4 @@ if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: sign-in, setup, the overview and a session at 390x844 and 1440x900 in light and dark, sending, older messages, answering from a card and from the chat, the terminal, the session menu, filtering, folding, reconnecting; screenshots in ${shots}`)
+console.log(`ok: sign-in, setup, the overview and a session at 390x844 and 1440x900 in light and dark, sending, older messages, answering from a card and from the chat, the terminal, the session menu, filtering, folding, reconnecting, the Overview's tools; screenshots in ${shots}`)

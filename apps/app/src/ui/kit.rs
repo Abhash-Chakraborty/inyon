@@ -247,6 +247,36 @@ pub fn Waiting(label: String, #[props(default)] lines: Option<usize>) -> Element
     }
 }
 
+/// A search box that narrows a list in place (ui/FilterInput.tsx). Esc clears it, and so does its
+/// Clear button.
+#[component]
+pub fn FilterInput(value: String, on_change: EventHandler<String>, placeholder: String, #[props(default)] class: String) -> Element {
+    let typed = !value.is_empty();
+    rsx! {
+        label { class: "filter-input {class}",
+            Glyph { icon: Icon::Search, size: 14 }
+            input {
+                r#type: "search",
+                value: "{value}",
+                placeholder: "{placeholder}",
+                "aria-label": "{placeholder}",
+                oninput: move |e| on_change.call(e.value()),
+                onkeydown: move |e| {
+                    if e.key() == Key::Escape && typed {
+                        e.stop_propagation();
+                        on_change.call(String::new());
+                    }
+                },
+            }
+            if typed {
+                button { class: "filter-clear", r#type: "button", "aria-label": "Clear", onclick: move |_| on_change.call(String::new()),
+                    Glyph { icon: Icon::X, size: 14 }
+                }
+            }
+        }
+    }
+}
+
 /// Rows in a list's shape while it loads, with no spinner.
 #[component]
 pub fn WaitRows(label: String, #[props(default = 3)] count: usize, #[props(default)] class: String) -> Element {
