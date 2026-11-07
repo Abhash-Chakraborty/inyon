@@ -260,6 +260,67 @@ impl Scroll {
     }
 }
 
+/// How long after it lands a row still rises when it's drawn. Longer than the rise itself, so a
+/// redraw during it keeps the class on; short enough that a row scrolled back into view later
+/// is drawn still.
+pub const RISE_MS: u64 = 600;
+
+/// Which rows come in rising (ChatView.tsx `arriving`): the ones added after the conversation was
+/// on screen. The first batch is drawn still, so are earlier messages joining at the top, and a
+/// message that was a bubble a moment ago (sent from here, queued or held) takes the bubble's place
+/// without moving. Each row's answer is kept, with when it was given.
+#[derive(Debug, Default)]
+pub struct Arrivals {
+    last_seq: Option<i64>,
+    decided: std::collections::HashMap<String, Option<u64>>,
+    bubbles: std::collections::HashSet<String>,
+}
+
+impl Arrivals {
+    /// The keys of the rows rising at `now`, from the whole list, once the chat has loaded.
+    pub fn rising(&mut self, rows: &[ListRow], loaded: bool, now: u64) -> std::collections::HashSet<String> {
+        if !loaded {
+            return Default::default();
+        }
+        let settled = self.last_seq.is_some();
+        let mut max = self.last_seq.unwrap_or(0);
+        let mut decided = std::collections::HashMap::new();
+        let mut bubbles = std::collections::HashSet::new();
+        for r in rows {
+            let fresh = match r {
+                ListRow::Row(row) => {
+                    let seq = row.key().get(1..).and_then(|s| s.parse::<i64>().ok());
+                    if let Some(s) = seq {
+                        max = max.max(s);
+                    }
+                    let was_bubble = matches!(row, Row::User { item: inyon_protocol::ChatItem::User { text, .. }, .. } if self.bubbles.contains(text));
+                    seq.zip(self.last_seq).is_some_and(|(s, last)| s > last) && !was_bubble
+                }
+                ListRow::Pending(p) => {
+                    bubbles.insert(p.text.clone());
+                    true
+                }
+                ListRow::Queued { text, .. } => {
+                    bubbles.insert(text.clone());
+                    true
+                }
+                ListRow::Held { prompt, .. } => {
+                    bubbles.insert(prompt.text.clone());
+                    true
+                }
+                _ => continue,
+            };
+            let key = r.key().into_owned();
+            let at = self.decided.get(&key).copied().unwrap_or((settled && fresh).then_some(now));
+            decided.insert(key, at);
+        }
+        self.last_seq = Some(max);
+        self.bubbles = bubbles;
+        self.decided = decided;
+        self.decided.iter().filter(|(_, at)| at.is_some_and(|t| now.saturating_sub(t) < RISE_MS)).map(|(k, _)| k.clone()).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +376,37 @@ mod tests {
         apply_splices(&mut rows, &s);
         list.splice(&s);
         assert_eq!(list.key(list.len() - 1), Some(rows.last().unwrap().key().as_ref()));
+    }
+
+    #[test]
+    fn rows_that_land_after_the_first_paint_rise_and_the_rest_stay_still() {
+        let mut chat = Chat::new();
+        let mut rows: Vec<ListRow> = vec![];
+        let mut arr = Arrivals::default();
+        assert!(arr.rising(&rows, false, 0).is_empty(), "nothing before the chat loads");
+        let s = chat.apply(&msg(json!({ "t": "chat.reset", "key": "box:%1", "info": info(), "items": page(100, 2), "hasMore": true })), 0);
+        apply_splices(&mut rows, &s);
+        assert!(arr.rising(&rows, true, 1000).is_empty(), "the first batch is drawn still");
+        // a question and its answer that land rise, and keep rising through a redraw (a reply
+        // to an open turn joins that turn's row instead)
+        let s = chat.apply(&msg(json!({ "t": "chat.append", "key": "box:%1", "items": [user(104, "next"), reply(105, "and more")] })), 0);
+        apply_splices(&mut rows, &s);
+        let last = rows.iter().rev().find(|r| matches!(r, ListRow::Row(_))).unwrap().key().into_owned();
+        assert!(arr.rising(&rows, true, 2000).contains(&last));
+        assert!(arr.rising(&rows, true, 2300).contains(&last));
+        // drawn again later (scrolled back to), it stays still
+        assert!(arr.rising(&rows, true, 2000 + RISE_MS).is_empty());
+        // earlier messages joining at the top don't rise
+        let s = chat.apply(&msg(json!({ "t": "chat.more", "key": "box:%1", "items": page(90, 2), "hasMore": false })), 0);
+        apply_splices(&mut rows, &s);
+        assert!(arr.rising(&rows, true, 3000).is_empty());
+        // a message sent from here rises as a bubble, and its landing takes the bubble's place still
+        rows.push(ListRow::Pending(inyon_chat_core::pending::PendingMessage::new("x1", "ship it", inyon_chat_core::pending::PendingStatus::Sending, 0)));
+        assert_eq!(arr.rising(&rows, true, 4000), ["px1".to_string()].into());
+        rows.pop();
+        let s = chat.apply(&msg(json!({ "t": "chat.append", "key": "box:%1", "items": [user(106, "ship it")] })), 0);
+        apply_splices(&mut rows, &s);
+        assert!(arr.rising(&rows, true, 5000).is_empty());
     }
 
     fn even(n: usize, h: f64) -> VList {

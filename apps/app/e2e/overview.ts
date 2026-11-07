@@ -418,6 +418,21 @@ try {
     await box.fill('Commit it as "Wait for the discount before totalling"')
     await page.waitForTimeout(700)
     check(state.drafts.some((d) => JSON.stringify(d) === JSON.stringify({ t: 'draft', host: 'local', pane: '%11', text: 'Commit it as "Wait for the discount before totalling"' })), `draft: sent to the hub (${JSON.stringify(state.drafts)})`)
+    // rows rise in once the conversation is on screen: note every row that comes in rising
+    check(!(await page.locator('.vrow.slide-up').count()), 'rise: the first rows are drawn still')
+    await page.evaluate(() => {
+      const seen = new WeakSet<Element>()
+      const risen: string[] = ((window as any).__risen = [])
+      const note = (el: Element) => {
+        if (el.matches('.vrow.slide-up') && !seen.has(el)) (seen.add(el), risen.push(el.textContent ?? ''))
+      }
+      new MutationObserver((ms) => {
+        for (const m of ms) {
+          if (m.type === 'attributes') note(m.target as Element)
+          for (const n of m.addedNodes) if (n instanceof Element) [n, ...n.querySelectorAll('.vrow')].forEach(note)
+        }
+      }).observe(document.querySelector('.chat-list')!, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] })
+    })
     await page.getByRole('button', { name: 'Queue follow-up' }).click()
     await page.locator('.bubble').filter({ hasText: 'Commit it as' }).first().waitFor()
     const sent = state.sends[0] as { text?: string; requestId?: string } | undefined
@@ -426,6 +441,8 @@ try {
     await page.waitForTimeout(1200)
     check((await page.locator('.bubble').filter({ hasText: 'Commit it as' }).count()) === 1, 'send: the message shows once after it lands')
     check(!(await page.locator('.bubble-pending').count()), 'send: no longer pending once the record has it')
+    const risen = (await page.evaluate(() => (window as any).__risen)) as string[]
+    check(risen.filter((t) => t.includes('Commit it as')).length === 1, `rise: the bubble rises, and the message takes its place still (${JSON.stringify(risen.map((t) => t.slice(0, 40)))})`)
     await page.screenshot({ path: path.join(shots, 'session-390-light-sent.png') })
 
     // the agent asks: keys pick, and the answer names its question (Ghostex #251). The keys go

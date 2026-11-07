@@ -20,7 +20,7 @@ use super::prompt::PromptCard;
 use super::rows::{Ctx, RowView};
 use super::toast::{self, ToastTone};
 use super::{now, outbox};
-use crate::list::{Scroll, Window};
+use crate::list::{Arrivals, Scroll, Window};
 use crate::route::BASE;
 use crate::socket::Outbox;
 use crate::state::{self, Chats, Hub};
@@ -145,6 +145,7 @@ pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> E
     let key = ctx.key.clone();
     let scroll = use_hook(|| Rc::new(RefCell::new(Scroll::default())));
     let drawn = use_hook(|| Rc::new(Cell::new(Window { start: 0, end: 0, before: 0, after: 0 })));
+    let arrivals = use_hook(|| Rc::new(RefCell::new(Arrivals::default())));
     let hub = use_context::<Signal<Hub>>();
     let mut layout = use_signal(|| 0u64);
     let mut away = use_signal(|| false);
@@ -356,6 +357,7 @@ pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> E
     let loading_more = e.loading_more;
     let draft = chat.draft.as_ref().map(|d| (d.text.clone(), d.at, d.source == inyon_protocol::DraftSource::Terminal));
     let shown: Vec<_> = rows[w.start.min(rows.len())..w.end.min(rows.len())].to_vec();
+    let rising = arrivals.borrow_mut().rising(rows, first_loaded, now());
 
     let (wheel_in, touch_in, touch_move, press_in, key_in) = (input.clone(), input.clone(), input.clone(), input.clone(), input.clone());
     let jump = {
@@ -447,7 +449,7 @@ pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> E
                         div { id: LIST, class: "chat-list", onresize: on_list_resize,
                             div { style: "height:{w.before}px" }
                             for row in shown {
-                                Measured { key: "{row.key()}", id: row.key().into_owned(), chat: key.clone(),
+                                Measured { key: "{row.key()}", id: row.key().into_owned(), chat: key.clone(), rising: rising.contains(row.key().as_ref()),
                                     RowView { row: row.clone(), ctx: ctx.clone(), working }
                                 }
                             }
@@ -529,11 +531,11 @@ pub fn ChatView(ctx: Ctx, connected: bool, offline: bool, controls: String) -> E
 
 /// A row in the list, its drawn height noted for the list's spacers.
 #[component]
-fn Measured(id: String, chat: String, children: Element) -> Element {
+fn Measured(id: String, chat: String, #[props(default)] rising: bool, children: Element) -> Element {
     let chats = use_context::<Signal<Chats>>();
     rsx! {
         div {
-            class: "vrow",
+            class: if rising { "vrow slide-up" } else { "vrow" },
             onresize: move |r: Event<ResizeData>| {
                 let Ok(size) = r.get_border_box_size() else { return };
                 let h = size.height;
