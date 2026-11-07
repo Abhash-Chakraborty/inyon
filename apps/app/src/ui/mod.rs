@@ -94,6 +94,8 @@ async fn check(mut auth: Signal<Auth>) {
 /// Signed out: the copies kept in this browser go with the sign-in.
 pub fn signed_out() {
     crate::snapshot::clear();
+    // the next one to sign in mustn't see what this sign-in's agents did
+    notices::ACTIVITY.write().clear();
 }
 
 #[component]

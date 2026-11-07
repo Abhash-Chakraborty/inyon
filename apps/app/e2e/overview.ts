@@ -28,6 +28,8 @@ const state = {
   setup: false, setupCode: false, authed: false, refuse: false, answerFails: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0, controls: [] as Record<string, unknown>[],
   /** the Overview's tools: paired phones, refreshes asked for, integrations turned on, and a change to the demo machines */
   phones: [] as unknown[], refreshes: 0, integrations: [] as Record<string, unknown>[], tweak: undefined as undefined | ((hosts: any[]) => any[]), ovSeq: 1,
+  /** the hub's organize marks (pins, parking), and their stream's position */
+  marks: [] as Record<string, unknown>[], orgSeq: 1,
 }
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
@@ -50,6 +52,7 @@ const hostsNow = () => (state.tweak ? state.tweak(overview().hosts as any[]) : o
 
 function snapshot(stream: string) {
   if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: state.ovSeq, rows: { hosts: hostsNow() } }
+  if (stream === 'organize') return { t: 'snapshot', stream, epoch: EPOCH, seq: state.orgSeq, rows: { sessions: state.marks, projects: [], groups: [], spaces: [] } }
   const c = streams.get(stream)
   if (!c) return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { items: [] }, state: { loaded: true, hasMore: false } }
   return { t: 'snapshot', stream, epoch: EPOCH, seq: c.seq, rows: { items: c.items, live: [], queue: [] }, state: c.state }
@@ -70,6 +73,13 @@ function publishOverview() {
   state.ovSeq++
   const frame = JSON.stringify(snapshot('overview'))
   for (const ws of sockets) if (ws.data.subs.has('overview')) ws.send(frame)
+}
+
+/** The organize marks changed. */
+function publishOrganize() {
+  state.orgSeq++
+  const frame = JSON.stringify(snapshot('organize'))
+  for (const ws of sockets) if (ws.data.subs.has('organize')) ws.send(frame)
 }
 
 /** A notice from the hub: an agent finished or asks something. */
@@ -175,7 +185,7 @@ const server = Bun.serve({
         ws.data.subs.add(msg.stream)
         // the overview and a chat that hasn't changed since `at`: up to date already
         const c = streams.get(msg.stream)
-        const seq = msg.stream === 'overview' ? state.ovSeq : (c?.seq ?? 1)
+        const seq = msg.stream === 'overview' ? state.ovSeq : msg.stream === 'organize' ? state.orgSeq : (c?.seq ?? 1)
         if (msg.at?.epoch === EPOCH && msg.at.seq === seq) ws.send(JSON.stringify({ t: 'delta', stream: msg.stream, epoch: EPOCH, from: seq, seq }))
         else {
           // `slow` holds the lists back, as a hub that's slow to answer would
@@ -1036,6 +1046,140 @@ try {
       check(!(await page.getByText('Open this hub on your phone.').count()), `${label}: the phone card stays away after a reload`)
       await ctx.close()
     }
+
+  // ---- Show reaches every session that needs you, whatever hides it; Refresh runs one at a time;
+  // a pull, a press or a sign-in the browser or hub takes away leaves nothing behind ----
+  {
+    // the search session on build-box asks too, and it's parked
+    state.tweak = (hosts) => {
+      const all = more(hosts)
+      const p = all[1].sessions.at(-1).windows[0].panes[0]
+      p.agent = { ...p.agent, state: 'waiting' }
+      return all
+    }
+    Object.assign(state, { phones: [{ id: 'p1', name: 'Pixel', pairedAt: Date.now() }], refreshes: 0, integrations: [], marks: [{ id: 's-1', host: 'build-box', pane: '%33', live: true, seen: Date.now(), parked: true }] })
+    publishOverview()
+    publishOrganize()
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' })
+    await ctx.addInitScript(() => {
+      ;(window as any).__buzz = []
+      Object.defineProperty(navigator, 'vibrate', { configurable: true, value: (p: number | number[]) => ((window as any).__buzz.push(p), true) })
+    })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.goto(`${base}/next/`)
+    await page.getByText('2 sessions need you.').waitFor()
+    const show = page.getByRole('button', { name: 'Show', exact: true })
+    const focusedIn = (title: string) =>
+      page.waitForFunction((t) => { const a = document.activeElement; return !!a?.hasAttribute('data-answer') && !!a.closest('[data-key]')?.textContent?.includes(t) }, title, { timeout: 3000 }).then(() => true, () => false)
+    await show.click()
+    check(await focusedIn('Migrate auth to passkeys'), 'show: the first press brings the first session that needs you')
+    await show.click()
+    check(await focusedIn('Profile the search API'), 'show: the next opens Parked and snoozed for the parked one')
+    check((await page.locator('.group-head', { hasText: 'Parked and snoozed' }).getAttribute('aria-expanded')) === 'true', 'show: Parked and snoozed is open')
+    await show.click()
+    check(await focusedIn('Migrate auth to passkeys'), 'show: and comes round again')
+    // hidden by a folded machine, the switch or the search: Show opens the way
+    const studio = page.locator('.group-head', { hasText: 'studio' })
+    await studio.click()
+    check((await studio.getAttribute('aria-expanded')) === 'false', 'show: studio folded')
+    await show.click()
+    await show.click()
+    check(await focusedIn('Migrate auth to passkeys'), 'show: unfolds its machine')
+    check((await studio.getAttribute('aria-expanded')) === 'true', 'show: studio open again')
+    await page.getByRole('radio', { name: 'Working' }).click()
+    await show.click()
+    await show.click()
+    check(await focusedIn('Migrate auth to passkeys'), 'show: past the Working switch')
+    check((await page.getByRole('radio', { name: 'All' }).getAttribute('aria-checked')) === 'true', 'show: the switch is back on All')
+    const search = page.getByRole('searchbox', { name: 'Search 7 sessions' })
+    await search.fill('pricing')
+    await show.click()
+    await show.click()
+    check(await focusedIn('Migrate auth to passkeys'), 'show: past the search')
+    check((await search.inputValue()) === '', 'show: the search is emptied')
+
+    // an answer the agent takes buzzes even when its card has left the list: Idle is picked, and
+    // the agent got to work
+    state.answerFails = false
+    await page.getByRole('radio', { name: 'Idle' }).click()
+    const migrate = page.locator('[data-key="local %12"]')
+    await migrate.getByRole('button', { name: 'Yes' }).click()
+    await migrate.getByText('Sent').waitFor()
+    const asking = state.tweak
+    state.tweak = (hosts) => {
+      const all = asking!(hosts)
+      const p = all[0].sessions.flatMap((x: any) => x.windows).flatMap((w: any) => w.panes).find((x: any) => x.id === '%12')
+      p.agent = { ...p.agent, state: 'working' }
+      return all
+    }
+    publishOverview()
+    await migrate.waitFor({ state: 'detached', timeout: 3000 }).catch(() => problems.push('answer: the card leaves the Idle list'))
+    check(await until(() => page.evaluate(() => (window as any).__buzz.some((p: unknown) => JSON.stringify(p) === '[10,40,14]'))), 'answer: the buzz comes after its card has gone')
+    state.tweak = asking
+    publishOverview()
+    await page.getByRole('radio', { name: 'All' }).click()
+    await page.getByText('2 sessions need you.').waitFor()
+
+    // Refresh: a second press while it runs asks nothing more
+    state.refreshes = 0
+    const refresh = page.getByRole('button', { name: 'Refresh' })
+    await refresh.click()
+    await refresh.click()
+    await page.locator('.refresh-logo.mark-reeling').waitFor({ state: 'detached', timeout: 3000 })
+    check(state.refreshes === 1, `refresh: one at a time (${state.refreshes})`)
+    // a narrow window with a mouse can't pull, so it keeps the button
+    await page.setViewportSize({ width: 390, height: 844 })
+    check(await refresh.isVisible(), 'refresh: a narrow window with a mouse keeps the button')
+    await page.setViewportSize({ width: 1440, height: 900 })
+
+    // signed out: the next sign-in starts with no Recent activity
+    notify({ host: 'build-box', pane: '%13', kind: 'done', title: 'Write release notes', body: 'Done', agent: 'claude' })
+    await page.locator('#activity').getByText('Write release notes').waitFor()
+    Object.assign(state, { authed: false, setup: false, setupCode: false })
+    for (const ws of sockets) ws.close()
+    await page.getByRole('heading', { name: 'Welcome back' }).waitFor({ timeout: 10_000 })
+    await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await page.getByText('2 sessions need you.').waitFor()
+    await page.waitForTimeout(500)
+    check(!(await page.locator('#activity').count()), 'sign-out: the next sign-in shows no earlier activity')
+    await ctx.close()
+
+    // on a touch screen: a pull that goes back above its start, or that the browser takes away,
+    // refreshes nothing; a press on a machine the browser takes away opens no menu
+    const touchCtx = await browser.newContext({ ...devices['iPhone 13'], colorScheme: 'light', reducedMotion: 'reduce' })
+    const phone = await touchCtx.newPage()
+    watch(phone)
+    await phone.goto(`${base}/next/`)
+    await phone.getByText('2 sessions need you.').waitFor()
+    const cdp = await touchCtx.newCDPSession(phone)
+    const touch = (type: string, x: number, y: number) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' || type === 'touchCancel' ? [] : [{ x, y }] })
+    state.refreshes = 0
+    await touch('touchStart', 195, 240)
+    for (let y = 260; y <= 460; y += 20) await touch('touchMove', 195, y)
+    await touch('touchMove', 195, 200)
+    await touch('touchEnd', 195, 200)
+    await phone.waitForTimeout(800)
+    check(state.refreshes === 0, `pull: back above the start refreshes nothing (${state.refreshes})`)
+    await touch('touchStart', 195, 240)
+    for (let y = 260; y <= 460; y += 20) await touch('touchMove', 195, y)
+    await touch('touchCancel', 195, 460)
+    await phone.waitForTimeout(800)
+    check(state.refreshes === 0, `pull: a touch the browser takes away refreshes nothing (${state.refreshes})`)
+    check((await phone.locator('.pull-mark').evaluate((el) => getComputedStyle(el).opacity)) === '0', 'pull: the mark goes back')
+    const machine = phone.locator('.machine-list .machine-row').filter({ hasText: 'build-box' })
+    await machine.scrollIntoViewIfNeeded()
+    const box = (await machine.boundingBox())!
+    await touch('touchStart', box.x + 40, box.y + box.height / 2)
+    await phone.waitForTimeout(150)
+    await touch('touchCancel', box.x + 40, box.y + box.height / 2)
+    await phone.waitForTimeout(800)
+    check(!(await phone.getByRole('menu').count()), 'machine row: a press the browser takes away opens no menu')
+    await touchCtx.close()
+    Object.assign(state, { marks: [], phones: [] })
+    publishOrganize()
+  }
 
   // ---- the empty Overview, and no machines at all ----
   {

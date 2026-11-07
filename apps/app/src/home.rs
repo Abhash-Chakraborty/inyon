@@ -84,11 +84,11 @@ pub fn integration_toast(s: IntegrationState, ok: bool) -> &'static str {
 /// How many events Recent activity shows.
 pub const FEED_ROWS: usize = 8;
 
-/// What the `i`th entry says now. Only the latest question of a session still waiting needs you;
-/// an earlier one, or one the session has moved on from, was answered (from here, from an alert or
-/// at the keyboard), and one whose session has ended was just asked.
-pub fn activity_label(i: usize, all: &[ActivityEvent], hosts: &[HostState]) -> &'static str {
-    let e = &all[i];
+/// What an entry says now. Only the latest question of a session still waiting needs you; an
+/// earlier one, or one the session has moved on from, was answered (from here, from an alert or at
+/// the keyboard), and one whose session has ended was just asked. "Latest" is judged from the live
+/// list, so a row held still under the pointer stops saying "needs you" once a newer question came.
+pub fn activity_label(e: &ActivityEvent, live: &[ActivityEvent], hosts: &[HostState]) -> &'static str {
     if e.kind == ActivityKind::Done {
         return "finished";
     }
@@ -101,18 +101,60 @@ pub fn activity_label(i: usize, all: &[ActivityEvent], hosts: &[HostState]) -> &
         .find(|p| p.id == e.pane)
         .and_then(|p| p.agent.as_ref());
     let Some(a) = agent else { return "asked" };
-    let latest = all.iter().position(|x| x.host == e.host && x.pane == e.pane && x.kind == ActivityKind::Waiting);
-    if a.state == AgentState::Waiting && latest == Some(i) {
+    let latest = live.iter().find(|x| x.host == e.host && x.pane == e.pane && x.kind == ActivityKind::Waiting);
+    if a.state == AgentState::Waiting && latest == Some(e) {
         "needs you"
     } else {
         "answered"
     }
 }
 
-/// Events that came in while the list was held still.
+/// Events that came in while the list was held still: the live list is newest first, so the ones
+/// above the event that topped the held list (all of them once it has dropped off the end). Two
+/// events in the same millisecond still count apart.
 pub fn fresh(held: &[ActivityEvent], live: &[ActivityEvent]) -> usize {
-    let top = held.first().map_or(0, |e| e.at);
-    live.iter().filter(|e| e.at > top).count()
+    let Some(top) = held.first() else { return live.len() };
+    live.iter().position(|e| e == top).unwrap_or(live.len())
+}
+
+/// Where a session's card sits on the Overview.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Spot {
+    Pinned,
+    /// Under its machine (by id)
+    Machine(String),
+    /// In the folded Parked and snoozed
+    SetAside,
+}
+
+/// What Show opens so that a session that needs you is on screen.
+#[derive(Debug, Default, PartialEq)]
+pub struct Reveal {
+    /// Back to All
+    pub filter: bool,
+    /// Empty the search
+    pub search: bool,
+    /// Unfold this machine
+    pub machine: Option<String>,
+    /// Open Parked and snoozed
+    pub set_aside: bool,
+}
+
+/// What hides a card from view and has to give way: the All / Working / Idle switch, the search,
+/// its folded machine (when there are machine groups) or the folded Parked and snoozed. A search
+/// that stays opens every fold by itself. `folded` says whether a fold (a machine's id, or
+/// `aside`) is kept closed.
+pub fn reveal(spot: &Spot, passes_filter: bool, passes_search: bool, searching: bool, grouped: bool, folded: impl Fn(&str) -> bool) -> Reveal {
+    let kept_search = searching && passes_search;
+    Reveal {
+        filter: !passes_filter,
+        search: searching && !passes_search,
+        machine: match spot {
+            Spot::Machine(id) if grouped && !kept_search && folded(id) => Some(id.clone()),
+            _ => None,
+        },
+        set_aside: *spot == Spot::SetAside && !kept_search && folded("aside"),
+    }
 }
 
 /// How far to pull (px, after damping) before letting go refreshes.
@@ -222,11 +264,37 @@ mod tests {
             event(2, "%9", ActivityKind::Waiting),
             event(1, "%1", ActivityKind::Done),
         ];
-        let labels: Vec<_> = (0..all.len()).map(|i| activity_label(i, &all, &h)).collect();
+        let labels: Vec<_> = all.iter().map(|e| activity_label(e, &all, &h)).collect();
         assert_eq!(labels, ["needs you", "answered", "answered", "asked", "finished"]);
+        // held still at the last four: the row that was latest is answered once a newer one came
+        assert_eq!(activity_label(&all[1], &all[1..], &h), "needs you");
+        assert_eq!(activity_label(&all[1], &all, &h), "answered");
         // held still at the first three, two arrived since
         assert_eq!(fresh(&all[2..], &all), 2);
         assert_eq!(fresh(&[], &all), 5);
+        // one in the same millisecond as the top of the held list still counts
+        let mut same = event(3, "%2", ActivityKind::Done);
+        same.title = "another".into();
+        let live: Vec<_> = std::iter::once(same).chain(all[2..].iter().cloned()).collect();
+        assert_eq!(fresh(&all[2..], &live), 1);
+        // the held top has dropped off the end: everything is new
+        assert_eq!(fresh(&all[4..], &all[..3]), 3);
+    }
+
+    #[test]
+    fn show_opens_what_hides_the_session() {
+        let none = |_: &str| false;
+        let all = |_: &str| true;
+        let m = Spot::Machine("box".into());
+        assert_eq!(reveal(&m, true, true, false, true, none), Reveal::default(), "on screen already");
+        assert_eq!(reveal(&m, true, true, false, true, all), Reveal { machine: Some("box".into()), ..Default::default() });
+        assert_eq!(reveal(&m, true, true, false, false, all), Reveal::default(), "one machine has no fold");
+        assert_eq!(reveal(&Spot::SetAside, true, true, false, true, all), Reveal { set_aside: true, ..Default::default() });
+        assert_eq!(reveal(&Spot::Pinned, false, true, false, true, all), Reveal { filter: true, ..Default::default() });
+        // a search it matches keeps the folds open; one it doesn't is emptied, and the folds count
+        assert_eq!(reveal(&Spot::SetAside, true, true, true, true, all), Reveal::default());
+        assert_eq!(reveal(&Spot::SetAside, true, false, true, true, all), Reveal { search: true, set_aside: true, ..Default::default() });
+        assert_eq!(reveal(&m, false, false, true, true, none), Reveal { filter: true, search: true, ..Default::default() });
     }
 
     #[test]

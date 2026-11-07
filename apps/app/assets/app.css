@@ -2043,7 +2043,11 @@ button.nav-item { width: 100%; text-align: left; }
 }
 .topbar-refresh { display: none; width: 32px; height: 32px; color: var(--fg-2); }
 .topbar-refresh-push { margin-left: auto; }
-@media (min-width: 768px) { .topbar-refresh { display: inline-flex; } }
+/* a mouse can't pull to refresh, so a narrow window with one keeps the button */
+@media (min-width: 768px), (hover: hover) and (pointer: fine) {
+  .topbar-refresh { display: inline-flex; }
+  .topbar-refresh + .topbar-quick { margin-left: 0; }
+}
 
 .show-next { margin: -4px 0; flex-shrink: 0; border-radius: 9999px; padding: 4px 8px; color: var(--fg); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 4px; transition: text-decoration-color var(--dur-small) var(--ease-out-soft); }
 .show-next:hover { text-decoration-color: var(--fg); }

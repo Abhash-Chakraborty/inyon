@@ -45,16 +45,9 @@ thread_local! {
     static SHOWN: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Brings the next session that needs you into view, in the order they're shown.
-fn show_next() -> bool {
-    match dom::show_waiting(SHOWN.with(Cell::get)) {
-        Some(i) => {
-            SHOWN.with(|s| s.set(i + 1));
-            true
-        }
-        None => false,
-    }
-}
+/// Sessions told to the hub's answer, until their agent moves on: the success buzz is played here,
+/// so it comes even when the card has left the list (Idle picked, and the agent got to work).
+static ANSWERED: GlobalSignal<BTreeSet<Key>> = Signal::global(BTreeSet::new);
 
 /// Pull to refresh and Refresh (lib/refresh.ts): try the hub again if the link dropped, and have
 /// every machine read again. Takes at least 600 ms, long enough to see it happen however fast the
@@ -87,7 +80,8 @@ pub fn Overview() -> Element {
     // a card being turned on stays, with its spinner, until the machine answers (with the state it
     // had when tapped, so its words don't change under the spinner)
     let mut turning = use_signal(BTreeMap::<String, IntegrationState>::new);
-    let mut show_after_open = use_signal(|| false);
+    // a card Show is bringing up once what hid it has opened
+    let mut show_pending = use_signal(|| None::<String>);
     let outbox = super::outbox();
     // pull to refresh: where the finger started, how far the mark came, whether letting go refreshes
     let mut pulling = use_signal(|| None::<f64>);
@@ -116,17 +110,34 @@ pub fn Overview() -> Element {
             });
         })
     };
-    // Show finds a session that needs you even in the folded parked and snoozed: it opens them
-    // first, then brings the card into view once it's on screen
+    // Show opens what hid the card first (a fold, the switch, the search), then brings the card
+    // into view once it's on screen
     use_effect(move || {
-        if !show_after_open() || (!folded.read().contains(&format!("home:{ASIDE_OPEN}")) && query.read().is_empty()) {
+        let Some(key) = show_pending() else { return };
+        show_pending.set(None);
+        spawn(async move {
+            platform::sleep(30).await;
+            dom::show_card(&key);
+        });
+    });
+    // the buzz for an answer the agent took
+    use_effect(move || {
+        let pending = ANSWERED.read().clone();
+        if pending.is_empty() {
             return;
         }
-        show_after_open.set(false);
-        spawn(async {
-            platform::sleep(30).await;
-            show_next();
-        });
+        let h = hub.read();
+        let panes = model::agent_panes(&h.hosts);
+        let done: Vec<Key> = pending.into_iter().filter(|k| !panes.iter().any(|r| key_of(r) == *k && r.agent().state == AgentState::Waiting)).collect();
+        drop(h);
+        if done.is_empty() {
+            return;
+        }
+        notices::haptic(Haptic::Success);
+        let mut a = ANSWERED.write();
+        for k in done {
+            a.remove(&k);
+        }
     });
 
     let h = hub.read();
@@ -146,6 +157,32 @@ pub fn Overview() -> Element {
         g.panes.retain(|r| home::matches(r, mark_for(&org.org, &r.host.config.id, &r.pane.id), &shown_title(r, &org.org), &q));
     }
     let grouped = h.hosts.len() > 1;
+    // every session that needs you, in the order the cards are laid out, those hidden by a fold,
+    // the switch or the search included: Show goes through them all
+    let show_queue: Vec<(Key, home::Spot, bool, bool)> = {
+        let every = model::group_panes(&h.hosts, Filter::All);
+        let s = sort_panes(every.iter().flat_map(|g| g.panes.iter().copied()).collect(), &org.org, now_ms);
+        fn asks(r: &&model::PaneRef) -> bool {
+            r.agent().state == AgentState::Waiting
+        }
+        let spot = |r: &model::PaneRef, spot: home::Spot| {
+            let passes_search = home::matches(r, mark_for(&org.org, &r.host.config.id, &r.pane.id), &shown_title(r, &org.org), &q);
+            (key_of(r), spot, shown_filter.keeps(r.agent()), passes_search)
+        };
+        s.pinned
+            .iter()
+            .filter(asks)
+            .map(|r| spot(r, home::Spot::Pinned))
+            .chain(every.iter().flat_map(|g| {
+                g.panes
+                    .iter()
+                    .filter(asks)
+                    .filter(|r| place_of(mark_for(&org.org, &r.host.config.id, &r.pane.id), now_ms) == Place::Sessions)
+                    .map(|r| spot(r, home::Spot::Machine(r.host.config.id.clone())))
+            }))
+            .chain(s.snoozed.iter().chain(s.parked.iter()).filter(asks).map(|r| spot(r, home::Spot::SetAside)))
+            .collect()
+    };
     // pinned sessions come first across machines, parked and snoozed ones wait folded at the end
     let sorted = sort_panes(all_groups.iter().flat_map(|g| g.panes.iter().copied()).collect(), &org.org, now_ms);
     let groups: Vec<model::HostGroup> = all_groups
@@ -158,7 +195,6 @@ pub fn Overview() -> Element {
         .collect();
     let pinned: Vec<Key> = sorted.pinned.iter().map(key_of).collect();
     let set_aside: Vec<Key> = sorted.snoozed.iter().chain(sorted.parked.iter()).map(key_of).collect();
-    let aside_waiting = sorted.snoozed.iter().chain(sorted.parked.iter()).any(|r| r.agent().state == AgentState::Waiting);
     // folded until opened, as in the web app: the set stores the opened one; a search opens it
     let aside_open = !q.is_empty() || folded.read().contains(&format!("home:{ASIDE_OPEN}"));
     let group_open = |id: &str| !q.is_empty() || !folded.read().contains(&format!("home:{id}"));
@@ -178,16 +214,48 @@ pub fn Overview() -> Element {
         let list: Vec<&String> = f.iter().collect();
         platform::save(FOLDED, &serde_json::to_string(&list).unwrap_or_default());
     };
+    let searching_now = !q.is_empty();
     let show = move |_| {
-        if show_next() || aside_open || !aside_waiting {
+        if show_queue.is_empty() {
             return;
         }
-        show_after_open.set(true);
-        toggle(ASIDE_OPEN.into());
+        let i = SHOWN.with(Cell::get) % show_queue.len();
+        SHOWN.with(|s| s.set(i + 1));
+        let (key, spot, passes_filter, passes_search) = &show_queue[i];
+        let card = format!("{} {}", key.0, key.1);
+        let open = folded.peek().clone();
+        let r = home::reveal(spot, *passes_filter, *passes_search, searching_now, grouped, |id| {
+            if id == "aside" {
+                !open.contains(&format!("home:{ASIDE_OPEN}"))
+            } else {
+                open.contains(&format!("home:{id}"))
+            }
+        });
+        if r == home::Reveal::default() {
+            dom::show_card(&card);
+            return;
+        }
+        if r.filter {
+            filter.set(Filter::All);
+        }
+        if r.search {
+            query.set(String::new());
+        }
+        if let Some(id) = r.machine {
+            toggle(id);
+        }
+        if r.set_aside {
+            toggle(ASIDE_OPEN.into());
+        }
+        show_pending.set(Some(card));
     };
     let reload = {
         let outbox = outbox.clone();
         move |_| {
+            // one at a time: a second press would stop the mark while the first still runs
+            if *reloading.peek() {
+                return;
+            }
             reloading.set(true);
             let (up, outbox) = (hub.peek().connected, outbox.clone());
             spawn(async move {
@@ -251,6 +319,10 @@ pub fn Overview() -> Element {
                         if *pull.peek() != 0.0 {
                             pull.set(0.0);
                         }
+                        // back above the start: letting go now refreshes nothing
+                        if *armed.peek() {
+                            armed.set(false);
+                        }
                         return;
                     }
                     let p = home::pull_distance(dy);
@@ -265,7 +337,14 @@ pub fn Overview() -> Element {
                     }
                 },
                 ontouchend: move |_| end_pull.call(()),
-                ontouchcancel: move |_| end_pull.call(()),
+                // the browser took the touch away: that's no letting go
+                ontouchcancel: move |_| {
+                    if pulling.peek().is_some() {
+                        pulling.set(None);
+                        armed.set(false);
+                        pull.set(0.0);
+                    }
+                },
                 header { class: "topbar",
                     div { class: "topbar-row",
                         span { class: "phone-only", Logo { connecting: h.offline(), target: true } }
@@ -589,7 +668,7 @@ fn ActivityFeed() -> Element {
                         div { class: "activity-text",
                             div { class: "truncate activity-line",
                                 span { class: "activity-title", "{e.title}" }
-                                span { class: "fg-2", " · {home::activity_label(i, &list, &h.hosts)}" }
+                                span { class: "fg-2", " · {home::activity_label(e, &live, &h.hosts)}" }
                             }
                             div { class: "activity-time mono", {format::time_ago(e.at as f64, clock)} }
                         }
@@ -608,8 +687,6 @@ fn ActivityFeed() -> Element {
 fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
     let hub = use_context::<Signal<Hub>>();
     let mut menu_at = use_context::<Signal<Option<Menu>>>();
-    // pressed, then sent, then the agent took it: two short pulses, once
-    let mut answered = use_signal(|| false);
     let h = hub.read();
     let org = ORG.read().clone();
     let sel = SELECTION.read().clone();
@@ -619,17 +696,11 @@ fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
     let items = r.map(|r| row_items(r, &org, &sel, clock, cfg!(target_arch = "wasm32"))).unwrap_or_default();
     let press = menu::long_press(items.clone());
     let waiting = r.is_some_and(|r| r.agent().state == AgentState::Waiting);
-    use_effect(use_reactive!(|waiting| {
-        if !waiting && *answered.peek() {
-            answered.set(false);
-            notices::haptic(Haptic::Success);
-        }
-    }));
     let Some(r) = r else { return rsx! {} };
     // a question from the copy kept in the browser may be long answered, and a tap on it would
     // answer whatever asks now: answers wait for the hub's own overview
     let live = h.confirmed();
-    let (p1, p2, p3, p4) = (press.clone(), press.clone(), press.clone(), press);
+    let (p1, p2, p3, p4, p5) = (press.clone(), press.clone(), press.clone(), press.clone(), press);
     let a = r.agent();
     let shown = Shown::of(a, r.host);
     let title = shown_title(r, &org.org);
@@ -665,6 +736,7 @@ fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
                 onpointerdown: move |e| p1.down(&e),
                 onpointermove: move |e| p2.moved(&e),
                 onpointerup: move |_| p3.up(),
+                onpointercancel: move |_| p5.cancel(),
                 onclick: move |e| {
                     if !p4.click(&e) {
                         pick_click(&e, kc.clone(), &order);
@@ -712,7 +784,13 @@ fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
             div { class: "card-line", {model::card_line(r, clock)} }
             div { class: "card-foot mono",
                 if waiting && live && r.host.status == HostStatus::Online {
-                    Answers { host: r.host.config.id.clone(), pane: r.pane.id.clone(), href: href.clone(), options, on_sent: move |_| answered.set(true) }
+                    Answers { host: r.host.config.id.clone(), pane: r.pane.id.clone(), href: href.clone(), options, on_sent: {
+                            // pressed, then sent, then the agent took it: two short pulses, once (in the Overview)
+                            let k = k.clone();
+                            move |_| {
+                                ANSWERED.write().insert(k.clone());
+                            }
+                        } }
                 } else {
                     span { class: "truncate", {model::model_line(a)} }
                     if let Some(cost) = cost {
@@ -869,7 +947,7 @@ fn machines(hosts: &[HostState], clock: Clock) -> Element {
 fn MachineListRow(h: HostState, line: String) -> Element {
     let items = menu::machine_menu(&h, cfg!(target_arch = "wasm32"));
     let press = menu::long_press(items.clone());
-    let (p1, p2, p3, p4) = (press.clone(), press.clone(), press.clone(), press);
+    let (p1, p2, p3, p4, p5) = (press.clone(), press.clone(), press.clone(), press.clone(), press);
     rsx! {
         a {
             class: if h.status == HostStatus::Online { "machine-row" } else { "machine-row dim" },
@@ -878,6 +956,7 @@ fn MachineListRow(h: HostState, line: String) -> Element {
             onpointerdown: move |e| p1.down(&e),
             onpointermove: move |e| p2.moved(&e),
             onpointerup: move |_| p3.up(),
+            onpointercancel: move |_| p5.cancel(),
             onclick: move |e| {
                 p4.click(&e);
             },

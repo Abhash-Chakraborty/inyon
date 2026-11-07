@@ -703,19 +703,15 @@ mod imp {
         web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten()).is_some_and(|m| m.matches())
     }
 
-    /// Brings the `at`th session that needs you (counting round, and only the cards on screen: one
-    /// in a folded group isn't) into view and puts focus on its first answer. Which one it was, or
-    /// None when no card needs you.
-    pub fn show_waiting(at: usize) -> Option<usize> {
-        let doc = web_sys::window()?.document()?;
-        let list = doc.query_selector_all("[data-waiting]").ok()?;
-        let cards: Vec<web_sys::Element> =
-            (0..list.length()).filter_map(|i| list.item(i)?.dyn_into::<web_sys::Element>().ok()).filter(|c| c.closest("[inert]").ok().flatten().is_none()).collect();
-        if cards.is_empty() {
-            return None;
-        }
-        let i = at % cards.len();
-        let card = &cards[i];
+    /// Brings a session's card (its `data-key`, "host pane") into view and puts focus on its
+    /// first answer. A card in a folded group isn't on screen, and is passed over.
+    pub fn show_card(key: &str) {
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
+        let Ok(list) = doc.query_selector_all("[data-key]") else { return };
+        let card = (0..list.length())
+            .filter_map(|i| list.item(i)?.dyn_into::<web_sys::Element>().ok())
+            .find(|c| c.get_attribute("data-key").as_deref() == Some(key) && c.closest("[inert]").ok().flatten().is_none());
+        let Some(card) = card else { return };
         let how = web_sys::ScrollIntoViewOptions::new();
         how.set_block(web_sys::ScrollLogicalPosition::Center);
         how.set_behavior(if reduced_motion() { web_sys::ScrollBehavior::Auto } else { web_sys::ScrollBehavior::Smooth });
@@ -725,7 +721,6 @@ mod imp {
             f.set_prevent_scroll(true);
             let _ = b.focus_with_options(&f);
         }
-        Some(i)
     }
 
     /// Whether focus is inside an element, or the pointer is over it.
@@ -1160,8 +1155,16 @@ mod imp {
     pub fn reduced_motion() -> bool {
         false
     }
-    pub fn show_waiting(_at: usize) -> Option<usize> {
-        None
+    /// The phone app's WebView does the same as the browser build, through the page.
+    #[cfg_attr(not(all(feature = "phone", target_os = "android")), allow(unused_variables))]
+    pub fn show_card(key: &str) {
+        #[cfg(all(feature = "phone", target_os = "android"))]
+        {
+            let key = serde_json::to_string(key).unwrap_or_default();
+            let _ = dioxus::document::eval(&format!(
+                "for(const c of document.querySelectorAll('[data-key]')){{if(c.dataset.key!=={key}||c.closest('[inert]'))continue;c.scrollIntoView({{block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}});const b=c.querySelector('[data-answer]');if(b)b.focus({{preventScroll:true}});break}}"
+            ));
+        }
     }
     pub fn holds(_id: &str) -> bool {
         false
