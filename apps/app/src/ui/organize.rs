@@ -1,6 +1,7 @@
 //! Pins, parking, snoozes, tags and notes in this app (from 1.1; the hub keeps them from 0.24, see
 //! inyon-protocol's organize.rs): what the session menu and the bulk menu offer, the changes they
-//! send, the Tags, Note and Rename sheets, and the bar that acts on several selected sessions.
+//! send, the Tags, Note and Rename sheets (a session, a plain terminal or a tmux session), and the
+//! bar that acts on several selected sessions.
 //! Menus carry an [`OrgOp`] as data, so a menu still works after its row scrolled away.
 
 use dioxus::prelude::*;
@@ -66,6 +67,20 @@ pub enum OrgSheet {
     Tags(Vec<Key>),
     Note(Key),
     Rename(Key),
+    /// the tmux session itself: tmux's id (`$52`) and its name now
+    TmuxSession {
+        host: String,
+        id: String,
+        name: String,
+    },
+}
+
+/// A tmux session's own menu (menus.tsx's tmuxSessionMenu), from its group on a machine's page.
+pub fn tmux_session_menu(host: &str, id: &str, name: &str) -> Vec<Item> {
+    vec![
+        Item::new("Rename tmux session…", Icon::Pencil, Action::Org(OrgOp::Sheet(OrgSheet::TmuxSession { host: host.into(), id: id.into(), name: name.into() }))),
+        Item::copy("Copy tmux name", name),
+    ]
 }
 
 /// What Undo puts back after a change.
@@ -565,6 +580,7 @@ pub fn OrgSheets() -> Element {
         Some(OrgSheet::Tags(keys)) => rsx! { TagSheet { open, on_close: close, keys } },
         Some(OrgSheet::Note(k)) => rsx! { NoteSheet { open, on_close: close, k } },
         Some(OrgSheet::Rename(k)) => rsx! { RenameSheet { open, on_close: close, k } },
+        Some(OrgSheet::TmuxSession { host, id, name }) => rsx! { RenameSheet { open, on_close: close, k: (host, String::new()), tmux: (id, name) } },
         None => rsx! {},
     }
 }
@@ -746,19 +762,61 @@ fn NoteSheet(open: bool, on_close: EventHandler<()>, k: Key) -> Element {
     }
 }
 
-/// The name a session shows in Inyon, in place of the agent's own title.
+/// What a rename sheet names, and how it says so (session/RenameSheet.tsx).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Renaming {
+    /// an agent session: the name Inyon shows, kept with the conversation
+    Session,
+    /// a plain terminal: its tmux window
+    Terminal,
+    /// the tmux session itself
+    Tmux,
+}
+
+impl Renaming {
+    pub fn title(self) -> &'static str {
+        match self {
+            Renaming::Session => "Rename session",
+            Renaming::Terminal => "Rename terminal",
+            Renaming::Tmux => "Rename tmux session",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            Renaming::Session => "Shown in Inyon and kept with the conversation, so it survives a resume.",
+            Renaming::Terminal => "Renames the tmux window, so tmux shows it too.",
+            Renaming::Tmux => "tmux on that machine shows it too. Dots and colons become underscores.",
+        }
+    }
+}
+
+/// The name a session shows in Inyon in place of the agent's own title, a plain terminal's tmux
+/// window name, or (with `tmux`: its id and name) the tmux session's own name. Empty goes back to
+/// the automatic name, which a tmux session doesn't have.
 #[component]
-fn RenameSheet(open: bool, on_close: EventHandler<()>, k: Key) -> Element {
+fn RenameSheet(open: bool, on_close: EventHandler<()>, k: Key, #[props(default)] tmux: Option<(String, String)>) -> Element {
     let mut text = use_signal(String::new);
     let mut busy = use_signal(|| false);
     let hub = use_context::<Signal<Hub>>();
-    let (shown, labelled) = {
-        let h = hub.peek();
-        let org = ORG.peek();
-        model::all_panes(&h.hosts)
-            .into_iter()
-            .find(|r| r.host.config.id == k.0 && r.pane.id == k.1)
-            .map_or((String::new(), false), |r| (shown_title(&r, &org.org), r.pane.label.as_deref().is_some_and(|l| !l.is_empty())))
+    let (shown, labelled, agent) = match &tmux {
+        Some((_, name)) => (name.clone(), false, false),
+        None => {
+            let h = hub.peek();
+            let org = ORG.peek();
+            model::all_panes(&h.hosts).into_iter().find(|r| r.host.config.id == k.0 && r.pane.id == k.1).map_or((String::new(), false, true), |r| {
+                let labelled = r.pane.label.as_deref().is_some_and(|l| !l.is_empty());
+                match r.pane.agent {
+                    Some(_) => (shown_title(&r, &org.org), labelled, true),
+                    None => (inyon_chat_core::overview::terminal_name(&r).unwrap_or(&r.pane.command).to_string(), labelled, false),
+                }
+            })
+        }
+    };
+    let what = match (&tmux, agent) {
+        (Some(_), _) => Renaming::Tmux,
+        (None, true) => Renaming::Session,
+        (None, false) => Renaming::Terminal,
     };
     {
         let shown = shown.clone();
@@ -769,14 +827,18 @@ fn RenameSheet(open: bool, on_close: EventHandler<()>, k: Key) -> Element {
         }));
     }
     let save = {
-        let k = k.clone();
+        let (k, tmux) = (k.clone(), tmux.clone());
         move |name: String| {
-            let k = k.clone();
+            let (k, tmux) = (k.clone(), tmux.clone());
             busy.set(true);
             spawn(async move {
-                match api::rename(&k.0, &k.1, name.trim()).await {
+                let done = match &tmux {
+                    Some((id, _)) => api::rename_tmux_session(&k.0, id, name.trim()).await.map(drop),
+                    None => api::rename(&k.0, &k.1, name.trim()).await,
+                };
+                match done {
                     Ok(()) => on_close.call(()),
-                    Err(e) => toast::toast("Could not rename it", Some(e.message), ToastTone::Error),
+                    Err(e) => toast::toast("Could not rename", Some(e.message), ToastTone::Error),
                 }
                 busy.set(false);
             });
@@ -786,15 +848,22 @@ fn RenameSheet(open: bool, on_close: EventHandler<()>, k: Key) -> Element {
     let mut save_button = save.clone();
     let mut reset = save;
     let ready = !text().trim().is_empty() && text().encode_utf16().count() <= TITLE_LEN;
+    // a terminal's window can always go back to tmux's own name; a session, once it has one of yours
+    let automatic = match what {
+        Renaming::Session => labelled,
+        Renaming::Terminal => true,
+        Renaming::Tmux => false,
+    };
     rsx! {
         Sheet {
             open,
             on_close: move |_| on_close.call(()),
-            title: "Rename",
+            title: what.title(),
+            icon: rsx! { Glyph { icon: Icon::Pencil, size: 16, class: "fg-3" } },
             footer: rsx! {
                 div { class: "sheet-actions",
-                    if labelled {
-                        button { class: "button button-md button-ghost press sheet-action-start", r#type: "button", disabled: busy(), onclick: move |_| reset(String::new()), "Use the agent's title" }
+                    if automatic {
+                        button { class: "button button-md button-ghost press sheet-action-start", r#type: "button", disabled: busy(), onclick: move |_| reset(String::new()), "Use automatic name" }
                     }
                     button { class: "button button-md button-ghost press", r#type: "button", onclick: move |_| on_close.call(()), "Cancel" }
                     button { class: "button button-md button-primary press", r#type: "button", disabled: busy() || !ready, onclick: move |_| save_button(text()),
@@ -811,7 +880,7 @@ fn RenameSheet(open: bool, on_close: EventHandler<()>, k: Key) -> Element {
                         save_form(text());
                     }
                 },
-                Field { label: "Name",
+                Field { label: "Name", hint: what.hint().to_string(),
                     input { class: "field", value: "{text}", maxlength: "{TITLE_LEN}", "data-autofocus": "true", oninput: move |e| text.set(e.value()) }
                 }
             }
@@ -901,6 +970,22 @@ mod tests {
     /// Tuesday 3 Nov 2026, 12:00 UTC
     const NOW: u64 = 1_793_707_200_000;
     const CLOCK: Clock = Clock { now: NOW as f64, tz_minutes: 0 };
+
+    #[test]
+    fn a_tmux_session_renames_itself_or_copies_its_name() {
+        let v = tmux_session_menu("box", "$7", "storefront");
+        assert_eq!(v[0].label, "Rename tmux session…");
+        assert_eq!(v[0].action, Action::Org(OrgOp::Sheet(OrgSheet::TmuxSession { host: "box".into(), id: "$7".into(), name: "storefront".into() })));
+        assert_eq!((v[1].label.as_str(), &v[1].action), ("Copy tmux name", &Action::Copy("storefront".into())));
+    }
+
+    #[test]
+    fn each_rename_says_what_it_names() {
+        assert_eq!(Renaming::Session.title(), "Rename session");
+        assert_eq!(Renaming::Terminal.title(), "Rename terminal");
+        assert_eq!(Renaming::Terminal.hint(), "Renames the tmux window, so tmux shows it too.");
+        assert!(Renaming::Tmux.hint().ends_with("Dots and colons become underscores."));
+    }
 
     fn mark(v: Value) -> SessionMark {
         let mut base = json!({ "id": "s-1", "host": "box", "pane": "%1", "live": true });

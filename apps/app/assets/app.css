@@ -2116,3 +2116,34 @@ button.nav-item { width: 100%; text-align: left; }
 .ultracode-mark { animation: ultracode-breathe 2.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .ultracode-box::after, .ultracode-label, .ultracode-mark { animation: none; } }
 .goal-lede { margin-bottom: 16px; }
+
+/* ---------- a session's names and history ---------- */
+
+/* the title renames the session; its pencil shows on hover, and not on phones */
+.session-title-button { display: flex; min-width: 0; align-items: center; gap: 6px; text-align: left; }
+.session-title-pencil { flex-shrink: 0; color: var(--fg-3); opacity: 0; transition: opacity var(--dur-small) var(--ease-out-soft); }
+.session-title-button:hover .session-title-pencil, .session-title-button:focus-visible .session-title-pencil { opacity: 1; }
+@media (max-width: 767.98px) { .session-title-pencil { display: none; } }
+/* the mark holds still while the agent works; the dot on its corner carries it */
+.session-logo { position: relative; flex-shrink: 0; }
+.session-logo-dot { position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px; box-shadow: 0 0 0 2px var(--bg); }
+.signin-banner { display: flex; flex-shrink: 0; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--warn-soft) 60%, transparent); padding: 8px 16px; font-size: 13px; }
+.signin-banner-icon { flex-shrink: 0; color: var(--warn); }
+.signin-banner-text { min-width: 0; flex: 1; }
+.term-start { display: flex; flex-shrink: 0; align-items: center; gap: 6px; overflow-x: auto; border-bottom: 1px solid var(--line); padding: 6px 12px; scrollbar-width: none; }
+.term-start::-webkit-scrollbar { display: none; }
+.term-start-label { flex-shrink: 0; padding-right: 4px; font-size: 12px; color: var(--fg-3); }
+.term-start-chip { position: relative; display: flex; height: 28px; flex-shrink: 0; align-items: center; gap: 6px; border-radius: 9999px; border: 1px solid var(--line); padding: 0 8px; font-size: 12px; font-weight: 500; }
+/* a finger gets a taller target than the chip draws */
+.term-start-chip::after { content: ''; position: absolute; inset: -6px 0; }
+.term-start-chip:hover { background: var(--hover); }
+.conv-head { margin-bottom: 8px; font-size: 12px; color: var(--fg-3); }
+.conv-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg-2); }
+.conv-list { margin: 0 -8px; display: flex; flex-direction: column; gap: 2px; }
+.conv-row { display: flex; min-height: 48px; width: 100%; align-items: center; gap: 12px; border-radius: 16px; padding: 10px 12px; text-align: left; }
+.conv-row:hover:not(:disabled) { background: var(--hover); }
+.conv-row:disabled { opacity: 0.5; }
+.conv-row-current, .conv-row-current:hover:not(:disabled) { cursor: default; background: var(--raised); }
+.conv-text { min-width: 0; flex: 1; }
+.conv-title { display: block; font-size: 14.5px; font-weight: 500; }
+.conv-meta { display: block; margin-top: 2px; font-size: 12px; color: var(--fg-3); }
