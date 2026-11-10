@@ -21,6 +21,7 @@ use super::rows::{Ctx, RowView};
 use super::toast::{self, Ask, ToastTone};
 use crate::api::{self, ApiError};
 use crate::changes::{self, Edit, FileChange, Hunk, Line, Note, Row};
+use crate::layout;
 use crate::state::Chats;
 use crate::{dom, platform};
 
@@ -237,6 +238,90 @@ fn tabs(changes: usize, running: usize, pages: usize, on: Tab) -> Vec<(Tab, &'st
     v
 }
 
+const PANEL_ID: &str = "side-panel";
+const HANDLE_ID: &str = "side-panel-resize";
+
+/// The panel's left edge, which drags it wider or narrower (session/PanelResize.tsx): the arrow
+/// keys move it a step, and a double click, Home or Enter puts the usual width back. `live` holds
+/// the width under the pointer while it's dragged; letting go keeps it in the settings.
+#[component]
+fn ResizeHandle(live: Signal<Option<f64>>) -> Element {
+    let mut live = live;
+    let stored = super::notices::PREFS.read().panel_width;
+    // the panel's right edge and its row's width, from when the drag began
+    let mut drag = use_signal(|| None::<(f64, f64)>);
+    let row = || dom::parent_width(PANEL_ID).unwrap_or_else(|| dom::viewport().0);
+    let measured = || dom::rect(PANEL_ID).map(|(left, _, right, _)| (right - left).round());
+    let usual = if stored > 0.0 { stored } else { layout::usual_width(dom::viewport().0) };
+    let now = live().unwrap_or(usual);
+    let mut end = move |keep: bool| {
+        if drag.peek().is_none() {
+            return;
+        }
+        drag.set(None);
+        dom::root_class("resizing", false);
+        let w = *live.peek();
+        live.set(None);
+        if let (true, Some(w)) = (keep, w) {
+            super::notices::set_prefs(|s| s.panel_width = w);
+        }
+    };
+    // a panel taken away mid-drag (the window made narrow, the session left) lets go of the page
+    use_drop(|| dom::root_class("resizing", false));
+    rsx! {
+        div {
+            id: HANDLE_ID,
+            class: "pp-resize",
+            role: "separator",
+            "aria-orientation": "vertical",
+            "aria-label": "Resize the side panel",
+            "aria-valuemin": "{layout::PANEL_MIN}",
+            "aria-valuemax": "{layout::clamp_panel(f64::INFINITY, row())}",
+            "aria-valuenow": "{now}",
+            tabindex: "0",
+            title: "Drag to resize. Double-click for the usual width.",
+            "data-dragging": live().is_some().then_some("true"),
+            onpointerdown: move |e: PointerEvent| {
+                if e.trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary) {
+                    return;
+                }
+                let Some((_, _, right, _)) = dom::rect(PANEL_ID) else { return };
+                e.prevent_default();
+                dom::capture_pointer(HANDLE_ID, e.pointer_id());
+                drag.set(Some((right, row())));
+                dom::root_class("resizing", true);
+                live.set(Some(measured().unwrap_or(usual)));
+            },
+            onpointermove: move |e: PointerEvent| {
+                if let Some((right, row)) = drag() {
+                    let w = layout::clamp_panel(right - e.client_coordinates().x, row);
+                    if *live.peek() != Some(w) {
+                        live.set(Some(w));
+                    }
+                }
+            },
+            onpointerup: move |_| end(true),
+            onpointercancel: move |_| end(false),
+            ondoubleclick: move |_| super::notices::set_prefs(|s| s.panel_width = 0.0),
+            onkeydown: move |e: KeyboardEvent| {
+                // from the width asked for last, which a second press may come before the page shows
+                let kept = super::notices::PREFS.peek().panel_width;
+                let from = if kept > 0.0 { kept } else { measured().unwrap_or(usual) };
+                if let Some(w) = layout::handle_key(&e.key().to_string(), from, row()) {
+                    e.prevent_default();
+                    super::notices::set_prefs(|s| s.panel_width = w);
+                }
+            },
+            // a hairline that shows where to grab: on hover, with the keyboard, and while dragging
+            span { class: "pp-resize-line" }
+            // over everything while dragging, so a page in a frame can't take the pointer
+            if live().is_some() {
+                div { class: "pp-resize-shield" }
+            }
+        }
+    }
+}
+
 /// The panel beside the chat. `closing` fades it out while the screen keeps it a moment.
 #[component]
 pub fn SidePanel(of: Of, tab: Signal<Tab>, closing: bool) -> Element {
@@ -265,8 +350,12 @@ pub fn SidePanel(of: Of, tab: Signal<Tab>, closing: bool) -> Element {
         let _ = n_tabs;
         dom::strip_show("pp-tabs", &at_id)
     }));
+    // the width it was dragged to, or while it's being dragged, the width under the pointer
+    let live = use_signal(|| None::<f64>);
+    let [width, min_width, max_width] = layout::panel_box(live().unwrap_or(super::notices::PREFS.read().panel_width));
     rsx! {
-        aside { class: if closing { "pp fade-out" } else { "pp pp-in" }, "aria-label": "Side panel",
+        aside { id: PANEL_ID, class: if closing { "pp fade-out" } else { "pp pp-in" }, width, min_width, max_width, "aria-label": "Side panel",
+            ResizeHandle { live }
             div {
                 id: "pp-tabs",
                 class: "pp-tabs",

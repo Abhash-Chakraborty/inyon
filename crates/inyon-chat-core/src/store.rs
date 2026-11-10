@@ -302,6 +302,10 @@ pub struct Settings {
     /// a notice when a task on a page's progress board is done (from 0.22.4)
     pub notify_pages: bool,
     pub side_panel: bool,
+    /// the side panel's width once it has been dragged; 0 is the width it comes with (from 0.25.6)
+    pub panel_width: f64,
+    /// the sidebar at its full width; off, it's a narrow rail of icons (from 0.25.6)
+    pub sidebar: bool,
     pub haptics: bool,
     /// chat: every tool call and background job as its own row ('all'), or long runs folded ('compact')
     pub tool_detail: ToolDetail,
@@ -318,6 +322,8 @@ impl Default for Settings {
             notify_done: true,
             notify_pages: true,
             side_panel: true,
+            panel_width: 0.0,
+            sidebar: true,
             haptics: true,
             tool_detail: ToolDetail::All,
         }
@@ -839,6 +845,18 @@ mod tests {
         assert_eq!((saved["density"].as_str(), saved["haptics"].as_bool()), (Some("compact"), Some(true)));
         assert_eq!(Settings::load(r#"{"notifyDone":false,"unknown":1}"#), Settings { notify_done: false, ..Settings::default() });
         assert_eq!(Settings::load("not json"), Settings::default());
+    }
+
+    #[test]
+    fn the_panels_width_and_the_sidebars_fold_are_the_web_apps_own_keys() {
+        let d = Settings::default();
+        assert_eq!((d.panel_width, d.sidebar), (0.0, true));
+        // as the web app saves them, whole or not
+        let s = Settings::load(r#"{"panelWidth":512,"sidebar":false,"sidePanel":false}"#);
+        assert_eq!((s.panel_width, s.sidebar, s.side_panel), (512.0, false, false));
+        assert_eq!(Settings::load(r#"{"panelWidth":512.5}"#).panel_width, 512.5);
+        let saved = serde_json::to_value(&s).unwrap();
+        assert_eq!((saved["panelWidth"].as_f64(), saved["sidebar"].as_bool()), (Some(512.0), Some(false)));
     }
 
     fn moved(s: &mut Store, host: &str, ctx: &Context) -> Update {

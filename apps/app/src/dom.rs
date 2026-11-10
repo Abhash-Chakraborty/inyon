@@ -150,6 +150,18 @@ mod imp {
         Some((r.left(), r.top(), r.right(), r.bottom()))
     }
 
+    /// The width inside the element that holds `id`: the row a panel shares with what's beside it.
+    pub fn parent_width(id: &str) -> Option<f64> {
+        Some(f64::from(el(id)?.parent_element()?.client_width()))
+    }
+
+    /// Sends the pointer's moves and its release to `id` wherever it goes, until it lifts.
+    pub fn capture_pointer(id: &str, pointer: i32) {
+        if let Some(e) = el(id) {
+            let _ = e.set_pointer_capture(pointer);
+        }
+    }
+
     /// Marks which ends of a sideways-scrolling row hide more (`data-fade` holds `start` and or
     /// `end`, which the stylesheet fades out), and the first time it's called for the row, lets a
     /// mouse wheel scroll it sideways.
@@ -471,6 +483,7 @@ mod imp {
                     ("p", true) => "shift+p",
                     ("o", false) => "o",
                     ("k", false) => "k",
+                    ("b", false) => "b",
                     _ => return,
                 };
                 if !mac && (in_terminal(target.as_ref()) || in_terminal(focused.as_ref())) {
@@ -1241,6 +1254,10 @@ mod imp {
     pub fn rect(_id: &str) -> Option<(f64, f64, f64, f64)> {
         None
     }
+    pub fn parent_width(_id: &str) -> Option<f64> {
+        None
+    }
+    pub fn capture_pointer(_id: &str, _pointer: i32) {}
     pub fn strip_edges(_strip: &str) {}
     pub fn strip_show(_strip: &str, _child: &str) {}
     pub fn focus_into(_id: &str) {}

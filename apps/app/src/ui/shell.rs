@@ -10,6 +10,7 @@ use super::menu::{self, Menu, MenuLayer};
 use super::overview::Overview;
 use super::session::Session;
 use super::{add, back, companion, connect, machines, notices, organize, pages, quick, settings, sidebar, temp, toast};
+use crate::layout;
 use crate::model::{self, AgentPane};
 use crate::route::Route;
 use crate::state::Hub;
@@ -32,6 +33,13 @@ pub fn Shell() -> Element {
         crate::dom::on_shortcut(|k| {
             // a submenu's Esc goes back to its menu, which it does itself
             let in_sub = crate::dom::active_id().is_some_and(|id| id.starts_with("menu-sub-"));
+            if k == "b" {
+                // the sidebar is a wide screen's: a phone has the tab bar
+                return crate::dom::viewport().0 >= layout::SIDEBAR_FROM && {
+                    fold_sidebar();
+                    true
+                };
+            }
             k == "escape" && !in_sub && back::escape(crate::dom::typing_now())
         })
     });
@@ -41,7 +49,14 @@ pub fn Shell() -> Element {
         crate::dom::on_page_menu(move |x, y, at, picked| {
             let online = hub.peek().hosts.iter().any(|h| h.status == inyon_protocol::HostStatus::Online);
             let mac = crate::dom::mac();
-            let items = menu::page_menu(&at, &picked, crate::dom::history_len() > 1, quick::page_items(online, mac), mac, cfg!(target_arch = "wasm32"));
+            let mut extra = quick::page_items(online, mac);
+            if crate::dom::viewport().0 >= layout::SIDEBAR_FROM {
+                let open = notices::PREFS.peek().sidebar;
+                extra.push(
+                    menu::Item::new(layout::fold_label(open), if open { Icon::PanelLeftClose } else { Icon::PanelLeftOpen }, menu::Action::Sidebar).keys(layout::fold_key(mac)),
+                );
+            }
+            let items = menu::page_menu(&at, &picked, crate::dom::history_len() > 1, extra, mac, cfg!(target_arch = "wasm32"));
             let mut m = menu_at;
             m.set(Some(Menu::at(x, y, items)));
             true
@@ -128,6 +143,19 @@ enum Section {
     None,
 }
 
+/// Folds the sidebar to its rail, or opens it again; the app remembers which.
+pub fn fold_sidebar() {
+    notices::set_prefs(|s| s.sidebar = !s.sidebar);
+}
+
+fn rail_class(on: bool) -> &'static str {
+    if on {
+        "rail-item rail-active"
+    } else {
+        "rail-item"
+    }
+}
+
 fn nav_class(on: bool) -> &'static str {
     if on {
         "nav-item nav-active"
@@ -160,8 +188,60 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
     let online = h.hosts.iter().filter(|x| x.status == inyon_protocol::HostStatus::Online).count();
     let total = h.hosts.len();
     let count = if online == total { total.to_string() } else { format!("{online}/{total}") };
+    let fold = layout::fold_key(mac);
+    // folded: a rail of icons, each named by its tooltip. The sessions' list needs the room, so
+    // it waits for the sidebar to open again; search (and its key) still reaches every session
+    if !notices::PREFS.read().sidebar {
+        return rsx! {
+            aside { class: "sidebar sidebar-rail", "data-sidebar": "rail",
+                div { class: "rail-head", Logo { connecting: h.offline(), target: true } }
+                div { class: "rail-group",
+                    button { class: "rail-item", r#type: "button", "aria-label": "Show sidebar", "aria-expanded": "false", title: "Show sidebar ({fold})", onclick: move |_| fold_sidebar(),
+                        Glyph { icon: Icon::PanelLeftOpen, size: 16 }
+                    }
+                    button { class: "rail-item", r#type: "button", "aria-label": "Search or jump to…", title: "Search or jump to… ({crate::quick::search_key(mac)})", onclick: move |_| quick::open_fresh(crate::quick::Tab::Sessions),
+                        Glyph { icon: Icon::Search, size: 16 }
+                    }
+                    button { class: "rail-item", r#type: "button", "aria-label": "New session", title: "New session ({crate::quick::new_key(mac)})", onclick: move |_| quick::new_session(hub),
+                        Glyph { icon: Icon::Plus, size: 16 }
+                    }
+                    a { class: rail_class(overview), href: Route::Overview.href(), "aria-label": "Overview", title: "Overview", "aria-current": overview.then_some("page"),
+                        Glyph { icon: Icon::LayoutGrid, size: 16 }
+                    }
+                    if h.offline() {
+                        button { class: "rail-item rail-warn", r#type: "button", "aria-label": "Reconnecting. Can't connect?", title: "Reconnecting. Can't connect?", onclick: move |_| connect::open_connect_help(None),
+                            Glyph { icon: Icon::WifiOff, size: 16 }
+                        }
+                    }
+                }
+                div { class: "rail-group rail-foot",
+                    a { class: rail_class(on_machines), href: Route::Machines { add: false }.href(), "aria-label": "Machines", title: "Machines: {online} of {total} online", "aria-current": on_machines.then_some("page"),
+                        Glyph { icon: Icon::Monitor, size: 16 }
+                    }
+                    a {
+                        class: rail_class(on_pages),
+                        href: Route::Pages { page: None }.href(),
+                        "aria-label": if changed > 0 { format!("Blueprints, {changed} changed") } else { "Blueprints".to_string() },
+                        title: match changed {
+                            0 => "Blueprints".to_string(),
+                            1 => "Blueprints: 1 changed since you last opened it".to_string(),
+                            n => format!("Blueprints: {n} changed since you last opened them"),
+                        },
+                        "aria-current": on_pages.then_some("page"),
+                        Glyph { icon: Icon::PanelsTopLeft, size: 16 }
+                        if changed > 0 {
+                            span { class: "rail-dot", "aria-hidden": "true" }
+                        }
+                    }
+                    a { class: rail_class(on_settings), href: Route::Settings.href(), "aria-label": "Settings", title: "Settings", "aria-current": on_settings.then_some("page"),
+                        Glyph { icon: Icon::Settings, size: 16 }
+                    }
+                }
+            }
+        };
+    }
     rsx! {
-        aside { class: "sidebar",
+        aside { class: "sidebar", "data-sidebar": "open",
             div { class: "sidebar-head",
                 Logo { connecting: h.offline(), target: true }
                 span { class: "brand", "Inyon" }
@@ -175,6 +255,9 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                         onclick: move |_| connect::open_connect_help(None),
                         Glyph { icon: Icon::WifiOff, size: 16 }
                     }
+                }
+                button { class: "sidebar-fold icon-button press", r#type: "button", "aria-label": "Hide sidebar", "aria-expanded": "true", title: "Hide sidebar ({fold})", onclick: move |_| fold_sidebar(),
+                    Glyph { icon: Icon::PanelLeftClose, size: 16 }
                 }
             }
             div { class: "sidebar-start",

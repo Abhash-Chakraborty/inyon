@@ -22,6 +22,7 @@ mod files;
 mod format;
 mod highlight;
 mod home;
+mod layout;
 mod list;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod machines;
