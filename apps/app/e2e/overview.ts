@@ -567,8 +567,18 @@ try {
     const signIn = { ...asked, body: ['Sign in to GitHub to push the branch.'], links: ['https://github.com/login/device'] }
     await page.goto(`${base}/next/m/local/p/12`)
     await page.getByText('Would you like to run the following command?').waitFor()
+    // the reader goes to the link the moment it shows: focus stays there. The card used to pull it
+    // back to the likely choice from anything without an id, so Enter on Open or Copy link answered
+    await page.evaluate(() => {
+      new MutationObserver((_, o) => {
+        const a = document.querySelector<HTMLElement>('.prompt-link a')
+        if (a) (o.disconnect(), setTimeout(() => a.focus(), 0))
+      }).observe(document.body, { subtree: true, childList: true })
+    })
     change(stream, { state: { screen: { ...accounts().state.screen, prompt: signIn } } })
     await page.getByText('Sign in to GitHub to push the branch.').waitFor()
+    await page.waitForTimeout(500)
+    check(await page.evaluate(() => !!document.activeElement?.matches('.prompt-link a')), `${label}: focus stays on the link the reader went to (${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80))})`)
     const link = page.locator('.prompt-link')
     check((await link.getByRole('link', { name: 'Open' }).getAttribute('href')) === 'https://github.com/login/device', `${label}: Open goes to the link`)
     await link.getByRole('button', { name: 'Copy link' }).click()
@@ -1261,7 +1271,7 @@ try {
     await ctx.close()
   }
 } catch (e) {
-  await capture(browser, shots, 'overview')
+  await capture(browser, shots, 'overview', problems)
   throw e
 } finally {
   await browser.close()

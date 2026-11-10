@@ -18,13 +18,15 @@ const TABS: &str = "prompt-tabs";
 /// Focus on `id` once the screen has drawn it: the choices are disabled while an answer is on its
 /// way, and a disabled button can't take focus, so it tries again until it lands (a slow phone can
 /// take a few frames). With `yield_to_keys`, it gives up as soon as anything other than the card
-/// itself has focus, so it never undoes an arrow key pressed in the meantime.
+/// itself has focus, so it never undoes an arrow key pressed in the meantime, nor pulls focus back
+/// from the question's Open or Copy link (which have no id: going by ids alone, Enter there
+/// answered with the likely choice).
 fn focus_soon(id: String, yield_to_keys: bool) {
     spawn(async move {
         for _ in 0..60 {
             platform::sleep(16).await;
             let at = dom::active_id();
-            if at.as_deref() == Some(id.as_str()) || (yield_to_keys && at.is_some_and(|a| a != CARD)) {
+            if at.as_deref() == Some(id.as_str()) || (yield_to_keys && dom::focus_elsewhere(CARD)) {
                 return;
             }
             dom::focus(&id);

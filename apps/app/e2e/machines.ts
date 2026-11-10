@@ -567,7 +567,7 @@ try {
     await ctx.close()
   }
 } catch (e) {
-  await capture(browser, shots, 'machines')
+  await capture(browser, shots, 'machines', problems)
   throw e
 } finally {
   await browser.close()
