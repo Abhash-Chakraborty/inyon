@@ -11,6 +11,7 @@ import path from 'node:path'
 import { chromium, devices, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
 import { accounts, info, overview, storefront } from './demo.ts'
+import { capture } from './failure.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -465,6 +466,9 @@ try {
     await page.screenshot({ path: path.join(shots, 'chat-390-light-back.png') })
     await ctx.close()
   }
+} catch (e) {
+  await capture(browser, shots, 'chat')
+  throw e
 } finally {
   await browser.close()
   server.stop(true)

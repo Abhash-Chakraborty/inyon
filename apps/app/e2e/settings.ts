@@ -16,6 +16,7 @@ import { chromium, devices, type BrowserContext, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
 import { overview } from './demo.ts'
 import { passed, resetShares, shareRoute, shares } from './share-hub.ts'
+import { capture } from './failure.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -1077,6 +1078,7 @@ try {
     }
   }
 } catch (e) {
+  await capture(browser, shots, 'settings')
   // what the open pages showed, and what they logged, for a failure on a machine you can't look at
   for (const [i, page] of opened.filter((p) => !p.isClosed()).entries()) {
     await page.screenshot({ path: path.join(shots, `failed-${i + 1}.png`) }).catch(() => {})

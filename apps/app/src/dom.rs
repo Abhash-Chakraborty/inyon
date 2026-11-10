@@ -867,12 +867,7 @@ mod imp {
                 close_notice(&tag2);
                 if let Some(w) = web_sys::window() {
                     let _ = w.focus();
-                    if let Ok(h) = w.history() {
-                        let _ = h.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&href));
-                    }
-                    if let Ok(e) = web_sys::Event::new("popstate") {
-                        let _ = w.dispatch_event(&e);
-                    }
+                    crate::route::visit(&href);
                 }
             });
             let _ = js_sys::Reflect::set(&n, &"onclick".into(), click.as_ref());

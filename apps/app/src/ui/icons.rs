@@ -128,7 +128,6 @@ pub enum Icon {
     GitBranch,
     FolderGit2,
     AtSign,
-    ShieldAlert,
     Coins,
     LayoutPanelLeft,
     // sharing a blueprint
@@ -729,11 +728,6 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                 Icon::AtSign => rsx! {
                     circle { cx: "12", cy: "12", r: "4" }
                     path { d: "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" }
-                },
-                Icon::ShieldAlert => rsx! {
-                    path { d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" }
-                    path { d: "M12 8v4" }
-                    path { d: "M12 16h.01" }
                 },
                 Icon::Coins => rsx! {
                     path { d: "M13.744 17.736a6 6 0 1 1-7.48-7.48" }

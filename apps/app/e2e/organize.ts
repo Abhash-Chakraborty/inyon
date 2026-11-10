@@ -12,6 +12,7 @@ import path from 'node:path'
 import { chromium, devices, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
 import { overview } from './demo.ts'
+import { capture } from './failure.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -441,6 +442,7 @@ try {
     await ctx.close()
   }
 } catch (e) {
+  await capture(browser, shots, 'organize')
   console.error(`stopped after "${last}"`)
   if (problems.length) console.error(problems.join('\n'))
   throw e

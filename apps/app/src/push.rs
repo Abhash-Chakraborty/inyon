@@ -213,13 +213,7 @@ mod imp {
                 return;
             }
             let Some(href) = get(&data, "href").as_string().filter(|h| h.starts_with('/') && !h.starts_with("//") && !h.starts_with("/\\")) else { return };
-            let Some(w) = web_sys::window() else { return };
-            if let Ok(h) = w.history() {
-                let _ = h.push_state_with_url(&JsValue::NULL, "", Some(&crate::route::app_href(&href)));
-            }
-            if let Ok(e) = web_sys::Event::new("popstate") {
-                let _ = w.dispatch_event(&e);
-            }
+            crate::route::visit(&crate::route::app_href(&href));
         });
         let _ = call(&sw, "addEventListener", &[&"message".into(), on.as_ref()]);
         on.forget();

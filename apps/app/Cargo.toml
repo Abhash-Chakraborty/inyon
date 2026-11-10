@@ -21,7 +21,6 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # the phone pairing code on the Machines page, drawn as SVG
 qrcode = { version = "0.14", default-features = false }
 # links read as the browser reads them (the Preview tab's check against the app's own address)
-url = "2.5"
 
 # the phone core in the app itself (the `phone` feature): the Android build runs it natively
 inyon-phone = { path = "../../crates/inyon-phone", features = ["native"], optional = true }

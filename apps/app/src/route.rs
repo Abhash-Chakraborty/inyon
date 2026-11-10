@@ -164,11 +164,28 @@ mod imp {
         let _ = if replace { h.replace_state_with_url(&st, "", Some(href)) } else { h.push_state_with_url(&st, "", Some(href)) };
     }
 
+    /// The page's own event for [`visit`]: the address changed from outside a click or a key.
+    const VISIT: &str = "inyon:visit";
+
+    /// Goes to an address inside the app from outside a click (a tapped notification): a new
+    /// entry like any other move, and the screen follows. It isn't a `popstate`: that means back,
+    /// and a back with a closed layer's entry on top steps back once more, undoing the move.
+    pub fn visit(href: &str) {
+        record(href);
+        if let (Some(w), Ok(e)) = (web_sys::window(), web_sys::Event::new(VISIT)) {
+            let _ = w.dispatch_event(&e);
+        }
+    }
+
     /// Back and forward, and clicks on links into the app (any `a` under the base path, without a
     /// modifier key or a target), reported as routes.
     pub fn listen(tx: UnboundedSender<Route>) {
         let Some(win) = web_sys::window() else { return };
         let t = tx.clone();
+        let v = tx.clone();
+        let visited = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| drop(v.unbounded_send(current())));
+        let _ = win.add_event_listener_with_callback(VISIT, visited.as_ref().unchecked_ref());
+        visited.forget();
         // a back that only closed a layer leaves the screen as it is
         let pop = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
             if crate::ui::back::popped(crate::ui::back::current()) {
@@ -199,7 +216,7 @@ mod imp {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use imp::{current, listen, push};
+pub use imp::{current, listen, push, visit};
 
 /// The Android build's page (the `phone` feature): the same rules, kept by a script in the page,
 /// since Rust there runs outside it. Each link into the app adds a history entry, so Android's back
