@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Pencil, Plug, Plus, RotateCcw, Save, Smartphone, SquareTerminal, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronLeft, ChevronRight, Ellipsis, FileCode2, HardDrive, Pencil, Plug, Plus, RotateCcw, Save, Smartphone, SquareTerminal, Trash2 } from 'lucide-react'
 import { agentDef, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -9,7 +9,7 @@ import { paneHref, paneTitle } from '../lib/overview.ts'
 import { RESPONSE_TITLE, bytes, responseTime, shortPath, timeAgo } from '../lib/format.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Empty, Pulse, SectionLabel, Segmented, Waiting } from '../components/ui/primitives.tsx'
+import { Button, Empty, IconButton, Menu, Pulse, SectionLabel, Segmented, Waiting } from '../components/ui/primitives.tsx'
 import { HostDot, StateDot, hostLine, shownState, sshAddress } from '../components/ui/status.tsx'
 import { MachineSheet, NewSessionSheet, PairMachine } from '../components/Sheets.tsx'
 import { PhoneSheet } from '../components/PhoneSheet.tsx'
@@ -18,7 +18,8 @@ import { SetupPanel } from '../components/SetupPanel.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { forgetPairFragment, pairFragment } from '../lib/native.ts'
-import { listHubs } from '../lib/hubs.ts'
+import { listHubs, onHubs } from '../lib/hubs.ts'
+import { HubRows } from '../components/HubRows.tsx'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { refreshAll } from '../lib/refresh.ts'
 import { AgentBadges } from '../components/Overview.tsx'
@@ -74,30 +75,35 @@ function MachineRow({ h, hosts, i }: { h: HostState; hosts: HostState[]; i: numb
   const nav = useNavigate()
   const where = h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)
   const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.filter((p) => p.agent).length, 0), 0)
+  const answering = h.status === 'online'
   return (
-    <Link style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} {...contextMenu(() => machineMenu(h, nav), { touch: true })} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 hover:bg-hover/60 active:bg-hover">
-      <span className={clsx('relative flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-sunken', h.status === 'online' ? 'text-fg-2' : 'text-fg-3')}>
-        <MachineIcon kind={machineKindOf(h)} size={18} />
-        <span className="absolute -right-0.5 -bottom-0.5 flex size-[11px] items-center justify-center rounded-full bg-elev">
-          {h.status === 'online' || h.status === 'error' ? <HostDot status={h.status} /> : <span className="size-[7px] rounded-full border border-fg-3" />}
+    <div style={{ '--i': i } as React.CSSProperties} {...contextMenu(() => machineMenu(h, nav), { touch: true })} className="flex min-h-[56px] items-center hover:bg-hover/60">
+      <Link to={`/machines/${encodeURIComponent(h.config.id)}`} className={clsx('flex min-h-[56px] min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 active:bg-hover', answering && 'pr-4')}>
+        <span className={clsx('relative flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-sunken', h.status === 'online' ? 'text-fg-2' : 'text-fg-3')}>
+          <MachineIcon kind={machineKindOf(h)} size={18} />
+          <span className="absolute -right-0.5 -bottom-0.5 flex size-[11px] items-center justify-center rounded-full bg-elev">
+            {h.status === 'online' || h.status === 'error' ? <HostDot status={h.status} /> : <span className="size-[7px] rounded-full border border-fg-3" />}
+          </span>
         </span>
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className={clsx('truncate text-[14px] font-medium', h.status !== 'online' && 'text-fg-2')}>{h.config.name}</span>
-          {nodeUpdateLabel(h) && <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-line bg-white/45 px-2 font-mono text-[12px] text-fg-2 dark:bg-white/[0.03]">{nodeUpdateLabel(h)}</span>}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={clsx('truncate text-[14px] font-medium', h.status !== 'online' && 'text-fg-2')}>{h.config.name}</span>
+            {nodeUpdateLabel(h) && <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-line bg-white/45 px-2 font-mono text-[12px] text-fg-2 dark:bg-white/[0.03]">{nodeUpdateLabel(h)}</span>}
+          </div>
+          {/* two lines at most, so the counts stay readable on a phone */}
+          <div className="line-clamp-2 font-mono text-[12px] break-words text-fg-3">
+            {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, metaLine(where, h.sessions.length, panes, h.latencyMs))}
+          </div>
         </div>
-        {/* two lines at most, so the counts stay readable on a phone */}
-        <div className="line-clamp-2 font-mono text-[12px] break-words text-fg-3">
-          {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, metaLine(where, h.sessions.length, panes, h.latencyMs))}
-        </div>
-      </div>
-      {/* on a phone the address needs the room more; the machine page lists the agents */}
-      <span className="hidden sm:contents">
-        <AgentBadges host={h} size={18} />
-      </span>
-      <ChevronRight className="size-4 shrink-0 text-fg-3" />
-    </Link>
+        {/* on a phone the address needs the room more; the machine page lists the agents */}
+        <span className="hidden sm:contents">
+          <AgentBadges host={h} size={18} />
+        </span>
+        {answering && <ChevronRight className="size-4 shrink-0 text-fg-3" />}
+      </Link>
+      {/* a machine that isn't answering (still connecting, off, or never paired): its menu in reach, with Remove… */}
+      {!answering && <Menu align="end" header={h.config.name} items={machineMenu(h, nav)} trigger={({ toggle, ref }) => <IconButton label={`More for ${h.config.name}`} className="mr-1.5 size-11" onClick={toggle} ref={ref}><Ellipsis className="size-[18px]" /></IconButton>} />}
+    </div>
   )
 }
 
@@ -105,7 +111,9 @@ export function MachinesPage() {
   const hosts = useStore((s) => s.hosts)
   const loaded = useStore((s) => s.hostsLoaded) || hosts.length > 0
   // nothing listed, but a hub is paired: the phone can't reach it right now (off its VPN, say)
-  const hubs = loaded && !hosts.length ? listHubs() : []
+  const [paired, setPaired] = useState(listHubs)
+  useEffect(() => onHubs(setPaired), [])
+  const hubs = loaded && !hosts.length ? paired : []
   const [q, setQ] = useState('')
   const shown = useMemo(() => onlineFirst(hosts).filter((h) => !q || matchesQuery(`${h.config.name} ${h.hostname ?? ''} ${h.machineKind ?? ''} ${h.os ?? ''} ${h.agents.join(' ')}`, q)), [hosts, q])
   // a pairing link opened from outside (a QR code scanned with the camera) lands here
@@ -172,6 +180,12 @@ export function MachinesPage() {
                 ? 'See the coding agents on your laptop or server and talk to them from here. Run one command on it, then scan the code it shows.'
                 : 'Pair a machine or add one over SSH to see the coding agents running in tmux on it.'}
             </Empty>
+            {/* a hub that never answers can be taken off here, where it's waited for */}
+            {hubs.length > 0 && (
+              <div className="divide-y divide-line border-t border-line text-left" role="group" aria-label={hubs.length === 1 ? 'The hub this is connecting to' : 'The hubs this is connecting to'}>
+                <HubRows hubs={hubs} />
+              </div>
+            )}
           </div>
         ) : (
           shown.length > 0 && (

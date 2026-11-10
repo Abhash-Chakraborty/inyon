@@ -27,7 +27,8 @@ import { Logo } from '../components/AppShell.tsx'
 import { COMMIT, VERSION } from '../lib/version.ts'
 import { getRenderer } from '../lib/renderer.ts'
 import { PhoneSheet } from '../components/PhoneSheet.tsx'
-import { forgetHub, listHubs, onHubs } from '../lib/hubs.ts'
+import { listHubs, onHubs } from '../lib/hubs.ts'
+import { HubRows } from '../components/HubRows.tsx'
 import { checkHub, hubBuild, sameBuild, useHubBuild, watchHub, type Build } from '../lib/updates.ts'
 import { checkAppUpdate, type AppUpdate } from '../lib/appUpdate.ts'
 import { openLink } from '../lib/format.ts'
@@ -946,28 +947,10 @@ function ThisConnection() {
 function Hubs() {
   const [hubs, setHubs] = useState(listHubs)
   useEffect(() => onHubs(setHubs), [])
-  useConnLog()
   return (
     <Section id="hubs" title="Hubs" desc="A hub brings its machines into this app. Pair with one from Add, with the code its web app shows.">
       {!hubs.length && <p className="px-4 py-3.5 text-[13px] text-fg-3">No hubs paired.</p>}
-      {hubs.map((h) => (
-        <div key={h.id} className="flex items-center gap-3 px-4 py-3 text-[14px]">
-          <Logo className="size-[18px]" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{h.name}</span>
-            <span className="block truncate font-mono text-[12px] text-fg-3">{h.url.replace(/^https?:\/\//, '')}{h.version ? ` · ${h.version}` : ''}</span>
-            <LastDrop id={hubLogId(h.id)} />
-          </span>
-          {isDown(hubLogId(h.id)) && (
-            <Button size="sm" variant="ghost" onClick={() => openConnectHelp(hubLogId(h.id))}>
-              Can't connect?
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" onClick={() => (forgetHub(h.id), toast({ title: `${h.name} forgotten`, body: 'Its machines are gone from this app. The hub still lists this phone until you forget it there too.', tone: 'success' }))}>
-            Forget
-          </Button>
-        </div>
-      ))}
+      <HubRows hubs={hubs} />
     </Section>
   )
 }
