@@ -163,7 +163,6 @@ struct Name<'a> {
     name: &'a str,
 }
 
-/// Gives a session the name it shows in Inyon; an empty name goes back to the agent's own title.
 /// Puts the pinned sessions in this order (their mark ids): `PUT /api/organize/order`.
 pub async fn pin_order(ids: &[String]) -> Result<(), ApiError> {
     request("PUT", "/api/organize/order", Some(serde_json::json!({ "pins": ids }).to_string())).await.map(drop)
@@ -194,8 +193,55 @@ pub async fn remove_prompt(id: &str) -> Result<(), ApiError> {
     request("DELETE", &format!("/api/organize/prompts/{}", inyon_chat_core::js::encode_uri_component(id)), None).await.map(drop)
 }
 
+/// Gives a session the name it shows in Inyon (a plain terminal: its tmux window's name); an empty
+/// name goes back to the automatic one.
 pub async fn rename(host: &str, pane: &str, name: &str) -> Result<(), ApiError> {
     request("PUT", &format!("{}/name", pane_path(host, pane)), Some(serde_json::to_string(&Name { name }).unwrap())).await.map(drop)
+}
+
+/// `/api/hosts/<machine>/sessions/<tmux's id without $>/name`, as api.ts's `renameTmuxSession`.
+pub fn tmux_session_path(host: &str, session: &str) -> String {
+    format!("{}/sessions/{}/name", host_path(host), inyon_chat_core::js::encode_uri_component(session.strip_prefix('$').unwrap_or(session)))
+}
+
+#[derive(Deserialize)]
+struct Named {
+    name: String,
+}
+
+/// Renames the tmux session itself (`session` is tmux's id, `$52`): the name tmux took, with its
+/// dots and colons made underscores (from 0.22).
+pub async fn rename_tmux_session(host: &str, session: &str, name: &str) -> Result<String, ApiError> {
+    parse::<Named>(&request("PUT", &tmux_session_path(host, session), Some(serde_json::to_string(&Name { name }).unwrap())).await?).map(|n| n.name)
+}
+
+/// The agent's past conversations in a pane's folder, newest first, with the open one marked.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Conversations {
+    pub agent: inyon_protocol::AgentKind,
+    pub cwd: String,
+    pub conversations: Vec<inyon_protocol::PastConversation>,
+}
+
+/// `GET …/conversations?agent=`: `agent` says whose when none is running.
+pub fn conversations_path(host: &str, pane: &str, agent: Option<inyon_protocol::AgentKind>) -> String {
+    let query = agent.map_or(String::new(), |k| format!("?agent={}", k.as_str()));
+    format!("{}/conversations{query}", pane_path(host, pane))
+}
+
+pub async fn conversations(host: &str, pane: &str, agent: Option<inyon_protocol::AgentKind>) -> Result<Conversations, ApiError> {
+    parse(&request("GET", &conversations_path(host, pane, agent), None).await?)
+}
+
+#[derive(Serialize)]
+struct Switch<'a> {
+    agent: inyon_protocol::AgentKind,
+    id: &'a str,
+}
+
+/// The agent exits (the pane stays) and starts again on conversation `id`.
+pub async fn switch_conversation(host: &str, pane: &str, agent: inyon_protocol::AgentKind, id: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/switch", pane_path(host, pane)), json(&Switch { agent, id })).await.map(drop)
 }
 
 /// A dropped connection or a busy server, as opposed to a refusal that a retry won't change.
@@ -1375,6 +1421,18 @@ async fn request(method: &str, path: &str, body: Option<String>) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_routes_match_the_web_app() {
+        assert_eq!(tmux_session_path("hub:h1/box", "$52"), "/api/hosts/hub%3Ah1%2Fbox/sessions/52/name");
+        assert_eq!(conversations_path("local", "%11", Some(inyon_protocol::AgentKind::Claude)), "/api/hosts/local/panes/11/conversations?agent=claude");
+        assert_eq!(conversations_path("local", "%11", None), "/api/hosts/local/panes/11/conversations");
+        let b = Switch { agent: inyon_protocol::AgentKind::Codex, id: "019a" };
+        assert_eq!(serde_json::to_string(&b).unwrap(), r#"{"agent":"codex","id":"019a"}"#);
+        let list: Conversations =
+            serde_json::from_str(r#"{"agent":"claude","cwd":"/home/sam/code","conversations":[{"id":"a1","title":"Fix the test","at":1700000000000,"current":true}]}"#).unwrap();
+        assert_eq!(list.conversations[0].current, Some(true));
+    }
 
     #[test]
     fn page_routes_match_the_web_app() {

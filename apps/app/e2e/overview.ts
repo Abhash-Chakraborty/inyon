@@ -812,8 +812,16 @@ try {
     await ask.getByRole('button', { name: 'Exit' }).click()
     await page.getByText('Claude Code exited').waitFor()
     check(state.controls.at(-1)?.what === 'exit', 'session menu: exited at the hub')
-    // Codex rewinds through the hub, after asking
+    // while Codex asks something, its menu keeps only what can't reach the question
     await page.goto(`${base}/next/m/local/p/12`)
+    await page.getByText('Would you like to run the following command?').waitFor()
+    await more.click()
+    const asking = await page.getByRole('menuitem').allTextContents()
+    check(!asking.some((i) => i.includes('Rewind…') || i.includes('Exit to shell')), `session menu while asking: ${asking.join(' | ')}`)
+    await page.keyboard.press('Escape')
+    // once it's answered, Codex rewinds through the hub, after asking
+    change('local:%12', { state: { screen: { working: false, model: 'GPT-6-Astra', effort: 'medium', width: 120 } } })
+    await page.locator('.prompt').waitFor({ state: 'detached' })
     await more.click()
     await page.getByRole('menuitem', { name: 'Rewind…' }).click()
     await page.getByRole('dialog', { name: 'Rewind your last message?' }).getByRole('button', { name: 'Rewind' }).click()

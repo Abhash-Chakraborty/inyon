@@ -56,6 +56,8 @@ export const state = {
   sessionFail: false,
   /** sockets are refused, as when the hub is out of reach */
   refuseWs: false,
+  /** the machines the overview sends, when a check changes demo.ts's */
+  hosts: undefined as undefined | Item[],
   /** extra routes a check adds: return a Response to answer, undefined to pass */
   routes: [] as ((req: Request, url: URL) => Promise<Response | undefined> | Response | undefined)[],
 }
@@ -89,7 +91,7 @@ export function dropSockets() {
 }
 
 function snapshot(stream: string) {
-  if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { hosts: overview().hosts } }
+  if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { hosts: state.hosts ?? overview().hosts } }
   if (stream === 'organize') return { t: 'snapshot', stream, epoch: EPOCH, seq: organizeSeq(), rows: { sessions: state.marks, projects: [], groups: [], spaces: [] } }
   const c = streams.get(stream)
   if (!c) return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { items: [] }, state: { loaded: true, hasMore: false } }

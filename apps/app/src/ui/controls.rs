@@ -337,7 +337,7 @@ impl Controls {
         if self.agent == AgentKind::Opencode {
             items.push(
                 Item::new("Default", Icon::Gauge, self.act(ControlOp::Setting(self.effort_command("default").unwrap_or_default(), "Could not change effort")))
-                    .checked(self.effort.is_none()),
+                    .checked(on.is_none()),
             );
         }
         for e in &self.efforts {

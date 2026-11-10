@@ -2,21 +2,23 @@
 //! with the key bar a phone keyboard needs under it. It opens with the hub when the socket is up,
 //! opens again after the socket comes back, lets go of the window when the page has been hidden for
 //! a while (so an agent's window rests at 200×50) and takes it back when the page is shown, and
-//! says so when tmux lets go of it, with Reconnect.
+//! says so when tmux lets go of it, with Reconnect. A plain shell gets a row over it to start any
+//! agent installed on its machine.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-use inyon_protocol::ClientMsg;
+use inyon_protocol::{AgentKind, ClientMsg};
 
-use super::icons::{Glyph, Icon};
+use super::icons::{AgentMark, Glyph, Icon};
 use super::menu::{self, Action, Item};
 use super::outbox;
+use super::toast::{self, Toast, ToastTone};
 use crate::socket::Outbox;
 use crate::state::{self, Hub};
 use crate::term::{self, MenuOp, KEYS};
-use crate::{dom, platform};
+use crate::{api, dom, platform};
 
 const SCREEN: &str = "term-screen";
 const SETTINGS: &str = "inyon.settings.v2";
@@ -99,8 +101,72 @@ fn detach(live: &Shared, out: &Outbox) {
     }
 }
 
+/// What the toast says under "Starting …": where the agent will show (lib/starting.ts).
+pub fn starting_note(kind: AgentKind) -> &'static str {
+    if kind.def().chat {
+        "The chat view opens as soon as it is running."
+    } else {
+        "It opens here in the terminal."
+    }
+}
+
+/// How long a start holds the starter's chips when the pane doesn't report the agent.
+const START_WAIT_MS: u32 = 15_000;
+
+/// "Start here:" and a chip for each agent on the machine, over a plain shell (none runs in it).
 #[component]
-pub fn TerminalView(host: String, pane: String) -> Element {
+fn Starter(host: String, pane: String, installed: Vec<AgentKind>) -> Element {
+    // one start at a time: a second could land in the first agent as typed input. The row goes once
+    // the pane reports its agent; a start that never shows frees it after a while
+    let mut starting = use_signal(|| false);
+    rsx! {
+        div { class: "term-start", role: "toolbar", "aria-label": "Start an agent",
+            span { class: "term-start-label", "Start here:" }
+            for kind in installed {
+                button {
+                    key: "{kind.as_str()}",
+                    class: "term-start-chip press",
+                    r#type: "button",
+                    disabled: starting(),
+                    onclick: {
+                        let (host, pane) = (host.clone(), pane.clone());
+                        move |_| {
+                            if *starting.peek() {
+                                return;
+                            }
+                            starting.set(true);
+                            let (host, pane) = (host.clone(), pane.clone());
+                            spawn(async move {
+                                match api::start(&host, &pane, kind, None).await {
+                                    Ok(()) => {
+                                        toast::show(Toast {
+                                        id: 0,
+                                        title: format!("Starting {}…", kind.def().name),
+                                        body: Some(starting_note(kind).into()),
+                                        tone: ToastTone::Info,
+                                        href: None,
+                                        action: None,
+                                            agent: Some(kind),
+                                        });
+                                        platform::sleep(START_WAIT_MS).await;
+                                    }
+                                    Err(e) => toast::toast("Could not start", Some(e.message), ToastTone::Error),
+                                }
+                                starting.set(false);
+                            });
+                        }
+                    },
+                    AgentMark { kind, size: 15, decorative: true }
+                    "{kind.def().name}"
+                }
+            }
+        }
+    }
+}
+
+/// `agent`: what runs in the pane, as far as Inyon knows; `installed`: the agents on its machine.
+#[component]
+pub fn TerminalView(host: String, pane: String, #[props(default)] agent: Option<AgentKind>, #[props(default)] installed: Vec<AgentKind>) -> Element {
     let hub = use_context::<Signal<Hub>>();
     let out = outbox();
     let mut phase = use_signal(|| Phase::Loading);
@@ -331,8 +397,12 @@ pub fn TerminalView(host: String, pane: String) -> Element {
         let live = live.clone();
         move |_| focus_screen(&live)
     };
+    let starter = agent.is_none() && !installed.is_empty();
     rsx! {
         div { class: "term",
+            if starter {
+                Starter { host: host.clone(), pane: pane.clone(), installed: installed.clone() }
+            }
             div { class: "term-stage",
                 div { id: SCREEN, class: "term-screen", onclick: focus_click, oncontextmenu: on_menu }
                 match phase() {
