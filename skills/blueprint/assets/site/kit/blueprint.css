@@ -313,7 +313,7 @@ body { background: var(--bg); }
 .cap { font-size: 13px; color: var(--fg-3); margin: 0 0 20px; }
 .tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font: 500 12px var(--mono); white-space: nowrap; background: var(--accent-soft); color: var(--fg); }
 .tag.ok { color: var(--ok); background: var(--diff-add); } .tag.warn { color: var(--warn); background: var(--warn-soft); } .tag.bad { color: var(--danger); background: var(--diff-del); }
-.call { border: 1px solid var(--line); border-left: 3px solid var(--fg); border-radius: 0 14px 14px 0; background: var(--panel); padding: 14px 18px; margin: 16px 0; }
+.call { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); padding: 14px 18px; margin: 16px 0; }
 .call p:last-child { margin: 0; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 18px 0; }
 .stat { padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
