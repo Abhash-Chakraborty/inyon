@@ -68,6 +68,8 @@ psmux numbers panes per session, so every session has a pane `%1`. Before 0.17.1
 
 A session you open by typing `psmux` in a terminal starts from a server psmux prepared ahead of time, and its shell still calls the session `__warm__`. Before 0.24.1 the integration asked psmux about that name and got another session's answer, so two sessions' agents reported as one: the chat of one session showed the other's conversation by turns, and replies or items went missing. From 0.24.1 the scripts ask the pane's own psmux server, and the hub ignores a report whose conversation is kept under a different folder than the one the session's agent started in. The scripts update by themselves.
 
+Before 0.25.6, a message you sent from the app to a pane that wasn't the active one in its tmux session could land in the pane that was: the shell in another window, or the other half of a split. psmux before 3.4 pastes into the session's active pane whatever pane it's told. From 0.25.6 the hub sends text to psmux in a way that carries its own pane, so it works with any psmux; update the hub, nothing changes on the Windows machine. A paste over 20 KB briefly shows its window in a terminal attached to that session, then goes back.
+
 ## Moving to a hub later
 
 A paired computer can join a [hub](hub.md) instead: run the hub's *Add a machine* command on it. To stop pairing directly afterwards, `inyon service uninstall link` removes the link.
