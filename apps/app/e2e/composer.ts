@@ -11,7 +11,7 @@ import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Page } from 'playwright'
-import { base, check, finish, hasReact, launch, layout, open, plainBase, resetChats, SIZES, state, until } from './hub.ts'
+import { base, check, finish, launch, layout, open, problems, state, until, hasReact, plainBase, resetChats, SIZES } from './hub.ts'
 import { capture } from './failure.ts'
 
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
@@ -285,7 +285,7 @@ try {
         await ctx.close()
       }
 } catch (e) {
-  await capture(browser, shots, 'composer')
+  await capture(browser, shots, 'composer', problems)
   check(false, `stopped: ${(e as Error).stack ?? e}`)
 } finally {
   await done()

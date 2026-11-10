@@ -10,7 +10,7 @@ import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Page } from 'playwright'
-import { base, change, check, finish, launch, layout, open, resetChats, SIZES, state, streams, until } from './hub.ts'
+import { base, change, check, finish, launch, layout, open, problems, state, streams, until, resetChats, SIZES } from './hub.ts'
 import { info as chatInfo, overview } from './demo.ts'
 import { capture } from './failure.ts'
 
@@ -251,7 +251,7 @@ try {
       await ctx.close()
     }
 } catch (e) {
-  await capture(browser, shots, 'names')
+  await capture(browser, shots, 'names', problems)
   throw e
 } finally {
   state.hosts = undefined

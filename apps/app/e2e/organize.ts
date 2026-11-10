@@ -442,7 +442,7 @@ try {
     await ctx.close()
   }
 } catch (e) {
-  await capture(browser, shots, 'organize')
+  await capture(browser, shots, 'organize', problems)
   console.error(`stopped after "${last}"`)
   if (problems.length) console.error(problems.join('\n'))
   throw e

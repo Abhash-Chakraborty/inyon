@@ -848,7 +848,7 @@ try {
     await ctx.close()
   }
 } catch (e) {
-  await capture(browser, shots, 'pages')
+  await capture(browser, shots, 'pages', problems)
   throw e
 } finally {
   await browser.close()

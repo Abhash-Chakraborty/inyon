@@ -1078,7 +1078,7 @@ try {
     }
   }
 } catch (e) {
-  await capture(browser, shots, 'settings')
+  await capture(browser, shots, 'settings', problems)
   // what the open pages showed, and what they logged, for a failure on a machine you can't look at
   for (const [i, page] of opened.filter((p) => !p.isClosed()).entries()) {
     await page.screenshot({ path: path.join(shots, `failed-${i + 1}.png`) }).catch(() => {})

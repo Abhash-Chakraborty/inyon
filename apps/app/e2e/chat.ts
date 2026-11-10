@@ -469,7 +469,7 @@ try {
     await ctx.close()
   }
 } catch (e) {
-  await capture(browser, shots, 'chat')
+  await capture(browser, shots, 'chat', problems)
   throw e
 } finally {
   await browser.close()

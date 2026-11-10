@@ -73,6 +73,16 @@ mod imp {
         (!id.is_empty()).then_some(id)
     }
 
+    /// Whether focus is on something other than the element `id` (and not on nothing, which is
+    /// the page's body): a link, a button or a box the reader went to, with or without an id.
+    pub fn focus_elsewhere(id: &str) -> bool {
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return false };
+        let Some(at) = doc.active_element() else { return false };
+        let body: Option<web_sys::Element> = doc.body().map(Into::into);
+        let nowhere = body.as_ref() == Some(&at) || doc.document_element().as_ref() == Some(&at);
+        !nowhere && at.id() != id
+    }
+
     pub fn set_title(t: &str) {
         if let Some(d) = web_sys::window().and_then(|w| w.document()) {
             d.set_title(t);
@@ -1217,6 +1227,9 @@ mod imp {
     }
     pub fn active_id() -> Option<String> {
         None
+    }
+    pub fn focus_elsewhere(_id: &str) -> bool {
+        false
     }
     pub fn set_title(_t: &str) {}
     pub fn coarse() -> bool {
