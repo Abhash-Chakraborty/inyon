@@ -8,7 +8,7 @@ import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Page } from 'playwright'
-import { base, change, check, dropSockets, finish, launch, layout, open, resetChats, SIZES, state, streams, until } from './hub.ts'
+import { base, change, check, dropSockets, errors, finish, launch, layout, open, resetChats, SIZES, state, streams, until } from './hub.ts'
 
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
@@ -148,6 +148,8 @@ try {
       check(await chip(page, 'Set a goal').or(chip(page, /^Goal:/)).first().isDisabled(), `${label}: the goal chip too`)
       state.refuseWs = false
       check(await until(async () => await chip(page, 'Model').isEnabled(), 15000), `${label}: and back once it reconnects`)
+      // the refused tries are in the browser's log
+      for (let i = errors.length - 1; i >= 0; i--) if (/Unexpected response code: 503/.test(errors[i]!)) errors.splice(i, 1)
       await ctx.close()
     }
 } finally {

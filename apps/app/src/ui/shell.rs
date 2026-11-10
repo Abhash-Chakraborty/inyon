@@ -6,10 +6,10 @@
 use dioxus::prelude::*;
 
 use super::icons::{Glyph, Icon, Logo};
-use super::menu::{Menu, MenuLayer};
+use super::menu::{self, Menu, MenuLayer};
 use super::overview::Overview;
 use super::session::Session;
-use super::{add, companion, connect, machines, notices, organize, pages, quick, settings, sidebar, temp, toast};
+use super::{add, back, companion, connect, machines, notices, organize, pages, quick, settings, sidebar, temp, toast};
 use crate::model::{self, AgentPane};
 use crate::route::Route;
 use crate::state::Hub;
@@ -26,12 +26,24 @@ pub fn Shell() -> Element {
     let here = use_context::<Signal<Route>>();
     let hub = use_context::<Signal<Hub>>();
     let menu_at = use_context::<Signal<Option<Menu>>>();
-    // a right click on nothing in particular offers Search… and New session… (ContextMenu.tsx)
+    // back and Esc close the newest layer: a picker, a sheet, a menu, Quick access, the selection
+    use_hook(back::install);
+    use_hook(|| {
+        crate::dom::on_shortcut(|k| {
+            // a submenu's Esc goes back to its menu, which it does itself
+            let in_sub = crate::dom::active_id().is_some_and(|id| id.starts_with("menu-sub-"));
+            k == "escape" && !in_sub && back::escape(crate::dom::typing_now())
+        })
+    });
+    // a right click nothing in the app took: a text box's menu, a link's, or the page's own, with
+    // Back, Reload, Search… and New session… (ContextMenu.tsx)
     use_hook(move || {
-        crate::dom::on_page_menu(move |x, y| {
+        crate::dom::on_page_menu(move |x, y, at, picked| {
             let online = hub.peek().hosts.iter().any(|h| h.status == inyon_protocol::HostStatus::Online);
+            let mac = crate::dom::mac();
+            let items = menu::page_menu(&at, &picked, crate::dom::history_len() > 1, quick::page_items(online, mac), mac, cfg!(target_arch = "wasm32"));
             let mut m = menu_at;
-            m.set(Some(Menu::at(x, y, quick::page_items(online, crate::dom::mac()))));
+            m.set(Some(Menu::at(x, y, items)));
             true
         })
     });
@@ -143,7 +155,6 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
         (l.changed(), l.pages.as_ref().map_or(0, Vec::len))
     };
     let hub = use_context::<Signal<Hub>>();
-    let mut here = use_context::<Signal<Route>>();
     let mac = crate::dom::mac();
     let h = hub.read();
     let online = h.hosts.iter().filter(|x| x.status == inyon_protocol::HostStatus::Online).count();
@@ -172,7 +183,7 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                     span { class: "truncate", "Search or jump to…" }
                     kbd { class: "sidebar-key mono", {crate::quick::search_key(mac)} }
                 }
-                button { class: "nav-item", r#type: "button", onclick: move |_| quick::new_session(hub, &mut here),
+                button { class: "nav-item", r#type: "button", onclick: move |_| quick::new_session(hub),
                     Glyph { icon: Icon::Plus, size: 16 }
                     "New session"
                     kbd { class: "nav-key mono", {crate::quick::new_key(mac)} }
@@ -224,7 +235,6 @@ fn TabBar(section: Section) -> Element {
     let on_settings = section == Section::Settings;
     let changed = pages::PAGES.read().changed();
     let hub = use_context::<Signal<Hub>>();
-    let mut here = use_context::<Signal<Route>>();
     let waiting = model::agent_panes(&hub.read().hosts).iter().filter(|r| r.agent().state == inyon_protocol::AgentState::Waiting).count();
     rsx! {
         nav { class: "tabbar",
@@ -246,7 +256,7 @@ fn TabBar(section: Section) -> Element {
                 }
                 "Blueprints"
             }
-            button { class: "tab tab-new", r#type: "button", "aria-label": "New session", onclick: move |_| quick::new_session(hub, &mut here),
+            button { class: "tab tab-new", r#type: "button", "aria-label": "New session", onclick: move |_| quick::new_session(hub),
                 span { class: "tab-plus press", Glyph { icon: Icon::Plus, size: 20 } }
             }
             a { class: tab_class(on_machines), href: Route::Machines { add: false }.href(), "aria-current": on_machines.then_some("page"),

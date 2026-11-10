@@ -206,7 +206,7 @@ fn prompts(h: &Hub, here: &Route, query: &str) -> Vec<Row> {
         .map(|q| {
             let first = q.text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
             let starred = q.starred == Some(true);
-            let copy = ("Copy".to_string(), Action::Copy(q.text.clone()));
+            let copy = ("Copy".to_string(), Action::Copy { text: q.text.clone(), what: Some("Text".into()) });
             let mut row = match &target {
                 Some((host, pane, title)) => {
                     let send = Action::Quick(QuickOp::Send { host: host.clone(), pane: pane.clone(), title: title.clone(), name: q.name.clone(), text: q.text.clone() });
@@ -279,7 +279,7 @@ fn files(h: &Hub) -> (Vec<Row>, usize) {
             let (name, dir) = split_path(&rel);
             let full = full_path(&cwd, &rel);
             let sub = if dir.is_empty() { format!("{folder} · {machine}") } else { format!("{folder}/{dir} · {machine}") };
-            let mut row = Row::new(name, sub, Mark::Icon(Icon::File), ("Copy path", Action::Copy(full.clone())));
+            let mut row = Row::new(name, sub, Mark::Icon(Icon::File), ("Copy path", Action::Copy { text: full.clone(), what: Some("Path".into()) }));
             row.text = format!("{rel} {folder} {machine}");
             let open = Action::Go(Route::Session { host: host.clone(), pane: pane.clone(), view: None });
             row.alt = Some(("Open its session".into(), open.clone()));
@@ -292,13 +292,10 @@ fn files(h: &Hub) -> (Vec<Row>, usize) {
 
 /// The sidebar's New session, the phone's +, Alt N and N: the New session sheet on the first
 /// machine online, or Add a machine when none is, since there's nothing to start one on.
-pub fn new_session(hub: Signal<Hub>, here: &mut Signal<Route>) {
+pub fn new_session(hub: Signal<Hub>) {
     let online = hub.peek().hosts.iter().any(|h| h.status == HostStatus::Online);
-    if online {
-        super::add::open_action(super::add::ActionSheet::NewSession(String::new()));
-    } else {
-        crate::route::go(here, Route::Machines { add: true });
-    }
+    // nothing to start a session on yet: + adds a machine, over the screen it was pressed on
+    super::add::open_action(if online { super::add::ActionSheet::NewSession(String::new()) } else { super::add::ActionSheet::Add });
 }
 
 /// What a right click on nothing in particular offers: the same two things as the keys.
@@ -312,7 +309,7 @@ pub fn page_items(online: bool, mac: bool) -> Vec<Item> {
 pub fn run(op: QuickOp, mut here: Signal<Route>, hub: Signal<Hub>) {
     match op {
         QuickOp::Tab(t) => open_fresh(t),
-        QuickOp::NewSession => new_session(hub, &mut here),
+        QuickOp::NewSession => new_session(hub),
         QuickOp::Send { host, pane, title, name, text } => {
             crate::route::go(&mut here, Route::Session { host: host.clone(), pane: pane.clone(), view: None });
             dioxus::core::spawn_forever(async move {
@@ -422,17 +419,11 @@ pub fn QuickAccess() -> Element {
     let chats = use_context::<Signal<Chats>>();
     let mut menu_at = use_context::<Signal<Option<Menu>>>();
     use_hook(move || {
+        // Esc closes the box wherever the focus went, as the top layer (ui/back.rs)
         dom::on_shortcut(move |k| match k {
-            // Esc closes the box wherever the focus went (a menu that just closed can take it
-            // back), unless a row's menu is open over it, which closes first
-            "escape" if QUICK.peek().is_some() && menu_at.peek().is_none() => {
-                close();
-                true
-            }
             "new" => {
                 close();
-                let mut here = here;
-                new_session(hub, &mut here);
+                new_session(hub);
                 true
             }
             "shift+p" => {
@@ -455,6 +446,8 @@ pub fn QuickAccess() -> Element {
             _ => false,
         })
     });
+    // back and Esc close it, unless a row's menu is open over it, which closes first
+    let layer = super::back::use_layer(QUICK.read().is_some(), true, close);
     // the box takes the keys whenever it opens or changes tab
     use_effect(move || {
         if QUICK().is_some() {
@@ -505,6 +498,7 @@ pub fn QuickAccess() -> Element {
     let sel = AT().min(n.saturating_sub(1));
     let fire = move |a: Action| {
         close();
+        layer.done();
         menu::run(a, chats, here, hub);
     };
     let keys_rows = rows.clone();

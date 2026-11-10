@@ -695,7 +695,7 @@ fn tiles(c: &Controls, now: &Now) -> Vec<Tile> {
         v.push(tile("Fork", Icon::GitFork, session(SessionOp::Fork)));
     }
     if let Some(id) = &now.session_id {
-        v.push(tile("Copy ID", Icon::Copy, Action::Copy(id.clone())));
+        v.push(tile("Copy ID", Icon::Copy, Action::Copy { text: id.clone(), what: Some("Session ID".into()) }));
     }
     if let Some(cmd) = &def.set.clear {
         v.push(Tile {

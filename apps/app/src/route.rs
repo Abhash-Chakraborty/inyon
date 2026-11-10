@@ -145,10 +145,23 @@ mod imp {
 
     /// Puts the route in the address bar: a new history entry, or in place of this one.
     pub fn push(r: &Route, replace: bool) {
+        if !replace {
+            record(&r.href());
+            return;
+        }
         let Some(h) = web_sys::window().and_then(|w| w.history().ok()) else { return };
-        let href = r.href();
-        let _ =
-            if replace { h.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&href)) } else { h.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&href)) };
+        // the entry keeps its mark: a layer's, when a sheet the address opened tidies the address
+        let st = h.state().unwrap_or(wasm_bindgen::JsValue::NULL);
+        let _ = h.replace_state_with_url(&st, "", Some(&r.href()));
+    }
+
+    /// A new entry for a move to another screen, or one in place of a layer's spent entry (see
+    /// ui/back.rs).
+    fn record(href: &str) {
+        let Some(h) = web_sys::window().and_then(|w| w.history().ok()) else { return };
+        let (replace, mark) = crate::ui::back::page();
+        let st = crate::ui::back::state(mark);
+        let _ = if replace { h.replace_state_with_url(&st, "", Some(href)) } else { h.push_state_with_url(&st, "", Some(href)) };
     }
 
     /// Back and forward, and clicks on links into the app (any `a` under the base path, without a
@@ -156,7 +169,12 @@ mod imp {
     pub fn listen(tx: UnboundedSender<Route>) {
         let Some(win) = web_sys::window() else { return };
         let t = tx.clone();
-        let pop = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| drop(t.unbounded_send(current())));
+        // a back that only closed a layer leaves the screen as it is
+        let pop = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            if crate::ui::back::popped(crate::ui::back::current()) {
+                let _ = t.unbounded_send(current());
+            }
+        });
         let _ = win.add_event_listener_with_callback("popstate", pop.as_ref().unchecked_ref());
         pop.forget();
         let click = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| {
@@ -170,9 +188,7 @@ mod imp {
             let Some(href) = a.get_attribute("href") else { return };
             let Some(route) = super::internal(&href) else { return };
             e.prevent_default();
-            if let Some(h) = web_sys::window().and_then(|w| w.history().ok()) {
-                let _ = h.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&super::link_href(&route, &href)));
-            }
+            record(&super::link_href(&route, &href));
             let _ = tx.unbounded_send(route);
         });
         if let Some(doc) = win.document() {
@@ -207,10 +223,9 @@ mod imp {
             const href = a.getAttribute('href');
             if (href !== '__BASE__' && !href.startsWith('__BASE__/') && !href.startsWith('__BASE__?')) return;
             e.preventDefault();
-            history.pushState(null, '', href);
-            dioxus.send(href);
+            dioxus.send({ go: href });
         }, true);
-        window.addEventListener('popstate', () => dioxus.send(location.pathname + location.search));
+        window.addEventListener('popstate', () => dioxus.send({ pop: location.pathname + location.search, layer: (history.state && history.state.inyonLayer) || null }));
         await new Promise(() => {});
     "#;
 
@@ -218,24 +233,49 @@ mod imp {
         Route::Overview
     }
 
-    /// The script that records a route in the page's history (a new entry, or in place).
-    pub(super) fn history_js(r: &Route, replace: bool) -> String {
-        let method = if replace { "replaceState" } else { "pushState" };
-        format!("history.{method}(null, '', {})", serde_json::to_string(&r.href()).unwrap_or_default())
+    /// The script that records a route in the page's history: a new entry marked `mark` (see
+    /// ui/back.rs), one in place of the entry the page is at (`replace`), or, with `keep`, the same
+    /// entry at the new address with its mark kept.
+    pub(super) fn history_js(r: &Route, replace: bool, keep: bool, mark: Option<u64>) -> String {
+        let method = if replace || keep { "replaceState" } else { "pushState" };
+        let state = match (keep, mark) {
+            (true, _) => "history.state".to_string(),
+            (false, Some(id)) => format!("{{inyonLayer: {id}}}"),
+            (false, None) => "null".to_string(),
+        };
+        format!("history.{method}({state}, '', {})", serde_json::to_string(&r.href()).unwrap_or_default())
     }
 
     /// A move inside the app, in the page's history, so Android's back button steps back through it.
     pub fn push(r: &Route, replace: bool) {
-        let _ = dioxus::document::eval(&history_js(r, replace));
+        let js = if replace {
+            history_js(r, false, true, None)
+        } else {
+            let (spent, mark) = crate::ui::back::page();
+            history_js(r, spent, false, mark)
+        };
+        let _ = dioxus::document::eval(&js);
     }
 
     pub fn listen(tx: UnboundedSender<Route>) {
         let mut page = dioxus::document::eval(&LISTEN.replace("__BASE__", super::BASE));
         let t = tx.clone();
         spawn(async move {
-            while let Ok(href) = page.recv::<String>().await {
-                let (path, query) = href.split_once('?').unwrap_or((&href, ""));
-                let _ = t.unbounded_send(Route::parse(path, query));
+            while let Ok(msg) = page.recv::<serde_json::Value>().await {
+                let parse = |href: &str| {
+                    let (path, query) = href.split_once('?').unwrap_or((href, ""));
+                    Route::parse(path, query)
+                };
+                if let Some(href) = msg["go"].as_str() {
+                    let route = parse(href);
+                    push(&route, false);
+                    let _ = t.unbounded_send(route);
+                } else if let Some(href) = msg["pop"].as_str() {
+                    // a back that only closed a layer leaves the screen as it is
+                    if crate::ui::back::popped(msg["layer"].as_u64()) {
+                        let _ = t.unbounded_send(parse(href));
+                    }
+                }
             }
         });
         // a tapped notification opens its session
@@ -303,8 +343,11 @@ mod tests {
     #[test]
     fn the_android_page_records_each_move_in_its_history() {
         let r = Route::Machine { id: "box \"one\"".into() };
-        assert_eq!(imp::history_js(&r, false), r#"history.pushState(null, '', "/next/machines/box%20%22one%22")"#);
-        assert_eq!(imp::history_js(&Route::Overview, true), format!("history.replaceState(null, '', {:?})", Route::Overview.href()));
+        assert_eq!(imp::history_js(&r, false, false, None), r#"history.pushState(null, '', "/next/machines/box%20%22one%22")"#);
+        assert_eq!(imp::history_js(&Route::Overview, true, false, None), format!("history.replaceState(null, '', {:?})", Route::Overview.href()));
+        // over a layer's entry the move is marked, and a tidied address keeps the entry's mark
+        assert_eq!(imp::history_js(&Route::Settings, false, false, Some(7)), r#"history.pushState({inyonLayer: 7}, '', "/next/settings")"#);
+        assert_eq!(imp::history_js(&Route::Settings, false, true, None), r#"history.replaceState(history.state, '', "/next/settings")"#);
     }
 
     #[test]
