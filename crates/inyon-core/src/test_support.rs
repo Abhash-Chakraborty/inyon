@@ -174,7 +174,7 @@ pub mod fake {
     /// Text typed through a buffer (`type_command`, fed on stdin) shown as the `send-keys -l` it
     /// stands for, so a fake reads typing one way however the hub delivers it.
     pub fn as_keys(cmd: String, input: Option<String>) -> (String, Option<String>) {
-        let re = regex::Regex::new(r#"^(.*?)umask 077; f=\$\(mktemp\) .*? tmux paste-buffer -d -b '[^']*' -t ('[^']*'); r=\$\?; .*?\[ \$r = 0 \]; \}(.*)$"#).unwrap();
+        let re = regex::Regex::new(r#"^(.*?)umask 077; f=\$\(mktemp\) .*? tmux paste-buffer -d -b '[^']*' -t ('[^']*'); fi; r=\$\?; .*?\[ \$r = 0 \]; \}(.*)$"#).unwrap();
         match (re.captures(&cmd), &input) {
             (Some(c), Some(text)) => (format!("{}tmux send-keys -t {} -l -- {}{}", &c[1], &c[2], crate::hosts::host::shq(text), &c[3]), None),
             _ => (cmd, input),

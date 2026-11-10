@@ -821,24 +821,47 @@ fn an_agent_that_exits_on_windows_leaves_powershell_behind_and_remain_on_exit_is
 }
 
 #[test]
-fn a_paste_loads_its_buffer_into_the_panes_own_psmux_server_since_each_session_has_its_own() {
+fn on_windows_text_reaches_its_own_pane_in_one_psmux_request_and_a_long_paste_borrows_the_focus() {
+    // a stand-in for psmux's tmux.exe: logs its argv, and says which window and pane are active
     let bin = TempDir::new("psmux-");
     let log = bin.path("argv");
-    bin.write("tmux", &format!("#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{}\"; done; echo >> \"{}\"\n", log.display(), log.display()));
+    bin.write(
+        "tmux",
+        &format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{log}\"; done; echo >> \"{log}\"\ncase \"$*\" in\n  *display-message*window_id*) echo '$14:@2' ;;\n  *display-message*pane_id*) echo '$14:%3' ;;\nesac\n",
+            log = log.display()
+        ),
+    );
     std::fs::set_permissions(bin.path("tmux"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    let cmd = crate::tmux::tmux::paste_command("b1", "%14.1");
     let path = format!("{}:/usr/bin:/bin", bin.s());
     let tmp = Regex::new(r"\[[^\]]*tmp[^\]]*\]").unwrap();
-    let go = |env: &[(&str, &str)]| {
+    let go = |cmd: &str, input: &[u8], env: &[(&str, &str)]| {
         bin.write("argv", "");
         let mut all = vec![("PATH", path.as_str())];
         all.extend_from_slice(env);
-        sh(&format!("{PRELUDE}\n{cmd}"), Some(b"x\ny"), &all);
-        tmp.replace(&bin.read("argv"), "[file]").into_owned()
+        sh(&format!("{PRELUDE}\n{cmd}"), Some(input), &all);
+        tmp.replace_all(&bin.read("argv"), "[file]").into_owned()
     };
-    assert_eq!(go(&[("OS", "Windows_NT")]), "[-t][$14:.%1][load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n");
-    // tmux has one server, and no -t before the command
-    assert_eq!(go(&[]), "[load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n");
+    let windows = [("OS", "Windows_NT")];
+    let paste = crate::tmux::tmux::paste_command("b1", "%14.1");
+    // psmux before 3.4 pastes a buffer into the session's active pane whatever -t says (#684), so
+    // a paste goes as one send-paste (base64) that carries its target
+    assert_eq!(go(&paste, b"x\ny", &windows), "[send-paste][-t][$14:.%1][eAp5]\n");
+    // typed text as one send-keys -l, quotes, a leading dash and all
+    let typed = crate::tmux::tmux::type_command("b1", "%14.1");
+    assert_eq!(go(&typed, b"-it's \"q\" $HOME %1.2", &windows), "[send-keys][-t][$14:.%1][-l][--][-it's \"q\" $HOME %1.2]\n");
+    // a paste too long for a command line: its window and pane made active, the buffer loaded
+    // into the pane's own psmux server (each session has its own), then the focus put back
+    let long = vec![b'x'; 20_001];
+    assert_eq!(
+        go(&paste, &long, &windows),
+        "[display-message][-p][-t][$14:.%1][#{session_id}:#{window_id}]\n[display-message][-p][-t][$14][#{session_id}:#{window_id}]\n[display-message][-p][-t][$14:@2][#{session_id}:#{pane_id}]\n\
+         [select-window][-t][$14:@2]\n[select-pane][-t][$14:.%1]\n[-t][$14:.%1][load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n\
+         [select-pane][-t][$14:.%3]\n[select-window][-t][$14:@2]\n"
+    );
+    // tmux has one server: the buffer, with no -t before the command
+    assert_eq!(go(&paste, b"x\ny", &[]), "[load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n");
+    assert_eq!(go(&typed, b"hi", &[]), "[load-buffer][-b][b1][file]\n[paste-buffer][-d][-b][b1][-t][$14:.%1]\n");
 }
 
 #[test]

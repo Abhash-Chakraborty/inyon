@@ -602,10 +602,8 @@ pub fn parse_captures(stdout: &str) -> IndexMap<String, Vec<String>> {
 }
 
 /// Pastes what comes in on stdin into a pane as one bracketed paste. The text goes through a
-/// file, since psmux's load-buffer only reads a path, not "-". psmux also runs a server per
-/// session and buffers live in one server, so on Windows the buffer is loaded into the pane's own
-/// session (the -t before the command, which psmux takes for any command); otherwise paste-buffer
-/// can't find it.
+/// file and a tmux buffer, never a command line (see [`type_command`]). On Windows it goes in
+/// another way: see [`through_buffer`].
 pub fn paste_command(buffer: &str, pane: &str) -> String {
     through_buffer(buffer, pane, "-p ")
 }
@@ -618,14 +616,40 @@ pub fn type_command(buffer: &str, pane: &str) -> String {
     through_buffer(buffer, pane, "")
 }
 
+/// The most a paste can be to ride on one psmux command line as base64 (Windows allows 32,767
+/// characters for a whole command line).
+const PSMUX_PASTE_BYTES: usize = 20_000;
+
+/// On Windows (psmux) the text doesn't go through a buffer. psmux before 3.4 pastes a buffer
+/// into whichever pane its session has active, whatever `-t` says: its look at the buffer uses
+/// up the target (psmux #684), so a message for an agent in another window landed in the window
+/// on screen. Text goes in one request that carries its own target instead: typed with
+/// `send-keys -l`, pasted with `send-paste` (base64). There a command line is read only by the
+/// same account and by administrators, who can read the pane as well. A paste too long for a
+/// command line makes its pane the active one, pastes through the buffer, and puts back the
+/// window and pane that were active.
 fn through_buffer(buffer: &str, pane: &str, flags: &str) -> String {
     let b = shq(buffer);
-    let t = r#"${s:+-t "$s"}"#;
     let p = shq(pane);
+    let windows = if flags.is_empty() {
+        format!(r#"tmux send-keys -t {p} -l -- "$(cat "$f")""#)
+    } else {
+        // s: the pane's session; w: the pane's window; wa and pa: the window and pane to put back.
+        // The buffer is loaded into the pane's own session (the -t before the command, which
+        // psmux takes for any command): psmux runs a server per session and buffers live in one.
+        let dance = format!(
+            r#"s={p}; s=${{s#%}}; s="\$${{s%%.*}}"; w=$(tmux display-message -p -t {p} '#{{window_id}}') && wa=$(tmux display-message -p -t "$s" '#{{window_id}}') && pa=$(tmux display-message -p -t "$w" '#{{pane_id}}') && tmux select-window -t "$w" && tmux select-pane -t {p} && tmux -t {p} load-buffer -b {b} "$f" && tmux paste-buffer -d {flags}-b {b} -t {p}; q=$?; [ -z "$pa" ] || tmux select-pane -t "$pa" 2>/dev/null; [ -z "$wa" ] || tmux select-window -t "$wa" 2>/dev/null; [ $q = 0 ]"#
+        );
+        // base64 without -w (an older busybox has no such flag), its line breaks taken out; a
+        // payload that comes out empty is a failure, not a paste of nothing
+        format!(
+            r#"if [ "$(wc -c < "$f")" -le {PSMUX_PASTE_BYTES} ]; then [ ! -s "$f" ] || {{ b=$(base64 < "$f" | tr -d '\r\n') && [ -n "$b" ] && tmux send-paste -t {p} "$b"; }}; else {dance}; fi"#
+        )
+    };
     // the trap deletes the file (it holds what was pasted) even when the connection drops half way;
     // once it's gone f is emptied, so the trap doesn't start a second rm (each start costs on Windows)
     format!(
-        r#"umask 077; f=$(mktemp) && trap '[ -z "$f" ] || rm -f "$f"' EXIT HUP INT TERM && {{ s=; [ "$OS" = Windows_NT ] && s={p}; cat > "$f" && tmux {t} load-buffer -b {b} "$f" && tmux paste-buffer -d {flags}-b {b} -t {p}; r=$?; rm -f "$f"; f=; [ $r = 0 ] || tmux {t} delete-buffer -b {b} 2>/dev/null; [ $r = 0 ]; }}"#
+        r#"umask 077; f=$(mktemp) && trap '[ -z "$f" ] || rm -f "$f"' EXIT HUP INT TERM && {{ cat > "$f" && if [ "$OS" = Windows_NT ]; then {windows}; else tmux load-buffer -b {b} "$f" && tmux paste-buffer -d {flags}-b {b} -t {p}; fi; r=$?; rm -f "$f"; f=; [ $r = 0 ] || [ "$OS" = Windows_NT ] || tmux delete-buffer -b {b} 2>/dev/null; [ $r = 0 ]; }}"#
     )
 }
 
@@ -1251,6 +1275,33 @@ mod tests {
         // typed, not pasted: no paste markers around it
         assert!(type_command("b", "%1").contains("paste-buffer -d -b 'b'"));
         assert!(paste_command("b", "%1").contains("paste-buffer -d -p -b 'b'"));
+    }
+
+    #[test]
+    fn on_windows_text_goes_in_one_request_that_names_its_pane() {
+        // psmux before 3.4 pastes a buffer into the session's active pane whatever -t says (#684):
+        // a message for an agent in another window went to the window on screen
+        let windows = |c: &str| c.split_once(r#"if [ "$OS" = Windows_NT ]; then "#).unwrap().1.split_once("; else tmux load-buffer").unwrap().0.to_string();
+        let typed = windows(&type_command("b", "%14.1"));
+        assert_eq!(typed, r#"tmux send-keys -t '%14.1' -l -- "$(cat "$f")""#);
+        let pasted = windows(&paste_command("b", "%14.1"));
+        // a paste that fits on a command line: one send-paste, base64
+        assert!(
+            pasted.starts_with(
+                r#"if [ "$(wc -c < "$f")" -le 20000 ]; then [ ! -s "$f" ] || { b=$(base64 < "$f" | tr -d '\r\n') && [ -n "$b" ] && tmux send-paste -t '%14.1' "$b"; }; else "#
+            ),
+            "{pasted}"
+        );
+        // a longer one: its pane made active, pasted through the buffer in its own session, focus put back
+        let long = pasted.split_once("; else ").unwrap().1;
+        let at = |what: &str| long.find(what).unwrap_or_else(|| panic!("{what} in {long}"));
+        assert!(at("tmux select-window -t \"$w\"") < at("tmux select-pane -t '%14.1'"));
+        assert!(at("tmux select-pane -t '%14.1'") < at("tmux -t '%14.1' load-buffer -b 'b' \"$f\""));
+        assert!(at("tmux paste-buffer -d -p -b 'b' -t '%14.1'") < at("tmux select-pane -t \"$pa\""));
+        assert!(at("tmux select-pane -t \"$pa\"") < at("tmux select-window -t \"$wa\""));
+        // elsewhere nothing changed: the buffer, and no -t before the command
+        let unix = type_command("b", "%1");
+        assert!(unix.contains(r#"; else tmux load-buffer -b 'b' "$f" && tmux paste-buffer -d -b 'b' -t '%1'; fi; r=$?"#), "{unix}");
     }
 
     #[test]
