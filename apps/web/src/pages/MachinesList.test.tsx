@@ -8,6 +8,7 @@ import { useStore } from '../lib/store.ts'
 import { api } from '../test/fakes.ts'
 import { host } from '../test/fixtures.ts'
 import { renderSettled as render } from '../test/render.tsx'
+import { ConfirmHost } from '../components/Confirm.tsx'
 
 const m = (name: string, machineKind?: MachineKind, status: HostState['status'] = 'online') => host(name, { machineKind, status })
 const rows = () => screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/machines/')).map((a) => a.getAttribute('href')!.slice(10))
@@ -58,6 +59,43 @@ describe('the machines list', () => {
     localStorage.removeItem('inyon.hubs.v1')
     expect(screen.getByText('Connecting to studio…')).toBeTruthy()
     expect(screen.getByText(/Its computers appear as soon as it answers\. On a VPN, make sure this device is connected to it too\./)).toBeTruthy()
+  })
+
+  test("a hub that never answers can be forgotten right there", async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h1', name: 'studio', url: 'http://box:4777', token: 't', pairedAt: 1 }]))
+    useStore.setState({ hosts: [], hostsLoaded: true })
+    await page()
+    const waiting = screen.getByRole('group', { name: 'The hub this is connecting to' })
+    expect(waiting.textContent).toContain('box:4777')
+    await user.click(screen.getByRole('button', { name: 'Forget studio' }))
+    expect(JSON.parse(localStorage.getItem('inyon.hubs.v1') ?? '[]')).toEqual([])
+    // nothing left to wait for: the page invites a first machine again
+    expect(screen.queryByText('Connecting to studio…')).toBeNull()
+    expect(screen.getByText('No machines yet')).toBeTruthy()
+    expect(useStore.getState().toasts.at(-1)?.title).toBe('studio forgotten')
+    localStorage.removeItem('inyon.hubs.v1')
+  })
+
+  test("a machine that isn't answering has its menu in reach, with Remove…", async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [m('studio', 'desktop'), { ...m('air', 'laptop', 'connecting'), config: { ...m('air').config, kind: 'link' } }, m('nas', 'server', 'error')], hostsLoaded: true })
+    api.removeHost.mockResolvedValue({})
+    await render(<MemoryRouter><MachinesPage /><ConfirmHost /></MemoryRouter>)
+    // the one that answers keeps its plain row
+    expect(screen.queryByRole('button', { name: 'More for studio' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'More for nas' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'More for air' }))
+    const items = screen.getAllByRole('menuitem').map((i) => i.textContent)
+    expect(items).toContain('Remove…')
+    expect(items).not.toContain('New session')
+    await user.click(screen.getByRole('menuitem', { name: 'Remove…' }))
+    expect(await screen.findByText('Remove air?')).toBeTruthy()
+    expect(api.removeHost).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(api.removeHost.mock.calls).toEqual([['air']])
+    // the row still opens the machine's page
+    expect(rows()).toEqual(['studio', 'air', 'nas'])
   })
 
   test("a hub's machine shows why it isn't answering while the hub is out of reach", async () => {

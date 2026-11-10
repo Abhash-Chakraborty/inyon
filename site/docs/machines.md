@@ -42,7 +42,7 @@ The hub uses the system `ssh` with your config, keys and jump hosts, and stores 
 
 ## The machine's page
 
-Tap a machine for its page. **New session**, **Rename** and **Remove** are at the top. Removing a machine never touches it: *Its tmux sessions keep running on the computer.*
+Tap a machine for its page. **New session**, **Rename** and **Remove** are at the top. Removing a machine never touches it: *Its tmux sessions keep running on the computer.* From 0.25.6 a machine that isn't answering (still connecting, offline, or waiting for its pairing command) also has **⋯** on its row in the list, with **Remove…** in it, so you don't have to open its page or know about the long press.
 
 The tabs:
 
