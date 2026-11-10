@@ -972,7 +972,22 @@ pub fn update_command(sys: &Sys, background: bool, json: bool) -> Outcome {
                     crate::app::trace(&format!("! after the update: {e}"));
                 }
             }
-            Ok(json!({ "changed": r.changed, "version": r.version, "message": r.message }))
+            // the skills Inyon installed for the agents here, brought up to the release too (also
+            // when the programs were current already: a skill can be older than they are)
+            let log = |l: &str| {
+                if !json {
+                    eprint!("{l}");
+                }
+            };
+            let (skills, problems) = crate::skills::refresh(&skill_dirs(None), sys.platform, &log);
+            if !skills.is_empty() {
+                let what = if skills.len() == 1 { format!("the {} skill", skills[0]) } else { format!("the {} skills", human_list(&skills)) };
+                r.message = format!("{} Updated {what} for your agents.", r.message);
+            }
+            for p in &problems {
+                crate::app::trace(&format!("! skills after the update: {p}"));
+            }
+            Ok(json!({ "changed": r.changed, "version": r.version, "skills": skills, "message": r.message }))
         }
         Err(e) => {
             let m = e.to_string();
@@ -1475,32 +1490,45 @@ fn home_short(p: &std::path::Path) -> String {
     }
 }
 
+/// "a", "a and b", "a, b and c".
+fn human_list(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 fn skill_dirs(to: Option<PathBuf>) -> Vec<PathBuf> {
     to.map(|d| vec![d]).unwrap_or_else(|| crate::skills::targets(&paths::home()))
 }
 
 pub fn skill_list() -> Outcome {
-    let (_, sums) = crate::skills::release(Platform::current())?;
+    let (base, sums) = crate::skills::release(Platform::current())?;
     let dirs = skill_dirs(None);
     let names = crate::skills::available(&sums);
     if names.is_empty() {
         return Ok(json!({ "skills": [], "message": "This release has no skills to install." }));
     }
+    // copies Inyon installed from an older release: `inyon update` brings them up to date
+    let stale = update::latest_version(&base).map(|v| crate::skills::outdated(&dirs, &v)).unwrap_or_default();
     let rows: Vec<Value> = names
         .iter()
         .map(|n| {
             let at: Vec<String> = crate::skills::installed(&dirs, n).iter().map(|p| home_short(p)).collect();
-            json!({ "name": n, "installed": at })
+            json!({ "name": n, "installed": at, "outdated": stale.iter().any(|(_, s)| s == n) })
         })
         .collect();
     let lines: Vec<String> = rows
         .iter()
         .map(|r| {
             let at: Vec<&str> = r["installed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
-            format!("  {:<12} {}", r["name"].as_str().unwrap_or(""), if at.is_empty() { "not installed".to_string() } else { format!("in {}", at.join(", ")) })
+            let old = if r["outdated"] == json!(true) { " (from an older release)" } else { "" };
+            format!("  {:<12} {}{old}", r["name"].as_str().unwrap_or(""), if at.is_empty() { "not installed".to_string() } else { format!("in {}", at.join(", ")) })
         })
         .collect();
-    Ok(json!({ "skills": rows, "message": format!("Skills in this release:\n{}\nInstall one with: inyon skill add <name>", lines.join("\n")) }))
+    let hint = if stale.is_empty() { "" } else { "\nBring the older ones up to date with: inyon update" };
+    Ok(json!({ "skills": rows, "message": format!("Skills in this release:\n{}\nInstall one with: inyon skill add <name>{hint}", lines.join("\n")) }))
 }
 
 pub fn skill_add(name: &str, to: Option<PathBuf>, force: bool, json: bool) -> Outcome {

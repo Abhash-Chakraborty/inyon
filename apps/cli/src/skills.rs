@@ -135,6 +135,72 @@ pub fn install(dir: &Path, name: &str, files: &[(PathBuf, Vec<u8>)], version: &s
     Ok(dest)
 }
 
+/// The release a copy Inyon installed came from, as its marker says ("" when it doesn't).
+pub fn installed_version(dir: &Path, name: &str) -> Option<String> {
+    fs::read_to_string(dir.join(name).join(MARKER)).ok().map(|v| v.trim().to_string())
+}
+
+/// The copies under `dirs` that Inyon installed from a release older than `version`, as (folder,
+/// name). A copy you added yourself has no marker and is never listed; one whose marker names no
+/// release counts as older.
+pub fn outdated(dirs: &[PathBuf], version: &str) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(dir) else { continue };
+        let mut names: Vec<String> = entries.flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| valid_name(n)).collect();
+        names.sort();
+        for name in names {
+            match installed_version(dir, &name) {
+                Some(v) if v.is_empty() || update::is_newer(version, &v) => out.push((dir.clone(), name)),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Brings every copy Inyon installed up to the release, as `inyon update` does after the programs:
+/// a skill's template fixes reach the agents without anyone asking. Each skill is downloaded once
+/// and checked like any other release file. Returns the names it refreshed and what went wrong; a
+/// skill the release no longer has is left as it is.
+pub fn refresh(dirs: &[PathBuf], platform: Platform, log: &dyn Fn(&str)) -> (Vec<String>, Vec<String>) {
+    // nothing Inyon installed: no request at all
+    if !dirs.iter().any(|d| fs::read_dir(d).is_ok_and(|es| es.flatten().any(|e| e.path().join(MARKER).is_file()))) {
+        return (Vec::new(), Vec::new());
+    }
+    let (base, sums) = match release(platform) {
+        Ok(r) => r,
+        Err(e) => return (Vec::new(), vec![e]),
+    };
+    let Ok(version) = update::latest_version(&base) else { return (Vec::new(), Vec::new()) };
+    let have = available(&sums);
+    let (mut done, mut problems) = (Vec::new(), Vec::new());
+    let stale = outdated(dirs, &version);
+    let mut names: Vec<&String> = stale.iter().map(|(_, n)| n).filter(|n| have.contains(n)).collect();
+    names.sort();
+    names.dedup();
+    for name in names {
+        let files = match download(&base, &sums, name, log).and_then(|gz| read_tarball(&gz, name)) {
+            Ok(f) => f,
+            Err(e) => {
+                problems.push(e);
+                continue;
+            }
+        };
+        for (dir, _) in stale.iter().filter(|(_, n)| n == name) {
+            match install(dir, name, &files, &version, false) {
+                Ok(_) => {
+                    if !done.contains(name) {
+                        done.push(name.clone());
+                    }
+                }
+                Err(e) => problems.push(e),
+            }
+        }
+    }
+    (done, problems)
+}
+
 /// Deletes `dir/<name>` if Inyon installed it there. Returns whether it did.
 pub fn remove(dir: &Path, name: &str) -> Result<bool, String> {
     let dest = dir.join(name);
@@ -251,6 +317,28 @@ mod tests {
         let gz = b.into_inner().unwrap().finish().unwrap();
         assert!(read_tarball(&gz, "blueprint").unwrap_err().contains("plain file"));
         assert!(read_tarball(b"not a tarball", "blueprint").is_err());
+    }
+
+    #[test]
+    fn finds_the_copies_an_older_release_installed() {
+        let d = scratch("outdated");
+        let files = vec![(PathBuf::from("SKILL.md"), b"x".to_vec())];
+        install(&d, "blueprint", &files, "0.22.5", false).unwrap();
+        install(&d, "inyon", &files, "0.25.6", false).unwrap();
+        install(&d, "unmarked", &files, "", false).unwrap();
+        // one you added yourself: no marker, never touched
+        fs::create_dir_all(d.join("mine")).unwrap();
+        fs::write(d.join("mine/SKILL.md"), "x").unwrap();
+        assert_eq!(installed_version(&d, "blueprint").as_deref(), Some("0.22.5"));
+        assert_eq!(installed_version(&d, "mine"), None);
+        let names = |v: &str| outdated(std::slice::from_ref(&d), v).into_iter().map(|(_, n)| n).collect::<Vec<_>>();
+        assert_eq!(names("0.25.6"), ["blueprint", "unmarked"]);
+        assert_eq!(names("0.26.0"), ["blueprint", "inyon", "unmarked"]);
+        // a release older than what's installed changes nothing
+        assert_eq!(names("0.22.0"), ["unmarked"]);
+        // a folder that isn't there is no skills at all
+        assert!(outdated(&[d.join("nowhere")], "9.0.0").is_empty());
+        fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

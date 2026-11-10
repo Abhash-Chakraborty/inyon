@@ -1,7 +1,7 @@
 // bun test skills/blueprint/tests
 // site.mjs: the page list, add-page, --adopt for sites made before the site bar, and the reachability check.
 import { afterAll, describe, expect, test } from 'bun:test';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +116,30 @@ describe('--adopt', () => {
     expect(again.bar).toEqual([]);
     expect(readFileSync(join(d, 'site.js'), 'utf8')).toBe(first);
     expect(readFileSync(join(d, 'kit/blueprint.css'), 'utf8')).toBe(css);
+  });
+
+  test("a site that renamed its kit's stylesheet gets the bar's styles there", () => {
+    const d = old();
+    // the kit renamed for the product, as a site built for one brand does
+    renameSync(join(d, 'kit/blueprint.css'), join(d, 'kit/acme.css'));
+    for (const f of ['index.html', 'matrix.html']) {
+      const p = join(d, f);
+      writeFileSync(p, readFileSync(p, 'utf8').replace('kit/blueprint.css', 'kit/acme.css'));
+    }
+    const r = adopt(d);
+    expect(r.css).toBe('kit/acme.css');
+    expect(existsSync(join(d, 'kit/blueprint.css'))).toBe(false);
+    const css = readFileSync(join(d, 'kit/acme.css'), 'utf8');
+    expect(css).toContain('end of the site bar');
+    expect(css).toContain('end of the doc pages');
+    // and once only
+    adopt(d);
+    expect(readFileSync(join(d, 'kit/acme.css'), 'utf8')).toBe(css);
+    // the usual name is reported too, and a site with no stylesheet at all says so
+    expect(adopt(old()).css).toBe('kit/blueprint.css');
+    const bare = old();
+    unlinkSync(join(bare, 'kit/blueprint.css'));
+    expect(adopt(bare).css).toBeUndefined();
   });
 
   test('adds only what an existing site.js is missing', () => {

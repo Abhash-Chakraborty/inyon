@@ -52,7 +52,7 @@
       : g.pages.map((p) => `<a class="sb-link${p === current ? ' on' : ''}" href="${href(p)}"${p === current ? ' aria-current="page"' : ''}>${K.esc(p.title)}</a>`).join('')).join('');
     el.innerHTML = `<div class="sb-in">
       ${up ? `<a class="icon-btn sb-back" href="${href(up)}" aria-label="Back to ${K.esc(up.title)}" data-tip="Back to ${K.esc(up.title)}">${K.icon('arrow-left')}</a>` : ''}
-      <a class="sb-brand" href="${home ? href(home) : '#'}">${K.logo(20)}<b>${K.esc(brand)}</b></a>
+      <a class="sb-brand" href="${home ? href(home) : '#'}">${K.logo ? K.logo(20) : ''}<b>${K.esc(brand)}</b></a>
       <span class="sb-title">${current ? K.esc(current.title) : ''}</span>
       <nav class="sb-links" aria-label="Pages">${inline}</nav>
       <button class="btn sm sb-pages" type="button" data-site-pages aria-haspopup="dialog">${K.icon('panels-top-left')}<span>Pages</span></button>

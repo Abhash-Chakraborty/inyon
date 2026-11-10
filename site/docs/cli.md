@@ -301,7 +301,7 @@ inyon skill add blueprint --to ./.claude/skills
 inyon skill remove blueprint
 ```
 
-From 0.17.7. `add` downloads the skill from the newest release, checks it against the signed SHA256SUMS, and installs it for each coding agent on the computer. `--to` picks one folder instead, and `--force` replaces a skill of the same name that Inyon didn't install. See [Agent skills](skills.md).
+From 0.17.7. `add` downloads the skill from the newest release, checks it against the signed SHA256SUMS, and installs it for each coding agent on the computer. `--to` picks one folder instead, and `--force` replaces a skill of the same name that Inyon didn't install. From 0.25.6 `inyon update` refreshes the skills `add` installed, and `list` says when one comes from an older release. See [Agent skills](skills.md).
 
 ## Blueprints
 

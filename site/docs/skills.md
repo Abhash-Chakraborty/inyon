@@ -24,7 +24,7 @@ inyon skill remove blueprint
 
 If none of these folders exist, the skill goes in `~/.agents/skills`. With `--to <folder>` it goes into that folder instead, for example a project's own `.claude/skills`. Agents pick the skill up in their next session.
 
-Running `add` again replaces the copy with the newest one. It won't overwrite a skill of the same name that you put there yourself unless you add `--force`, and `remove` only deletes copies that `inyon skill add` installed.
+From 0.25.6 `inyon update` also brings the skills that `inyon skill add` installed up to the new release, so a fix to a skill reaches your agents without another command, and `inyon skill list` marks a copy that came from an older release. Before that, a skill stayed as it was until you ran `add` again. Running `add` again replaces the copy with the newest one. It won't overwrite a skill of the same name that you put there yourself unless you add `--force`, and `remove` only deletes copies that `inyon skill add` installed.
 
 ## Install by hand
 

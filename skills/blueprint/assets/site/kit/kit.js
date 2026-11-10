@@ -241,6 +241,9 @@
       const place = () => { const on = $('button[aria-pressed="true"]', s) || $('button', s); if (!on) return; thumb.style.width = '100px'; thumb.style.transform = `translateX(${on.offsetLeft}px) scaleX(${on.offsetWidth / 100})`; };
       $$('button', s).forEach((b) => (b.onclick = () => { $$('button', s).forEach((x) => x.setAttribute('aria-pressed', x === b)); place(); s.dispatchEvent(new CustomEvent('change', { detail: b.dataset.value, bubbles: true })); }));
       requestAnimationFrame(place); new ResizeObserver(place).observe(s);
+      // a page that sets the choice itself (aria-pressed), or whose buttons change size, moves the thumb too
+      new MutationObserver(place).observe(s, { attributes: true, subtree: true, attributeFilter: ['aria-pressed'] });
+      $$('button', s).forEach((b) => new ResizeObserver(place).observe(b));
     });
     $$('.tabs:not([data-ok])', root).forEach((tabs) => {
       tabs.dataset.ok = 1; const scope = tabs.closest('[data-tabs-scope]') || tabs.parentElement;
