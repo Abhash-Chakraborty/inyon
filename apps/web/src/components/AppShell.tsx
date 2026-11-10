@@ -196,9 +196,10 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
       </div>
       <div className="space-y-1 px-3">
         <button type="button" onClick={onSearch} className="mb-2 flex h-9 w-full items-center gap-2 rounded-full border border-line bg-elev px-3 text-[13px] text-fg-3 shadow-card hover:border-line-strong">
-          <Search className="size-3.5" />
-          Search or jump to…
-          <kbd className="ml-auto rounded-full border border-line px-2 font-mono text-[12px] pointer-coarse:hidden">{keyLabel('cmd', 'K')}</kbd>
+          <Search className="size-3.5 shrink-0" />
+          {/* in the 240px sidebar the words give way, not the key: both used to wrap onto two lines */}
+          <span className="min-w-0 truncate">Search or jump to…</span>
+          <kbd className="ml-auto shrink-0 rounded-full border border-line px-2 font-mono text-[12px] whitespace-nowrap pointer-coarse:hidden">{keyLabel('cmd', 'K')}</kbd>
         </button>
         <button type="button" onClick={onNew} className={item(false)}>
           <Plus className="size-4" /> New session

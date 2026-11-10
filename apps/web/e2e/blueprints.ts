@@ -205,6 +205,15 @@ try {
         check(narrow.below >= 30 && narrow.bar > 80, `${label}: with its tools on a second row (${JSON.stringify(narrow)})`)
         check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${label}: and nothing runs off the side`)
         await page.screenshot({ path: path.join(shots, `viewer-narrow-1100-${scheme}.png`) })
+        // a tablet upright leaves the viewer 248px: the tools wrap again, every one in sight and clear of the rest
+        await page.setViewportSize({ width: 768, height: 900 })
+        await page.waitForTimeout(200)
+        const tools = await page.evaluate((() => { const bar = document.querySelector('.viewer-bar')!; const b = bar.getBoundingClientRect(); const tools = [...bar.children].filter((c) => getComputedStyle(c).order === '3').map((c) => c.getBoundingClientRect()); const clear = tools.every((a, i) => tools.every((o, j) => i === j || a.bottom <= o.top - 4 || o.bottom <= a.top - 4 || a.right <= o.left || o.right <= a.left)); return { tools: tools.length, clear, inside: tools.every((t) => t.left >= b.left && t.right <= b.right + 0.5 && t.bottom <= b.bottom), fits: document.documentElement.scrollWidth <= innerWidth } }))
+        check(tools.tools >= 2 && tools.inside && tools.clear && tools.fits, `${label}: at 768px the bar's tools wrap inside it, none over another (${JSON.stringify(tools)})`)
+        check((await page.locator('.viewer-bar nav').innerText()).trim() === 'Checkout redesign' && (await page.locator('.viewer-bar nav b').evaluate((b) => b.getBoundingClientRect().width)) >= 60, `${label}: and the location is the page's name alone (${await page.locator('.viewer-bar nav').innerText()})`)
+        // the sidebar is 240px here: its search keeps one line, the words giving way to the key
+        check(await page.getByRole('button', { name: /^Search or jump to/ }).evaluate((b) => b.querySelector('kbd')!.getBoundingClientRect().height <= 24 && b.querySelector('span')!.getBoundingClientRect().height <= 24), `${label}: the sidebar's search stays on one line`)
+        await page.screenshot({ path: path.join(shots, `viewer-narrow-768-${scheme}.png`) })
         await page.setViewportSize({ width: 1440, height: 900 })
       }
       // Open in new tab opens the part on screen

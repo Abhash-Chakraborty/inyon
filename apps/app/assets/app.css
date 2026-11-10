@@ -1430,13 +1430,18 @@ input:focus-visible { outline: none; }
 .crumb-page { font-weight: 600; color: var(--fg); }
 /* the Blueprints viewer's bar in a narrow column (beside the sidebar and the list on a small
    laptop): where the page is and its buttons on one row, its parts, notes and frame sizes on the
-   next. On one row the tools took all of it and the location shrank to nothing. */
+   next. On one row the tools took all of it and the location shrank to nothing. Narrower still (a
+   tablet upright) the tools wrap again, each row clear of the last, so all of them stay in sight. */
 @container viewer (max-width: 719.98px) {
-  .viewer-bar { height: auto; flex-wrap: wrap; row-gap: 0; padding-bottom: 10px; }
+  .viewer-bar { height: auto; flex-wrap: wrap; row-gap: 0; padding-bottom: 4px; }
   .viewer-bar > .crumbs { min-height: 51px; }
   .viewer-bar > .icon-button { order: 1; }
   .viewer-bar::after { content: ''; order: 2; flex-basis: 100%; }
-  .viewer-bar > .segmented, .viewer-bar > .notes-button { order: 3; }
+  .viewer-bar > .segmented, .viewer-bar > .notes-button { order: 3; margin-bottom: 6px; }
+}
+/* too narrow for machine / session / page: the page's name alone, which the list beside it places */
+@container viewer (max-width: 419.98px) {
+  .viewer-bar > .crumbs > :not(.crumb-page) { display: none; }
 }
 .segmented-sm .segment { height: 26px; padding: 0 9px; font-size: 12px; }
 .notes-button { display: flex; height: 30px; max-width: 180px; flex-shrink: 0; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 9999px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--fg-2); }

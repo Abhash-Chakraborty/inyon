@@ -574,6 +574,14 @@ try {
       check(await page.locator('.crumb-page').evaluate((b) => b.scrollWidth <= b.clientWidth), `${label}: and the page's name whole`)
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${label}: nothing runs off the side`)
       await page.screenshot({ path: path.join(shots, `viewer-narrow-1100-${scheme}.png`) })
+      // a tablet upright leaves the viewer 248px: the tools wrap again, every one in sight and clear of the rest
+      await page.setViewportSize({ width: 768, height: 900 })
+      await page.waitForTimeout(200)
+      const tools = await page.evaluate((() => { const bar = document.querySelector('.viewer-bar')!; const b = bar.getBoundingClientRect(); const tools = [...bar.children].filter((c) => getComputedStyle(c).order === '3').map((c) => c.getBoundingClientRect()); const clear = tools.every((a, i) => tools.every((o, j) => i === j || a.bottom <= o.top - 4 || o.bottom <= a.top - 4 || a.right <= o.left || o.right <= a.left)); return { tools: tools.length, clear, inside: tools.every((t) => t.left >= b.left && t.right <= b.right + 0.5 && t.bottom <= b.bottom), fits: document.documentElement.scrollWidth <= innerWidth } }))
+      check(tools.tools === 3 && tools.inside && tools.clear && tools.fits, `${label}: at 768px the bar's tools wrap inside it, none over another (${JSON.stringify(tools)})`)
+      check((await page.locator('.crumbs').innerText()).trim() === 'Checkout redesign' && (await page.locator('.crumb-page').evaluate((b) => b.getBoundingClientRect().width)) >= 60, `${label}: and the location is the page's name alone (${await page.locator('.crumbs').innerText()})`)
+      await page.screenshot({ path: path.join(shots, `viewer-narrow-768-${scheme}.png`) })
+      await page.setViewportSize({ width: 1100, height: 900 })
       check(!(await page.locator('.session-side').count()), `${label}: the full viewer, not the side view`)
     }
     if (scheme === 'light') {
