@@ -308,23 +308,6 @@ export function frameMessage(e: { source: unknown; data: unknown }, frame: Windo
   return { type: d.type as FrameMessage['type'] }
 }
 
-/**
- * The Preview tab frames what it shows with same-origin rights, so it must never show Inyon itself:
- * that page would run as you. Returns why it won't, or null.
- */
-export function previewRefusal(url: string, appOrigins: string[]): string | null {
-  let origin: string
-  try {
-    origin = new URL(url).origin
-  } catch {
-    return null
-  }
-  return appOrigins.includes(origin) ? 'That address is Inyon itself, and a preview of it could act as you. Sites an agent made open under Blueprints.' : null
-}
-
-/** This app's own address and every paired hub's, which the Preview tab refuses. */
-export const appOrigins = () => [location.origin, ...listHubs().flatMap((h) => { try { return [new URL(h.url).origin] } catch { return [] } })]
-
 // ---------- words ----------
 
 /** "just now", "3 min ago", "2 h ago", "4 d ago", or a date. */

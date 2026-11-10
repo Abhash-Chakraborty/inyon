@@ -54,6 +54,10 @@ export interface Settings {
   /** a notice when a task on a page's progress board is done (from 0.22.4) */
   notifyPages: boolean
   sidePanel: boolean
+  /** the side panel's width in px once it's been dragged; 0 is the width it comes with */
+  panelWidth: number
+  /** the sidebar at its full width; off, it's a narrow rail of icons (from 0.25.6) */
+  sidebar: boolean
   haptics: boolean
   /** chat: every tool call and background job as its own row ('all'), or long runs folded ('compact') */
   toolDetail: 'all' | 'compact'
@@ -69,6 +73,8 @@ const defaults: Settings = {
   notifyDone: true,
   notifyPages: true,
   sidePanel: true,
+  panelWidth: 0,
+  sidebar: true,
   haptics: true,
   toolDetail: 'all',
 }

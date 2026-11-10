@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { PageEntry } from '@inyon/protocol'
 import {
-  RENEW_BEFORE_MS, agoText, appOrigins, browserPath, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupName, groupPages, isBridged, isChanged, leftText, linkedPages, liveSessions, loadPages, localDeadline,
-  manyMachines, markSeen, matchesPage, namesOf, pageHosts, pageHref, pageId, previewRefusal, projectName, renewIn, runningNames, sessionCount, sessionPages, shouldRenew, tmuxOf, usePages, type Names, type Page,
+  RENEW_BEFORE_MS, agoText, browserPath, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupName, groupPages, isBridged, isChanged, leftText, linkedPages, liveSessions, loadPages, localDeadline,
+  manyMachines, markSeen, matchesPage, namesOf, pageHosts, pageHref, pageId, projectName, renewIn, runningNames, sessionCount, sessionPages, shouldRenew, tmuxOf, usePages, type Names, type Page,
 } from './pages.ts'
 import { sections } from '../components/pages/SessionBlueprints.tsx'
 import { api } from '../test/fakes.ts'
@@ -250,23 +250,6 @@ describe('messages from the frame', () => {
 
   test('nothing but the type is passed on', () => {
     expect(frameMessage({ source: frame, data: { type: 'theme?', html: '<script>alert(1)</script>' } }, frame)).toEqual({ type: 'theme?' })
-  })
-})
-
-describe('the Preview tab', () => {
-  test("refuses the app's own address and each paired hub's, whatever the path", () => {
-    const own = ['http://localhost:5173', 'http://box:4777']
-    expect(previewRefusal('http://localhost:5173/', own)).toMatch(/Inyon itself/)
-    expect(previewRefusal('http://localhost:5173/v/v1.a.b/', own)).toMatch(/Inyon itself/)
-    expect(previewRefusal('http://box:4777/settings?x=1', own)).toMatch(/Inyon itself/)
-    expect(previewRefusal('http://localhost:3000/', own)).toBeNull()
-    expect(previewRefusal('https://localhost:5173/', own)).toBeNull()
-    expect(previewRefusal('not a url', own)).toBeNull()
-  })
-
-  test("the app's origins: this page's and the paired hubs'", () => {
-    localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h1', name: 'arm', url: 'http://box:4777', token: 't', pairedAt: 1 }]))
-    expect(appOrigins()).toEqual(['http://localhost:5173', 'http://box:4777'])
   })
 })
 

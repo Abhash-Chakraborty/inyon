@@ -39,6 +39,21 @@ test('the side panel holds its room while it loads, comes in from its edge, and 
   expect(container.querySelector('aside')).toBeNull()
 })
 
+test('the side panel has no Preview tab, and keeps the width it was dragged to', async () => {
+  viewport(1440, 900)
+  useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'claude')] })], hostsLoaded: true, connected: true })
+  useStore.getState().setSettings({ sidePanel: true, panelWidth: 560 })
+  const { container } = await page()
+  await waitFor(() => expect(screen.getByRole('tablist')).toBeTruthy())
+  expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Changes', 'Files', 'Activity', 'Usage'])
+  const aside = container.querySelector('aside')!
+  expect(aside.style.width).toBe('560px')
+  expect(screen.getByRole('separator', { name: 'Resize the side panel' })).toBeTruthy()
+  act(() => useStore.getState().setSettings({ panelWidth: 0 }))
+  expect(aside.style.width).toBe('')
+  expect(aside.className).toContain('w-[420px]')
+})
+
 test('the chat comes in the way the terminal does, and again for another session', async () => {
   useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'claude'), agentPane('%2', 'claude')] })], hostsLoaded: true, connected: true })
   const { container } = await page()

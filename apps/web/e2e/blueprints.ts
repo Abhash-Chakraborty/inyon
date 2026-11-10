@@ -224,9 +224,26 @@ try {
       const toggle = page.getByRole('button', { name: /^(Show|Hide) side panel$/ })
       await toggle.waitFor()
       if ((await toggle.getAttribute('aria-label')) === 'Show side panel') await toggle.click()
-      // a 420px panel has more tabs than room: the strip scrolls, and the arrows reach the end
+      // the panel is resized by its left edge: it comes 420px wide, and is dragged to its least here
       const strip = page.getByRole('tablist', { name: 'Side panel' })
-      check(await strip.evaluate((el) => el.scrollWidth > el.clientWidth), `${label}: the tabs overflow a 420px panel (the case this covers)`)
+      const panel = page.locator('aside').filter({ has: strip })
+      const handle = page.getByRole('separator', { name: 'Resize the side panel' })
+      const width = async () => Math.round((await panel.boundingBox())!.width)
+      const drag = async (by: number) => {
+        const b = (await panel.boundingBox())!
+        await page.mouse.move(b.x, b.y + 300)
+        await page.mouse.down()
+        await page.mouse.move(b.x + by, b.y + 300, { steps: 8 })
+        await page.mouse.up()
+      }
+      const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('inyon.settings.v2') ?? '{}').panelWidth)
+      check((await width()) === 420, `${label}: the panel comes 420px wide (${await width()})`)
+      check(await strip.getByRole('tab', { name: 'Preview' }).count() === 0, `${label}: no Preview tab`)
+      await drag(300)
+      check((await width()) === 340, `${label}: dragged right, it stops at its least, 340px (${await width()})`)
+      check((await saved()) === 340, `${label}: the width is kept (${await saved()})`)
+      // a 340px panel has more tabs than room: the strip scrolls, and the arrows reach the end
+      check(await strip.evaluate((el) => el.scrollWidth > el.clientWidth), `${label}: the tabs overflow a 340px panel (the case this covers)`)
       await strip.getByRole('tab', { name: /Changes/ }).click()
       await page.keyboard.press('End')
       const usage = strip.getByRole('tab', { name: 'Usage' })
@@ -238,6 +255,33 @@ try {
       await page.keyboard.press('ArrowLeft')
       await page.keyboard.press('Home')
       check((await strip.getByRole('tab', { name: /Changes/ }).getAttribute('aria-selected')) === 'true', `${label}: Home goes back to the first`)
+      // wider, over the chat: the chat keeps 420px, and the width survives a reload
+      await drag(-900)
+      const row = Math.round((await page.locator('main').boundingBox())!.width)
+      check((await width()) === row - 420, `${label}: dragged far left, the chat keeps 420px (${await width()} of ${row})`)
+      await drag(200)
+      const wide = await width()
+      await page.reload()
+      await strip.waitFor()
+      check((await width()) === wide, `${label}: the same width after a reload (${await width()} vs ${wide})`)
+      // the sidebar folds to a rail (Ctrl B), which gives the session the room, and opens again
+      await page.locator('body').click({ position: { x: 700, y: 5 } })
+      await page.keyboard.press('Control+b')
+      const rail = page.locator('aside[data-sidebar="rail"]')
+      await rail.waitFor()
+      check(Math.round((await rail.boundingBox())!.width) === 60, `${label}: the sidebar folded to a 60px rail`)
+      check(await rail.getByRole('button', { name: 'Show sidebar' }).isVisible(), `${label}: the rail's way back`)
+      // it fades in; once it has, it's fully there
+      await rail.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+      check((await rail.evaluate((el) => getComputedStyle(el).opacity)) === '1', `${label}: the rail is fully shown`)
+      check((await rail.getByRole('link').count()) === 4, `${label}: the rail's four places (${await rail.getByRole('link').count()})`)
+      await page.screenshot({ path: path.join(shots, `sidebar-rail-1440-${scheme}.png`) })
+      await rail.getByRole('button', { name: 'Show sidebar' }).click()
+      await page.locator('aside[data-sidebar="open"]').waitFor()
+      // a double click on the edge puts the usual width back
+      await handle.dblclick()
+      check((await width()) === 420, `${label}: a double click puts 420px back (${await width()})`)
+      check((await saved()) === 0, `${label}: and forgets the dragged width`)
       await page.getByRole('tab', { name: /Blueprints/ }).click()
       const side = page.locator('aside')
       check((await side.locator('.side-label').allTextContents()).join('|') === 'This conversation|Earlier in storefront', `${label}: this conversation's first (${await side.locator('.side-label').allTextContents()})`)

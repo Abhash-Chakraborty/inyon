@@ -64,10 +64,12 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 
 The layers button in the header (or the side panel on a wide screen) shows what's running beside the conversation. From 0.25.3, when its tabs don't all fit (a narrow panel, a phone), the row scrolls sideways with the hidden side faded, the tab you pick scrolls into view, and the arrow keys, `Home` and `End` move along it. Every row of tabs in the app does the same.
 
+From 0.25.6 the side panel can be resized: drag its left edge, or focus the edge and press `←` or `→`. It never gets narrower than 340 px or leaves the chat less than 420 px, and a double-click (or `Home`) puts back the width it comes with. The app remembers the width.
+
 - **Running:** queued messages, subagents with their transcripts, background shells with live output, and monitors. Shells and monitors each have a real **Stop**. Codex's sub-agents are listed here too from 0.17.6, by the name Codex gave them, from the moment they start until they report back; what they said back shows in the chat.
 - **Changes:** what changed, two ways. **This chat** lists every file the agent changed with its edit tools in this conversation, with the diff of each edit, newest first. Changes it made by running commands (a formatter, `sed`, a script) aren't there; they show under Working tree. **Working tree** (from 0.17) shows what git sees: every change since the last commit, whoever made it. See [Reviewing changes](#reviewing-changes).
 - **Files** (from 0.17): the session's folder, read only. Open a folder, read a file with syntax highlighting, see an image, or read a Markdown file rendered (**Source** shows the text). **Mention** adds `@path` to your message. Files over 512 KB show their first 512 KB.
-- **Preview:** a dev server the agent started, in a frame, with a phone-width toggle. Inyon suggests the local ports it finds.
+- **Preview** (until 0.25.5): a dev server the agent started, in a frame. It was removed in 0.25.6: most dev servers refuse to be framed or aren't reachable from the browser, so the tab seldom worked. Open the address in a browser tab instead.
 - **Artifacts** (Claude Code): pages the agent published, with **Open**, **Copy link**, and a button that asks the agent to delete one.
 - **Pages** (from 0.22.3, when the session has any; **Blueprints** from 0.25): the [pages](pages.md) in the session's project, with their progress. Tap one to open it. From 0.25 they're the ones made in the session's tmux session, this conversation's first, and one opens right in the panel. See [Blueprints in a session](pages.md#in-a-session).
 

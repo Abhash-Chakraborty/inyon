@@ -5,7 +5,6 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import type { PageEntry } from '@inyon/protocol'
 import { PagesPage, cleanedText } from './Pages.tsx'
 import { AppShell } from '../components/AppShell.tsx'
-import { PreviewTab } from '../components/session/Panels.tsx'
 import { useStore } from '../lib/store.ts'
 import { loadPages, usePages, pageId, type Page } from '../lib/pages.ts'
 import { updatedLine } from '../components/pages/shared.tsx'
@@ -619,17 +618,5 @@ describe('the shell', () => {
       </MemoryRouter>,
     )
     expect(screen.getAllByRole('navigation').find((n) => n.className.includes('grid-cols-5'))).toBeUndefined()
-  })
-})
-
-describe('the Preview tab', () => {
-  test("refuses to frame Inyon's own address", async () => {
-    localStorage.setItem('inyon.preview.box:%1', 'http://localhost:5173/settings')
-    const { container } = await render(<PreviewTab storageKey="box:%1" suggestions={[]} />)
-    expect(container.querySelector('iframe')).toBeNull()
-    expect(screen.getByText(/That address is Inyon itself/)).toBeTruthy()
-    fireEvent.change(screen.getByRole('textbox', { name: 'Preview address' }), { target: { value: 'http://localhost:3000' } })
-    fireEvent.submit(screen.getByRole('textbox', { name: 'Preview address' }).closest('form')!)
-    expect(container.querySelector('iframe')!.getAttribute('src')).toBe('http://localhost:3000')
   })
 })

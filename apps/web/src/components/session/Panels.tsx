@@ -1,26 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import {
-  Bot, ExternalLink, FileDiff, Globe, LayoutPanelLeft, Link2, Monitor as MonitorIcon, PanelsTopLeft, RefreshCw, Smartphone,
-  SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2, ShieldAlert,
-} from 'lucide-react'
+import { Bot, FileDiff, LayoutPanelLeft, PanelsTopLeft, SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2 } from 'lucide-react'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { buildRows } from '../../lib/chat.ts'
 import { api } from '../../lib/api.ts'
 import { openLink, shortPath, since } from '../../lib/format.ts'
 import { Diff, useHunks } from '../chat/Diff.tsx'
 import { AssistantTurn, CommandRow, GoalRow, NoticeRow, UserMessage } from '../chat/Messages.tsx'
-import { Button, Empty, Segmented, Sheet, Waiting, arrowStep, inputClass, useStrip } from '../ui/primitives.tsx'
+import { Button, Empty, Segmented, Sheet, Waiting, arrowStep, useStrip } from '../ui/primitives.tsx'
 import { CommentableDiff, FilesTab, ReviewBar, WorkingTree, type PaneKey } from './Workspace.tsx'
+import { panelBox, usePanelResize } from './PanelResize.tsx'
 import { UsagePanel } from './Usage.tsx'
 import type { SessionModel } from './useSession.ts'
 import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { confirmAction } from '../Confirm.tsx'
-import { appOrigins, previewRefusal } from '../../lib/pages.ts'
 import { SessionBlueprints, useSessionPages } from '../pages/SessionBlueprints.tsx'
-import { useFramesIsolated } from '../../lib/native.ts'
-import { FrameRefused } from '../FrameRefused.tsx'
 
 // ---------- changes ----------
 
@@ -298,80 +293,9 @@ export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask
   )
 }
 
-// ---------- preview ----------
-
-export function PreviewTab({ storageKey, suggestions }: { storageKey: string; suggestions: string[] }) {
-  const [url, setUrl] = useState(() => {
-    try {
-      return localStorage.getItem(`inyon.preview.${storageKey}`) ?? ''
-    } catch {
-      return ''
-    }
-  })
-  const [draft, setDraft] = useState(url)
-  const [phone, setPhone] = useState(false)
-  // this frame runs with same-origin rights, so it never shows Inyon's own address
-  const refused = url ? previewRefusal(url, appOrigins()) : null
-  const isolated = useFramesIsolated()
-  const [n, setN] = useState(0)
-  const go = (u: string) => {
-    const v = /^https?:\/\//.test(u) ? u : u ? `http://${u}` : ''
-    setUrl(v)
-    setDraft(v)
-    try {
-      localStorage.setItem(`inyon.preview.${storageKey}`, v)
-    } catch {}
-  }
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <form className="flex items-center gap-1.5 p-2.5" onSubmit={(e) => (e.preventDefault(), go(draft))}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="http://my-server:3000" className={clsx(inputClass, 'h-8 font-mono text-[12px]')} aria-label="Preview address" />
-        <button type="button" title="Reload" aria-label="Reload" onClick={() => setN((x) => x + 1)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
-          <RefreshCw className="size-3.5" />
-        </button>
-        <button type="button" title={phone ? 'Desktop width' : 'Phone width'} aria-label={phone ? 'Desktop width' : 'Phone width'} onClick={() => setPhone(!phone)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
-          {phone ? <MonitorIcon className="size-3.5" /> : <Smartphone className="size-3.5" />}
-        </button>
-        {url && !refused && (
-          <a href={url} target="_blank" rel="noreferrer" title="Open in a new tab" aria-label="Open in a new tab" className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
-            <ExternalLink className="size-3.5" />
-          </a>
-        )}
-      </form>
-      {refused ? (
-        <div className="p-3">
-          <Empty icon={<ShieldAlert className="size-5" />} title="Not shown here">{refused}</Empty>
-        </div>
-      ) : url ? (
-        <div className="flex min-h-0 flex-1 justify-center bg-sunken p-2.5 pt-0">
-          {isolated ? (
-            <iframe key={n} src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" className={clsx('h-full rounded-xl border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
-          ) : (
-            <FrameRefused src={url} className="h-full w-full rounded-xl border border-line" />
-          )}
-        </div>
-      ) : (
-        <div className="p-3">
-          <Empty icon={<Globe className="size-5" />} title="Preview a dev server">Enter an address your browser can reach, like a dev server running on one of your machines.</Empty>
-          {suggestions.length > 0 && (
-            <div className="flex flex-wrap justify-center gap-1.5">
-              {suggestions.map((u) => (
-                <button key={u} type="button" onClick={() => go(u)} className="rounded-full border border-line px-2.5 py-1 font-mono text-[12px] text-fg-2 hover:bg-hover">
-                  <Link2 className="mr-1 inline size-3" />
-                  {u.replace(/^https?:\/\//, '')}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ---------- side panel ----------
 
-export type PanelTab = 'changes' | 'files' | 'activity' | 'preview' | 'pages' | 'usage'
+export type PanelTab = 'changes' | 'files' | 'activity' | 'pages' | 'usage'
 
 // ---------- pages ----------
 
@@ -423,6 +347,10 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
   const changes = useChanges(items)
   const pages = useSessionPages(s).count
   const strip = useRef<HTMLDivElement>(null)
+  // dragged by its left edge; the width is kept with the other settings
+  const panel = useRef<HTMLElement>(null)
+  const resize = usePanelResize(panel)
+  const box = panelBox(resize.width)
   const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
   // a background subagent is also listed as a task of the kind the transcript can't name: count it once
   const running = (s.info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (s.info?.subagents.filter((a) => a.status === 'running').length ?? 0)
@@ -430,7 +358,6 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
     { id: 'changes', label: 'Changes', badge: changes.length || undefined },
     { id: 'files', label: 'Files' },
     { id: 'activity', label: 'Activity', badge: running || undefined },
-    { id: 'preview', label: 'Preview' },
     // only for a session that has pages, or while it's the tab on screen
     ...(pages || tab === 'pages' ? [{ id: 'pages' as const, label: 'Blueprints', badge: pages || undefined }] : []),
     { id: 'usage', label: 'Usage' },
@@ -439,20 +366,10 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
   const underline = useTabUnderline(strip, at)
   // more tabs than fit a narrow panel: the strip scrolls, and the one on screen stays in view
   const fade = useStrip(strip, at)
-  const previewSuggestions = useMemo(() => {
-    const out = new Set<string>()
-    for (const i of items.slice(-400)) {
-      const t = i.kind === 'tool_result' ? i.text : i.kind === 'assistant' && i.block.type === 'text' ? i.block.text : ''
-      for (const m of t.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1|[\w-]+):(\d{4,5})\b/g)) {
-        const port = Number(m[1])
-        if ((port >= 3000 && port <= 5999) || (port >= 8000 && port <= 8009)) out.add(`http://${location.hostname}:${port}`)
-      }
-    }
-    return [...out].slice(-6)
-  }, [items])
   return (
     // in from its edge; out with a fade while PanePage keeps it mounted
-    <aside className={clsx('flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-sidebar 2xl:w-[480px]', closing ? 'animate-fade-out' : 'animate-panel-in')}>
+    <aside ref={panel} style={box.style} className={clsx('relative flex min-h-0 shrink-0 flex-col border-l border-line bg-sidebar', box.className, closing ? 'animate-fade-out' : 'animate-panel-in')}>
+      {resize.Handle}
       <div
         ref={strip}
         role="tablist"
@@ -489,7 +406,6 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
         {tab === 'changes' && <ChangesTab items={items} p={p} />}
         {tab === 'files' && p && <FilesTab key={`${p.host}:${p.pane}`} p={p} />}
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}
-        {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={previewSuggestions} />}
         {tab === 'pages' && <PagesTab s={s} inline />}
         {tab === 'usage' && (
           <div className="p-3">

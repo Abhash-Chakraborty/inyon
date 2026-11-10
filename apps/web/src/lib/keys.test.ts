@@ -42,3 +42,15 @@ test('shortcuts are written the way this computer names its keys', () => {
     else delete (navigator as any).userAgent
   }
 })
+
+test('Ctrl B or ⌘B folds the sidebar, but in the terminal Ctrl B stays tmux’s prefix', () => {
+  document.body.innerHTML = '<textarea></textarea><div class="xterm"><textarea></textarea></div>'
+  const [box, term] = [...document.querySelectorAll('textarea')]
+  expect(shortcut(press('b', document.body, { ctrlKey: true }), document.body)).toBe('sidebar')
+  expect(shortcut(press('b', box!, { metaKey: true }), box!)).toBe('sidebar')
+  expect(shortcut(press('b', term!, { ctrlKey: true }), term!)).toBeUndefined()
+  expect(shortcut(press('b', document.body, { ctrlKey: true }), term!)).toBeUndefined()
+  // Ctrl Shift B and a plain b are something else
+  expect(shortcut(press('b', document.body, { ctrlKey: true, shiftKey: true }), document.body)).toBeUndefined()
+  expect(shortcut(press('b', box!), box!)).toBeUndefined()
+})
