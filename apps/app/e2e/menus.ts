@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Page } from 'playwright'
 import { base, check, finish, launch, layout, open, resetChats, SIZES, until } from './hub.ts'
+import { capture } from './failure.ts'
 
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
@@ -249,6 +250,9 @@ try {
       await layout(page, label)
       await ctx.close()
     }
+} catch (e) {
+  await capture(browser, shots, 'menus')
+  throw e
 } finally {
   await done()
 }

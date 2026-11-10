@@ -1,7 +1,7 @@
 //! The session's side panel and its phone sheet (session/Panels.tsx, Workspace.tsx and
 //! MobileSheets.tsx ActivitySheet): Changes (this chat's edits, or git's working tree with Commit
 //! all and Push, and comments on diff lines), Files with a file viewer, Activity (queued messages,
-//! subagents, background tasks, monitors, artifacts), Preview, Blueprints and Usage. From 1180 px
+//! subagents, background tasks, monitors, artifacts), Blueprints and Usage. From 1180 px
 //! up it sits beside the chat; below that the header's Activity button opens the same bodies in a
 //! sheet.
 
@@ -57,7 +57,6 @@ pub enum Tab {
     Changes,
     Files,
     Activity,
-    Preview,
     Pages,
     Usage,
 }
@@ -68,7 +67,6 @@ impl Tab {
             Tab::Changes => "changes",
             Tab::Files => "files",
             Tab::Activity => "activity",
-            Tab::Preview => "preview",
             Tab::Pages => "pages",
             Tab::Usage => "usage",
         }
@@ -231,12 +229,7 @@ fn Empty(icon: Icon, title: String, #[props(default)] action: Option<Element>, c
 /// The tabs as the panel lists them: Blueprints only for a session that has some, or while it's
 /// the tab on screen.
 fn tabs(changes: usize, running: usize, pages: usize, on: Tab) -> Vec<(Tab, &'static str, Option<usize>)> {
-    let mut v = vec![
-        (Tab::Changes, "Changes", (changes > 0).then_some(changes)),
-        (Tab::Files, "Files", None),
-        (Tab::Activity, "Activity", (running > 0).then_some(running)),
-        (Tab::Preview, "Preview", None),
-    ];
+    let mut v = vec![(Tab::Changes, "Changes", (changes > 0).then_some(changes)), (Tab::Files, "Files", None), (Tab::Activity, "Activity", (running > 0).then_some(running))];
     if pages > 0 || on == Tab::Pages {
         v.push((Tab::Pages, "Blueprints", (pages > 0).then_some(pages)));
     }
@@ -261,7 +254,6 @@ pub fn SidePanel(of: Of, tab: Signal<Tab>, closing: bool) -> Element {
     let list = tabs(changes.len(), running, pages, on);
     let at = list.iter().position(|t| t.0 == on).unwrap_or(0);
     let ids: Vec<Tab> = list.iter().map(|t| t.0).collect();
-    let suggestions = suggestions(&items, &of.host, &hub.read());
     let mut tab_w = tab;
     let route = use_context::<Signal<crate::route::Route>>();
     // the tab row scrolls sideways like every other (kit.rs Segmented): the picked tab comes into
@@ -313,7 +305,6 @@ pub fn SidePanel(of: Of, tab: Signal<Tab>, closing: bool) -> Element {
                     Tab::Changes => rsx! { ChangesTab { host: of.host.clone(), pane: of.pane.clone(), changes, on_composed: None } },
                     Tab::Files => rsx! { FilesTab { key: "{key}", host: of.host.clone(), pane: of.pane.clone(), on_composed: None } },
                     Tab::Activity => rsx! { ActivityTab { host: of.host.clone(), pane: of.pane.clone(), info: info.clone() } },
-                    Tab::Preview => rsx! { PreviewTab { key: "{key}", store: key.clone(), suggestions } },
                     Tab::Pages => rsx! { super::pages::SidePages { here: of.here.clone(), side: of.side } },
                     Tab::Usage => {
                         let compact = of.compact.clone().map(|c| {
@@ -338,7 +329,7 @@ pub fn SidePanel(of: Of, tab: Signal<Tab>, closing: bool) -> Element {
     }
 }
 
-/// The phone's Activity sheet: Running, Changes, Files, Preview and Blueprints, the panel's own
+/// The phone's Activity sheet: Running, Changes, Files and Blueprints, the panel's own
 /// bodies.
 #[component]
 pub fn ActivitySheet(of: Of, open: bool, on_close: EventHandler<()>) -> Element {
@@ -351,8 +342,7 @@ pub fn ActivitySheet(of: Of, open: bool, on_close: EventHandler<()>) -> Element 
     let info = c.get(&key).and_then(|e| e.chat.info.clone());
     drop(c);
     let pages = super::pages::session_page_count(&of.here, &hub.read());
-    let mut options =
-        vec![("activity".to_string(), "Running".to_string()), ("changes".into(), "Changes".into()), ("files".into(), "Files".into()), ("preview".into(), "Preview".into())];
+    let mut options = vec![("activity".to_string(), "Running".to_string()), ("changes".into(), "Changes".into()), ("files".into(), "Files".into())];
     if pages > 0 || tab() == Tab::Pages {
         options.push(("pages".into(), "Blueprints".into()));
     }
@@ -377,7 +367,6 @@ pub fn ActivitySheet(of: Of, open: bool, on_close: EventHandler<()>) -> Element 
                         tab.set(match v.as_str() {
                             "changes" => Tab::Changes,
                             "files" => Tab::Files,
-                            "preview" => Tab::Preview,
                             "pages" => Tab::Pages,
                             _ => Tab::Activity,
                         })
@@ -389,7 +378,6 @@ pub fn ActivitySheet(of: Of, open: bool, on_close: EventHandler<()>) -> Element 
                 match on {
                     Tab::Changes => rsx! { ChangesTab { host: of.host.clone(), pane: of.pane.clone(), changes: changes::changes(&items), on_composed: composed } },
                     Tab::Files => rsx! { FilesTab { host: of.host.clone(), pane: of.pane.clone(), on_composed: composed } },
-                    Tab::Preview => rsx! { PreviewTab { store: key.clone(), suggestions: suggestions(&items, &of.host, &hub.read()) } },
                     Tab::Pages => rsx! { div { class: "pp-pad", super::pages::PhonePages { here: of.here.clone() } } },
                     _ => rsx! { ActivityTab { host: of.host.clone(), pane: of.pane.clone(), info: info.clone() } },
                 }
@@ -1512,114 +1500,6 @@ fn SubagentSheet(host: String, pane: String, ctx: Ctx) -> Element {
     }
 }
 
-// ---------- preview ----------
-
-/// The name this app was opened on, without its port: where a dev server the chat mentions is.
-fn hostname() -> String {
-    let h = dom::host();
-    match h.strip_prefix('[') {
-        Some(v6) => format!("[{}]", v6.split(']').next().unwrap_or("")),
-        None => h.split(':').next().unwrap_or("").to_string(),
-    }
-}
-
-/// The dev servers the chat mentions, on the session's machine as the browser reaches it; none
-/// when the browser can't (a machine joined over its link).
-fn suggestions(items: &[ChatItem], host: &str, hub: &crate::state::Hub) -> Vec<String> {
-    let at = hub.hosts.iter().find(|h| h.config.id == host).and_then(|h| changes::server_host(h.config.kind, h.config.target.as_deref(), &hostname()));
-    at.map_or_else(Vec::new, |at| changes::preview_suggestions(items, &at))
-}
-
-/// This app's own address and the hub's, which the Preview tab won't show.
-fn app_origins() -> Vec<String> {
-    vec![dom::origin()]
-}
-
-#[component]
-fn PreviewTab(store: String, suggestions: Vec<String>) -> Element {
-    let key = format!("inyon.preview.{store}");
-    let mut url = use_signal(|| platform::load(&key).unwrap_or_default());
-    let mut draft = use_signal(|| url.peek().clone());
-    let mut phone = use_signal(|| false);
-    let mut n = use_signal(|| 0u32);
-    let go = {
-        let key = key.clone();
-        move |typed: String| {
-            let v = changes::preview_address(&typed);
-            url.set(v.clone());
-            draft.set(v.clone());
-            platform::save(&key, &v);
-        }
-    };
-    let mut go_form = go.clone();
-    let u = url();
-    // this frame runs with the app's own rights, so it never shows Inyon's own address
-    let refused = !u.is_empty() && changes::preview_refused(&u, &app_origins());
-    rsx! {
-        div { class: "pp-col",
-            form {
-                class: "pp-address",
-                onsubmit: move |e: FormEvent| {
-                    e.prevent_default();
-                    // the read ends before go writes the same signal
-                    let typed = draft.peek().clone();
-                    go_form(typed);
-                },
-                input { class: "field pp-input mono", value: "{draft}", placeholder: "http://my-server:3000", "aria-label": "Preview address", oninput: move |e| draft.set(e.value()) }
-                button { class: "pp-round press", r#type: "button", title: "Reload", "aria-label": "Reload", onclick: move |_| n += 1,
-                    Glyph { icon: Icon::RefreshCw, size: 14 }
-                }
-                button {
-                    class: "pp-round press",
-                    r#type: "button",
-                    title: if phone() { "Desktop width" } else { "Phone width" },
-                    "aria-label": if phone() { "Desktop width" } else { "Phone width" },
-                    onclick: move |_| phone.toggle(),
-                    Glyph { icon: if phone() { Icon::Monitor } else { Icon::Smartphone }, size: 14 }
-                }
-                if !u.is_empty() && !refused {
-                    a { class: "pp-round press", href: "{u}", target: "_blank", rel: "noreferrer", title: "Open in a new tab", "aria-label": "Open in a new tab",
-                        Glyph { icon: Icon::ExternalLink, size: 14 }
-                    }
-                }
-            }
-            if refused {
-                div { class: "pp-pad",
-                    Empty { icon: Icon::ShieldAlert, title: "Not shown here", "{changes::PREVIEW_REFUSAL}" }
-                }
-            } else if !u.is_empty() {
-                div { class: "pp-frame-wrap",
-                    iframe {
-                        key: "{n}",
-                        src: "{u}",
-                        title: "Preview",
-                        "sandbox": "allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads",
-                        class: if phone() { "pp-frame pp-frame-phone" } else { "pp-frame" },
-                    }
-                }
-            } else {
-                div { class: "pp-pad",
-                    Empty { icon: Icon::Globe, title: "Preview a dev server", "Enter an address your browser can reach, like a dev server running on one of your machines." }
-                    if !suggestions.is_empty() {
-                        div { class: "pp-suggestions",
-                            for s in suggestions {
-                                button {
-                                    key: "{s}",
-                                    class: "pp-suggestion mono press",
-                                    r#type: "button",
-                                    onclick: { let (s, mut go) = (s.clone(), go.clone()); move |_| go(s.clone()) },
-                                    Glyph { icon: Icon::Link2, size: 12 }
-                                    {s.trim_start_matches("https://").trim_start_matches("http://").to_string()}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1628,9 +1508,9 @@ mod tests {
     #[test]
     fn the_blueprints_tab_shows_only_with_pages_or_while_open() {
         let ids = |v: Vec<(Tab, &'static str, Option<usize>)>| v.into_iter().map(|t| t.1).collect::<Vec<_>>();
-        assert_eq!(ids(tabs(0, 0, 0, Tab::Changes)), ["Changes", "Files", "Activity", "Preview", "Usage"]);
-        assert_eq!(ids(tabs(0, 0, 2, Tab::Changes)), ["Changes", "Files", "Activity", "Preview", "Blueprints", "Usage"]);
-        assert_eq!(ids(tabs(0, 0, 0, Tab::Pages)), ["Changes", "Files", "Activity", "Preview", "Blueprints", "Usage"]);
+        assert_eq!(ids(tabs(0, 0, 0, Tab::Changes)), ["Changes", "Files", "Activity", "Usage"]);
+        assert_eq!(ids(tabs(0, 0, 2, Tab::Changes)), ["Changes", "Files", "Activity", "Blueprints", "Usage"]);
+        assert_eq!(ids(tabs(0, 0, 0, Tab::Pages)), ["Changes", "Files", "Activity", "Blueprints", "Usage"]);
         let t = tabs(3, 1, 0, Tab::Changes);
         assert_eq!((t[0].2, t[1].2, t[2].2), (Some(3), None, Some(1)));
     }

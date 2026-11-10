@@ -691,6 +691,9 @@ fn tiles(c: &Controls, now: &Now) -> Vec<Tile> {
         v.push(tile("Redo", Icon::RotateCw, session(SessionOp::Send("/redo".into(), "Could not redo"))));
         v.push(tile(if now.shared { "Unshare" } else { "Share" }, Icon::Link2, session(SessionOp::Share(!now.shared))));
     }
+    if super::session_menu::switchable(kind) {
+        v.push(tile("History", Icon::History, session(SessionOp::Conversations)));
+    }
     if matches!(kind, AgentKind::Claude | AgentKind::Codex | AgentKind::Opencode) && now.session_id.is_some() {
         v.push(tile("Fork", Icon::GitFork, session(SessionOp::Fork)));
     }
@@ -878,8 +881,8 @@ fn ControlsSheet(c: Controls, of: SheetOf) -> Element {
                                     let t = t.clone();
                                     move |_| {
                                         let t = t.clone();
-                                        // Fork and End take you elsewhere, so the sheet goes first
-                                        if matches!(t.action, Action::EndSession { .. } | Action::Session(SessionAct { op: SessionOp::Fork, .. })) {
+                                        // Fork and End take you elsewhere, and History opens its own sheet, so this one goes first
+                                        if matches!(t.action, Action::EndSession { .. } | Action::Session(SessionAct { op: SessionOp::Fork | SessionOp::Conversations, .. })) {
                                             close();
                                         }
                                         match t.ask {
@@ -1199,9 +1202,9 @@ mod tests {
     fn the_sheet_lists_the_web_apps_actions_for_each_agent() {
         let labels = |c: &Controls, now: &Now| tiles(c, now).into_iter().map(|t| t.label).collect::<Vec<_>>();
         let with_id = Now { session_id: Some("abc".into()), ..Now::default() };
-        assert_eq!(labels(&claude(Reported::default()), &with_id), ["Compact", "Rewind", "Fork", "Copy ID", "Clear", "To shell", "End"]);
+        assert_eq!(labels(&claude(Reported::default()), &with_id), ["Compact", "Rewind", "History", "Fork", "Copy ID", "Clear", "To shell", "End"]);
         // no conversation yet: nothing to fork or copy
-        assert_eq!(labels(&claude(Reported::default()), &Now::default()), ["Compact", "Rewind", "Clear", "To shell", "End"]);
+        assert_eq!(labels(&claude(Reported::default()), &Now::default()), ["Compact", "Rewind", "History", "Clear", "To shell", "End"]);
         let opencode = Controls::of("box", "Box", "%1", AgentKind::Opencode, Reported::default());
         let l = labels(&opencode, &Now { shared: true, ..Now::default() });
         assert!(l.contains(&"Undo") && l.contains(&"Redo") && l.contains(&"Unshare"));

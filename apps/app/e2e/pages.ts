@@ -14,6 +14,7 @@ import { chromium, devices, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
 import { info, overview } from './demo.ts'
 import { resetShares, shareRoute, shares } from './share-hub.ts'
+import { capture } from './failure.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -606,8 +607,10 @@ try {
     check(await panel.getByRole('tab', { name: /Blueprints/ }).getAttribute('aria-selected') === 'true', `${label}: the button picks the panel's Blueprints tab`)
     check(await until(async () => (await button.getAttribute('aria-pressed')) === 'true'), `${label}: and shows as pressed`)
     check(!(await page.locator('.session-side').count()), `${label}: no second side view next to the panel`)
-    // six tabs don't fit 420 px: the row scrolls, with its hidden end faded
-    check(await until(async () => /end|start/.test((await panel.locator('#pp-tabs').getAttribute('data-fade')) ?? '')), `${label}: the tab row fades where it runs on (${await panel.locator('#pp-tabs').getAttribute('data-fade')})`)
+    // five tabs fit 420 px: nothing runs on, so nothing fades
+    const row = panel.locator('#pp-tabs')
+    check(await row.evaluate((el) => el.scrollWidth <= el.clientWidth), `${label}: the five tabs fit the panel`)
+    check(!/end|start/.test((await row.getAttribute('data-fade')) ?? ''), `${label}: no faded end on a row that fits (${await row.getAttribute('data-fade')})`)
     check((await panel.locator('.side-label').allTextContents()).join('|') === 'This conversation|Earlier in storefront', `${label}: this conversation's first`)
     await panel.locator('.side-row', { hasText: 'Checkout redesign' }).click()
     await panel.frameLocator('iframe.page-frame').getByRole('heading', { name: 'Checkout redesign' }).waitFor()
@@ -821,6 +824,9 @@ try {
     await layout(page, label)
     await ctx.close()
   }
+} catch (e) {
+  await capture(browser, shots, 'pages')
+  throw e
 } finally {
   await browser.close()
   server.stop(true)

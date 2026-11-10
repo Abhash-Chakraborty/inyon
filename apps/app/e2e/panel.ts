@@ -2,7 +2,7 @@
 // stand-in hub (hub.ts), at phone and desktop sizes in light and dark. From 1180px the panel sits
 // beside the chat with Changes (this chat's edits with comments on diff lines, and git's working
 // tree with Commit all and Push), Files and the file viewer, Activity (queued messages, subagents,
-// background tasks, monitors, artifacts, Stop and their sheets), Preview and Usage, and the header
+// background tasks, monitors, artifacts, Stop and their sheets) and Usage, and the header
 // shows and hides it, remembered across a reload. On a phone the header's Activity button opens
 // the same bodies in a sheet. With the React app built (apps/web/dist) it draws the same screens
 // there for comparison. Screenshots go to $SHOTS (default: a temp folder). CHROME picks the browser.
@@ -92,7 +92,7 @@ for (const [w, h] of SIZES)
         // ---- beside the chat, on its Changes tab ----
         check(await panel(page).isVisible(), `${tag}: the side panel is beside the chat`)
         const names = await panel(page).getByRole('tab').allTextContents()
-        check(names.map((n) => n.replace(/\d+$/, '')).join(',') === 'Changes,Files,Activity,Preview,Usage', `${tag}: the tabs read Changes, Files, Activity, Preview, Usage (${names})`)
+        check(names.map((n) => n.replace(/\d+$/, '')).join(',') === 'Changes,Files,Activity,Usage', `${tag}: the tabs read Changes, Files, Activity, Preview, Usage (${names})`)
         check((await tab(page, 'Changes').textContent())?.includes('2'), `${tag}: Changes counts the two files this chat edited`)
         check((await tab(page, 'Activity').textContent())?.includes('1'), `${tag}: Activity counts the one task running`)
         check(await panel(page).getByText('total.ts').first().isVisible(), `${tag}: the edited file is listed`)
@@ -179,19 +179,6 @@ for (const [w, h] of SIZES)
         check(await page.getByRole('dialog').getByText('Two callers: cart.ts and summary.ts.').waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: a subagent's sheet shows its own conversation`)
         await page.keyboard.press('Escape')
         await page.getByRole('dialog').waitFor({ state: 'hidden' })
-
-        // ---- preview ----
-        await tab(page, 'Preview').click()
-        check(await panel(page).getByText('Preview a dev server').isVisible(), `${tag}: Preview starts empty`)
-        await panel(page).getByRole('button', { name: '127.0.0.1:5173' }).click()
-        check(await panel(page).locator('iframe[title="Preview"]').getAttribute('src') === 'http://127.0.0.1:5173', `${tag}: a suggestion from the chat opens in the frame`)
-        await panel(page).getByLabel('Preview address').fill(base)
-        await panel(page).getByLabel('Preview address').press('Enter')
-        check(await panel(page).getByText('Not shown here').isVisible(), `${tag}: Inyon's own address is refused`)
-        await page.waitForTimeout(400)
-        await page.screenshot({ path: path.join(shots, `panel-preview-${tag}.png`) })
-        await panel(page).getByLabel('Preview address').fill('')
-        await panel(page).getByLabel('Preview address').press('Enter')
 
         // ---- usage ----
         await tab(page, 'Usage').click()

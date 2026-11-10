@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Page } from 'playwright'
 import { base, change, check, dropSockets, errors, finish, launch, layout, open, resetChats, SIZES, state, streams, until } from './hub.ts'
+import { capture } from './failure.ts'
 
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
@@ -152,6 +153,9 @@ try {
       for (let i = errors.length - 1; i >= 0; i--) if (/Unexpected response code: 503/.test(errors[i]!)) errors.splice(i, 1)
       await ctx.close()
     }
+} catch (e) {
+  await capture(browser, shots, 'controls')
+  throw e
 } finally {
   await done()
 }

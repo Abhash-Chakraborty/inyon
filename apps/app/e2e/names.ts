@@ -12,6 +12,7 @@ import path from 'node:path'
 import type { Page } from 'playwright'
 import { base, change, check, finish, launch, layout, open, resetChats, SIZES, state, streams, until } from './hub.ts'
 import { info as chatInfo, overview } from './demo.ts'
+import { capture } from './failure.ts'
 
 const shots = process.env.SHOTS ?? path.join(tmpdir(), 'inyon-app-shots')
 mkdirSync(shots, { recursive: true })
@@ -249,6 +250,9 @@ try {
       check(await page.getByText('The tmux pane was closed or its machine is unreachable.').isVisible(), `${label}: the gone pane's text`)
       await ctx.close()
     }
+} catch (e) {
+  await capture(browser, shots, 'names')
+  throw e
 } finally {
   state.hosts = undefined
   await done()

@@ -12,6 +12,7 @@ import path from 'node:path'
 import { chromium, devices, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
 import { accounts, overview, storefront, twoQuestions } from './demo.ts'
+import { capture } from './failure.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -829,6 +830,9 @@ try {
     check(state.controls.at(-1)?.what === 'rewind' && state.controls.at(-1)?.pane === '12', `session menu: rewound ${JSON.stringify(state.controls.at(-1))}`)
     await ctx.close()
   }
+} catch (e) {
+  await capture(browser, shots, 'overview')
+  throw e
 } finally {
   await browser.close()
   server.stop(true)
