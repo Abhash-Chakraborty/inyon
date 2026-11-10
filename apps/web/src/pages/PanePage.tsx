@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import clsx from 'clsx'
 import { LEAVE_MS } from '../components/ui/AnimatedList.tsx'
+import { panelBox } from '../components/session/PanelResize.tsx'
 import { socket } from '../lib/socket.ts'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
@@ -51,6 +53,7 @@ export function PanePage() {
   const [search, setSearch] = useSearchParams()
   const loaded = useStore((s) => s.hostsLoaded)
   const sidePanel = useStore((s) => s.settings.sidePanel)
+  const panelWidth = useStore((s) => s.settings.panelWidth)
   const setSettings = useStore((s) => s.setSettings)
   const s = useSession(host, pane)
   // asked for at once, whichever view shows: a reopened app has the chat's saved copy (and so
@@ -150,7 +153,7 @@ export function PanePage() {
           </div>
           {panelShown && (
             // an empty panel holds the room while the real one loads, so the chat doesn't get wider and narrower again
-            <Suspense fallback={<aside className="w-[420px] shrink-0 border-l border-line bg-sidebar 2xl:w-[480px]" />}>
+            <Suspense fallback={<aside style={panelBox(panelWidth).style} className={clsx('shrink-0 border-l border-line bg-sidebar', panelBox(panelWidth).className)} />}>
               <SidePanel s={s} items={items} tab={tab} setTab={setTab} onTask={setTask} onSubagent={setSub} closing={!showPanel} />
             </Suspense>
           )}

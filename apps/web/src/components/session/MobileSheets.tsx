@@ -6,7 +6,7 @@ import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { openMenu, Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
 import { UsagePanel } from './Usage.tsx'
-import { ActivityTab, ChangesTab, PagesTab, PreviewTab, useSessionPages } from './Panels.tsx'
+import { ActivityTab, ChangesTab, PagesTab, useSessionPages } from './Panels.tsx'
 import { FilesTab } from './Workspace.tsx'
 import { GoalSheet, modeMatches } from './ComposerControls.tsx'
 import { currentModelId, type SessionModel } from './useSession.ts'
@@ -163,7 +163,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
 }
 
 export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: { s: SessionModel; items: ChatItem[]; open: boolean; onClose: () => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
-  const [tab, setTab] = useState<'activity' | 'changes' | 'files' | 'preview' | 'pages'>('activity')
+  const [tab, setTab] = useState<'activity' | 'changes' | 'files' | 'pages'>('activity')
   const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
   const pages = useSessionPages(s).count
   const here = useLocation()
@@ -174,7 +174,6 @@ export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: {
             { v: 'activity', label: 'Running' },
             { v: 'changes', label: 'Changes' },
             { v: 'files', label: 'Files' },
-            { v: 'preview', label: 'Preview' },
             ...(pages || tab === 'pages' ? [{ v: 'pages' as const, label: 'Blueprints' }] : []),
           ]} />
       </div>
@@ -182,7 +181,6 @@ export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: {
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}
         {tab === 'changes' && <ChangesTab items={items} p={p} onComposed={onClose} />}
         {tab === 'files' && p && <FilesTab p={p} onComposed={onClose} />}
-        {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={[]} />}
         {/* a blueprint opens over the session, in this sheet; Open full view goes to Blueprints */}
         {tab === 'pages' && <PagesTab s={s} inline from={here.pathname + here.search} viewerClass="h-[72dvh] flex-none" />}
       </div>

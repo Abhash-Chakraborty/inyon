@@ -11,11 +11,13 @@ const typingIn = (el: Element | null) =>
  * Which app shortcut a key press is, if any. `N` alone only while nothing takes typing: in a
  * session a key with nothing focused starts a message. Alt+N (⌥N) works while typing too, except
  * in the terminal, where Alt keys belong to the shell. `code` is checked for Alt+N, since on a Mac
- * ⌥N types a dead key rather than "n".
+ * ⌥N types a dead key rather than "n". Ctrl+B (⌘B) folds the sidebar, but not in the terminal,
+ * where Ctrl+B is tmux's own prefix.
  */
-export function shortcut(e: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'target'>, focused: Element | null = document.activeElement): 'search' | 'new' | undefined {
+export function shortcut(e: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'target'>, focused: Element | null = document.activeElement): 'search' | 'new' | 'sidebar' | undefined {
   const t = e.target instanceof Element ? e.target : null
   if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') return 'search'
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b') return t?.closest('.xterm') || focused?.closest('.xterm') ? undefined : 'sidebar'
   if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyN') return t?.closest('.xterm') || focused?.closest('.xterm') ? undefined : 'new'
   if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'n' && !typingIn(t) && !typingIn(focused)) return 'new'
 }

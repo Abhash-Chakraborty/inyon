@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { LayoutGrid, Monitor, PanelsTopLeft, Plus, Search, Settings, WifiOff } from 'lucide-react'
+import { LayoutGrid, Monitor, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Plus, Search, Settings, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import type { HostState } from '@inyon/protocol'
 import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/overview.ts'
@@ -122,6 +122,9 @@ function QuickSwitch({ open, onClose }: { open: boolean; onClose: () => void }) 
 function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void }) {
   const hosts = useStore((s) => s.hosts)
   const connected = useStore((s) => s.connected)
+  const open = useStore((s) => s.settings.sidebar)
+  const setSettings = useStore((s) => s.setSettings)
+  const fold = keyLabel('cmd', 'B')
   const online = hosts.filter((h) => h.status === 'online').length
   const changed = usePages(changedCount)
   const total = usePages((s) => s.pages?.length ?? 0)
@@ -133,9 +136,53 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
         : 'text-fg-2 hover:bg-hover/70 hover:text-fg',
     )
 
+  // folded: a rail of icons, each named by its tooltip. The sessions' tree needs the room, so it
+  // waits for the sidebar to open again; search (and its key) still reaches every session
+  if (!open) {
+    const rail = (active: boolean) => clsx('relative flex size-9 items-center justify-center rounded-full transition-colors', active ? 'bg-elev text-fg shadow-card ring-1 ring-line' : 'text-fg-2 hover:bg-hover/70 hover:text-fg')
+    return (
+      <aside className="pt-safe animate-fade-in hidden w-[60px] shrink-0 flex-col items-center border-r border-line bg-sidebar md:flex" data-sidebar="rail">
+        <div className="flex h-[60px] items-center">
+          <Logo target />
+        </div>
+        <div className="flex flex-col items-center gap-1">
+          <button type="button" onClick={() => setSettings({ sidebar: true })} className={rail(false)} aria-label="Show sidebar" aria-expanded={false} title={`Show sidebar (${fold})`}>
+            <PanelLeftOpen className="size-4" />
+          </button>
+          <button type="button" onClick={onSearch} className={rail(false)} aria-label="Search or jump to…" title={`Search or jump to… (${keyLabel('cmd', 'K')})`}>
+            <Search className="size-4" />
+          </button>
+          <button type="button" onClick={onNew} className={rail(false)} aria-label="New session" title={`New session (${keyLabel('alt', 'N')})`}>
+            <Plus className="size-4" />
+          </button>
+          <NavLink to="/" end className={({ isActive }) => rail(isActive)} aria-label="Overview" title="Overview">
+            <LayoutGrid className="size-4" />
+          </NavLink>
+          {!connected && (
+            <button type="button" onClick={() => !isPhone() && openConnectHelp('self')} className="flex size-9 items-center justify-center rounded-full text-warn hover:bg-hover" aria-label="Reconnecting" title={isPhone() ? 'Reconnecting' : "Reconnecting. Can't connect?"}>
+              <WifiOff className="size-4" />
+            </button>
+          )}
+        </div>
+        <div className="mt-auto flex flex-col items-center gap-1 border-t border-line py-3">
+          <NavLink to="/machines" className={({ isActive }) => rail(isActive)} aria-label={machinesLabel} title={`${machinesLabel}: ${online} of ${hosts.length} online`}>
+            <Monitor className="size-4" />
+          </NavLink>
+          <NavLink to="/blueprints" className={({ isActive }) => rail(isActive)} aria-label={changed > 0 ? `Blueprints, ${changed} changed` : 'Blueprints'} title={changed > 0 ? `Blueprints: ${changed} changed since you last opened ${changed === 1 ? 'it' : 'them'}` : 'Blueprints'}>
+            <PanelsTopLeft className="size-4" />
+            {changed > 0 && <span aria-hidden className="animate-pop absolute top-1.5 right-1.5 size-2 rounded-full bg-fg ring-2 ring-sidebar" />}
+          </NavLink>
+          <NavLink to="/settings" className={({ isActive }) => rail(isActive)} aria-label="Settings" title="Settings">
+            <Settings className="size-4" />
+          </NavLink>
+        </div>
+      </aside>
+    )
+  }
+
   return (
-    <aside className="pt-safe hidden w-[240px] shrink-0 flex-col border-r border-line bg-sidebar md:flex lg:w-[264px]">
-      <div className="flex h-[60px] items-center gap-2.5 px-5">
+    <aside className="pt-safe hidden w-[240px] shrink-0 flex-col border-r border-line bg-sidebar md:flex lg:w-[264px]" data-sidebar="open">
+      <div className="group/side flex h-[60px] items-center gap-2.5 pr-3 pl-5">
         <Logo target />
         <span className="text-[17px] font-semibold tracking-[-0.04em]">Inyon</span>
         {!connected && (
@@ -143,6 +190,9 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
             <WifiOff className="size-4" />
           </button>
         )}
+        <button type="button" onClick={() => setSettings({ sidebar: false })} className={clsx('flex size-8 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg', connected && 'ml-auto')} aria-label="Hide sidebar" aria-expanded title={`Hide sidebar (${fold})`}>
+          <PanelLeftClose className="size-4" />
+        </button>
       </div>
       <div className="space-y-1 px-3">
         <button type="button" onClick={onSearch} className="mb-2 flex h-9 w-full items-center gap-2 rounded-full border border-line bg-elev px-3 text-[13px] text-fg-3 shadow-card hover:border-line-strong">
@@ -271,6 +321,7 @@ export function AppShell() {
       if (!what) return
       e.preventDefault()
       if (what === 'search') setSearch(true)
+      else if (what === 'sidebar') useStore.getState().setSettings({ sidebar: !useStore.getState().settings.sidebar })
       else setNewOpen(true)
     }
     window.addEventListener('keydown', onKey)
@@ -278,10 +329,15 @@ export function AppShell() {
   }, [])
 
   const online = useStore((s) => s.hosts.some((h) => h.status === 'online'))
-  // a right-click on nothing in particular offers the same two things as the shortcuts
+  const sidebar = useStore((s) => s.settings.sidebar)
+  // a right-click on nothing in particular offers the same things as the shortcuts
   usePageMenu(() => [
     { key: 'search', label: 'Search…', icon: <Search className="size-4" />, keys: keyLabel('cmd', 'K'), onSelect: () => setSearch(true) },
     { key: 'new', label: online ? 'New session…' : 'Add a machine…', icon: <Plus className="size-4" />, keys: keyLabel('alt', 'N'), onSelect: () => setNewOpen(true) },
+    // the sidebar is a desktop thing: phones have the tab bar
+    ...(window.matchMedia('(min-width: 768px)').matches
+      ? [{ key: 'sidebar', label: sidebar ? 'Hide sidebar' : 'Show sidebar', icon: sidebar ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />, keys: keyLabel('cmd', 'B'), onSelect: () => useStore.getState().setSettings({ sidebar: !sidebar }) }]
+      : []),
   ])
 
   return (

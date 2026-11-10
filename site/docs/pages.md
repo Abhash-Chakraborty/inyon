@@ -169,7 +169,7 @@ So treat a page you didn't check like a link from a stranger:
 
 > **Warning:** Never type a password, token or key into a page. Inyon never asks you to sign in inside a page. A page opened in its own tab shows your hub's address in the address bar, because pages are served on the hub's own port. That doesn't make it the hub's sign-in screen. A separate address for pages is planned.
 
-For the same reason, a session's **Preview** tab won't show Inyon's own address. It says **Not shown here**, because a preview of the app could act as you. Open agent-made pages under Blueprints instead.
+For the same reason, a session's **Preview** tab (until 0.25.5) wouldn't show Inyon's own address. That tab was removed in 0.25.6; agent-made pages open under Blueprints.
 
 ## When a page won't open
 
