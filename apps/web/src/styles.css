@@ -483,6 +483,17 @@ html.intro-running [data-intro-target] { opacity: 0; }
  * closing quicker. One that mounts already open (a tool body on its first tap) grows from nothing
  * too, through @starting-style.
  */
+/* the Blueprints viewer's bar in a narrow column (beside the sidebar and the list on a small
+   laptop): where the page is and its buttons on one row, its parts, notes and frame sizes on the
+   next. On one row the tools took all of it and the location shrank to nothing. */
+.viewer-col { container: viewer / inline-size; }
+@container viewer (max-width: 719.98px) {
+  .viewer-bar { height: auto; flex-wrap: wrap; row-gap: 0; padding-bottom: 10px; }
+  .viewer-bar > nav { min-height: 51px; }
+  .viewer-bar > button { order: 1; }
+  .viewer-bar::after { content: ''; order: 2; flex-basis: 100%; }
+  .viewer-bar > [role='radiogroup'], .viewer-bar > .viewer-tool { order: 3; }
+}
 .expand { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-exit) ease-in; }
 .expand[data-open='true'] { grid-template-rows: 1fr; transition-duration: var(--dur-move); transition-timing-function: var(--ease-spring); }
 .expand > * { overflow: hidden; min-height: 0; opacity: 0; transition: opacity var(--dur-exit) ease-in; }

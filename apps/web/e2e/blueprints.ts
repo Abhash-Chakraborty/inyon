@@ -193,6 +193,20 @@ try {
       check((await heads(page)).join('|') === 'accounts|storefront|docs-site', `${label}: tmux sessions first, then projects (${await heads(page)})`)
       check(await page.locator('.group-heading', { hasText: 'docs-site' }).getByText('build-box').isVisible(), `${label}: the machine as a label`)
       check((await page.locator('.crumb-group').textContent()) === 'storefront', `${label}: the viewer names the session`)
+      {
+        // with the room a wide screen gives, the viewer's bar is one row
+        const bar = await page.evaluate((() => { const r = (s: string) => document.querySelector(s)!.getBoundingClientRect(); return { crumbs: Math.round(r('.viewer-bar nav').width), bar: Math.round(r('.viewer-bar').height), below: Math.round(r('.viewer-bar [aria-label="Frame size"]').top - r('.viewer-bar nav').top) } }))
+        check(bar.bar === 52 && bar.below < 20 && bar.crumbs >= 200, `${label}: the viewer's bar is one row (${JSON.stringify(bar)})`)
+        // beside the sidebar and the list on a small laptop the viewer is narrow: the bar takes two rows,
+        // so its parts and frame sizes leave the page's location its room (on one row it shrank to nothing)
+        await page.setViewportSize({ width: 1100, height: 900 })
+        const narrow = await page.evaluate((() => { const r = (s: string) => document.querySelector(s)!.getBoundingClientRect(); return { crumbs: Math.round(r('.viewer-bar nav').width), bar: Math.round(r('.viewer-bar').height), below: Math.round(r('.viewer-bar [aria-label="Frame size"]').top - r('.viewer-bar nav').top) } }))
+        check(narrow.crumbs >= 200, `${label}: at 1100px the viewer still says where the page is (${JSON.stringify(narrow)})`)
+        check(narrow.below >= 30 && narrow.bar > 80, `${label}: with its tools on a second row (${JSON.stringify(narrow)})`)
+        check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${label}: and nothing runs off the side`)
+        await page.screenshot({ path: path.join(shots, `viewer-narrow-1100-${scheme}.png`) })
+        await page.setViewportSize({ width: 1440, height: 900 })
+      }
       // Open in new tab opens the part on screen
       await page.getByRole('radiogroup', { name: 'Part of the blueprint' }).getByRole('radio', { name: 'Mockups' }).click()
       await page.frameLocator('iframe').first().getByRole('heading', { name: 'Checkout redesign: mockups' }).waitFor()

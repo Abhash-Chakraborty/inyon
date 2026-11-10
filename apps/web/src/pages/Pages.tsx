@@ -497,7 +497,7 @@ function PagesDesktop({ selected }: { selected?: string }) {
           </div>
         )}
       </section>
-      <section aria-label="Viewer" className="pt-safe flex min-h-0 min-w-0 flex-col">
+      <section aria-label="Viewer" className="viewer-col pt-safe flex min-h-0 min-w-0 flex-col">
         {forgot ? (
           <div className="flex flex-1 items-center justify-center"><Empty icon={<Link2Off className="size-5" />} title={`${hubName(hubIdOf(selected!))} forgot this phone`}>Pair it again from the hub to open its pages here.</Empty></div>
         ) : pages && !pages.length ? (
@@ -581,7 +581,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
   ]
   return (
     <>
-      <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line pr-2.5 pl-4">
+      <div className="viewer-bar flex h-[52px] shrink-0 items-center gap-2 border-b border-line pr-2.5 pl-4">
         <nav aria-label="Page location" className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] whitespace-nowrap text-fg-2">
           <span className="inline-flex shrink-0 items-center gap-1.5">
             <MachineIcon kind={m.host ? machineKindOf(m.host) : 'server'} size={14} className="text-fg-3" />
@@ -604,7 +604,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
                 type="button"
                 onClick={toggle}
                 aria-label={v.note ? `Notes: ${noteTitle(v.note)} open` : 'Notes'}
-                className={clsx('press flex h-[30px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium', v.note ? 'border-line-strong bg-elev text-fg shadow-card' : 'border-line text-fg-2 hover:text-fg')}
+                className={clsx('viewer-tool press flex h-[30px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium', v.note ? 'border-line-strong bg-elev text-fg shadow-card' : 'border-line text-fg-2 hover:text-fg')}
               >
                 <NotebookText className="size-3.5 shrink-0" />
                 <span className="truncate">{v.note ? noteTitle(v.note) : 'Notes'}</span>
