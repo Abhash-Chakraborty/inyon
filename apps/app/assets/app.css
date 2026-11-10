@@ -420,10 +420,11 @@ input:focus-visible { outline: none; }
 .expand > * { overflow: hidden; min-height: 0; opacity: 0; transition: opacity var(--dur-exit) ease-in; }
 .expand[data-open='true'] > * { opacity: 1; transition-duration: var(--dur-move); transition-timing-function: var(--ease-out-soft); }
 
-.cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+/* positioned, so a card's place is measured against its grid (dom::animate_grid) */
+.cards { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .cards-grouped { padding: 8px 0 12px; }
-/* cards arrive one after another, the first few only */
-.cards > * { animation: slide-up var(--dur-move) var(--ease-out-soft) both; }
+/* cards arrive one after another, the first few only; no fill after, so a card can slide */
+.cards > * { animation: slide-up var(--dur-move) var(--ease-out-soft) backwards; }
 .cards > :nth-child(2) { animation-delay: 40ms; }
 .cards > :nth-child(3) { animation-delay: 80ms; }
 .cards > :nth-child(4) { animation-delay: 120ms; }
@@ -878,8 +879,9 @@ input:focus-visible { outline: none; }
 .term { display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--bg); }
 .term-stage { position: relative; min-height: 0; flex: 1; }
 /* xterm.js fills this; the padding keeps the text off the edges, and the phone keyboard's share is
-   added to the bottom by term.ts where the keyboard covers the page */
-.term-screen { position: absolute; inset: 0; padding: 6px 4px 0 8px; }
+   added to the bottom by term.ts where the keyboard covers the page. It's isolated so the WebGL
+   renderer's link layer, which has a z-index, stays under the covers and the status drawn after it */
+.term-screen { position: absolute; inset: 0; isolation: isolate; padding: 6px 4px 0 8px; }
 .term-screen .xterm { height: 100%; }
 /* xterm.css paints the viewport black, and it runs a few pixels past the last row */
 .term-screen .xterm .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
@@ -1694,10 +1696,11 @@ html.intro-running [data-intro-target] { opacity: 0; }
 
 /* off screen nothing loops */
 @media (prefers-reduced-motion: reduce) {
-  .dot-working::after, .dot-background, .host-dot-connecting, .pulse-soft, .pulse-dot, .skeleton, .mark-connecting .mark-line, .mark-drawn .mark-line, .skeleton-line { animation: none; }
+  .dot-working::after, .dot-background, .host-dot-connecting, .pulse-soft, .pulse-dot, .skeleton, .mark-connecting .mark-line, .mark-drawn .mark-line, .skeleton-line, .mark-reeling .mark-line, .flip-leave { animation: none; }
   *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
   .press:active, .card:active, .option:active { transform: none; }
   .toggle-knob { transition: none; }
+  .pull-mark { transition: none; }
   .spin { animation: spin 0.8s linear infinite !important; }
 }
 
@@ -2213,3 +2216,73 @@ button.nav-item { width: 100%; text-align: left; }
 .conv-text { min-width: 0; flex: 1; }
 .conv-title { display: block; font-size: 14.5px; font-weight: 500; }
 .conv-meta { display: block; margin-top: 2px; font-size: 12px; color: var(--fg-3); }
+
+/* ---------- the Overview's tools (from 0.25.6): search, Show, Refresh and pull to refresh, the
+   line cards, Recent activity, cards that leave and move ---------- */
+
+.pull-wrap { position: relative; display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.pull-wrap > .scroll { overscroll-behavior-y: contain; }
+/* the mark follows the finger down from under the header, then reels while it refreshes */
+.pull-mark { pointer-events: none; position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 52px); z-index: 30; display: flex; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 9999px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow-lg); opacity: 0; transition: transform var(--dur-move) var(--ease-spring), opacity var(--dur-move) var(--ease-spring); }
+.pull-dragging { transition: none; }
+.pull-logo, .refresh-logo { display: flex; }
+.logo-18 { width: 18px; height: 18px; }
+.logo-20 { width: 20px; height: 20px; }
+/* the mark never turns: its line pays out as you pull and reels in and out while refreshing */
+.mark-pull .mark-line { stroke-dasharray: 26 26; stroke-dashoffset: calc(-26 * (1 - var(--pull, 1))); }
+.mark-reeling .mark-line { stroke-dasharray: 26 26; animation: mark-reel 0.6s var(--ease-out-soft) infinite alternate; }
+@keyframes mark-reel {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -18; }
+}
+.topbar-refresh { display: none; width: 32px; height: 32px; color: var(--fg-2); }
+.topbar-refresh-push { margin-left: auto; }
+/* a mouse can't pull to refresh, so a narrow window with one keeps the button */
+@media (min-width: 768px), (hover: hover) and (pointer: fine) {
+  .topbar-refresh { display: inline-flex; }
+  .topbar-refresh + .topbar-quick { margin-left: 0; }
+}
+
+.show-next { margin: -4px 0; flex-shrink: 0; border-radius: 9999px; padding: 4px 8px; color: var(--fg); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 4px; transition: text-decoration-color var(--dur-small) var(--ease-out-soft); }
+.show-next:hover { text-decoration-color: var(--fg); }
+
+/* one line with a button or two: open the hub on your phone, turn on the integration */
+.line-card { display: flex; align-items: center; gap: 12px; border-radius: 24px; border: 1px solid var(--line); background: var(--panel); padding: 14px 20px; box-shadow: var(--highlight); }
+.line-card > .icon { flex-shrink: 0; }
+.line-card-text { min-width: 0; flex: 1; font-size: 13px; line-height: 1.45; color: var(--fg-2); }
+.line-card-lead { font-weight: 500; color: var(--fg); }
+@media (max-width: 479.98px) {
+  .line-card { flex-wrap: wrap; padding: 14px 16px; }
+  .line-card-text { flex-basis: calc(100% - 28px); }
+  .line-card > .button:first-of-type { margin-left: auto; }
+}
+
+/* a search that narrows a list in place (ui/FilterInput.tsx) */
+.filter-input { display: flex; height: 36px; align-items: center; gap: 8px; border-radius: 9999px; border: 1px solid var(--line); background: var(--panel); padding: 0 12px; color: var(--fg-3); box-shadow: var(--highlight); transition: border-color var(--dur-small) var(--ease-out-soft); }
+.filter-input:focus-within { border-color: var(--line-strong); }
+.filter-input input { min-width: 0; flex: 1; border: 0; background: transparent; padding: 0; font-size: 13.5px; color: var(--fg); outline: none; }
+.filter-input input::placeholder { color: var(--fg-3); }
+.filter-input input::-webkit-search-cancel-button { display: none; -webkit-appearance: none; }
+@media (pointer: coarse) { .filter-input input { font-size: 16px; } }
+.filter-clear { margin-right: -4px; display: flex; width: 24px; height: 24px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 9999px; transition: background-color var(--dur-small) var(--ease-out-soft), color var(--dur-small) var(--ease-out-soft); }
+.filter-clear:hover { background: var(--hover); color: var(--fg); }
+.overview-search { margin-bottom: 12px; }
+
+/* a card's ⋯: on hover with a mouse, always on a touch screen */
+.card-more { pointer-events: auto; margin: -4px -6px -4px 0; width: 32px; height: 32px; border-radius: 9999px; opacity: 0; transition: opacity var(--dur-small) var(--ease-out-soft), background-color var(--dur-small) var(--ease-out-soft), color var(--dur-small) var(--ease-out-soft); }
+.card:hover .card-more, .card-more:focus-visible { opacity: 1; }
+@media (pointer: coarse) { .card-more { opacity: 1; } }
+/* a card that left fades out where it was (dom::animate_grid) */
+.flip-leave { animation: fade-out var(--dur-exit) ease-in forwards; }
+
+.activity { padding: 20px; }
+.activity .limits-title { height: 24px; }
+.activity-new { margin-left: auto; border-radius: 9999px; border: 1px solid var(--line); padding: 0 10px; font-size: 12px; line-height: 24px; font-weight: 400; color: var(--fg-2); transition: background-color var(--dur-small) var(--ease-out-soft); }
+.activity-new:hover { background: var(--hover); }
+.activity-rows { display: flex; flex-direction: column; gap: 12px; }
+.activity-row { display: flex; height: 2.4rem; gap: 10px; }
+.activity-text { min-width: 0; }
+.activity-line { font-size: 13px; }
+.activity-title { font-weight: 500; }
+.activity-time { font-size: 12px; color: var(--fg-3); }
+.activity-tile { display: inline-flex; width: 18px; height: 18px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 28%; border: 1px solid var(--line); background: var(--raised); color: var(--fg-2); }

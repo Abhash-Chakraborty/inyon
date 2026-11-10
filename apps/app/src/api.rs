@@ -355,6 +355,11 @@ pub async fn integration(id: &str, enable: bool) -> Result<(), ApiError> {
     request("POST", &format!("{}/integration", host_path(id)), json(&Enable { enable })).await.map(drop)
 }
 
+/// Has every machine read its sessions again (pull to refresh, the Overview's Refresh).
+pub async fn refresh() -> Result<(), ApiError> {
+    request("POST", "/api/refresh", None).await.map(drop)
+}
+
 /// Updates a machine's inyon; the overview reports how it goes.
 pub async fn node_update(id: &str) -> Result<(), ApiError> {
     request("POST", &format!("{}/node/update", host_path(id)), None).await.map(drop)

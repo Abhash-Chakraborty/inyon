@@ -516,6 +516,13 @@ impl LongPress {
         lifted();
     }
 
+    /// The browser took the touch for a scroll or another gesture: the press is forgotten.
+    pub fn cancel(&self) {
+        if PRESS.peek().as_ref().is_some_and(|p| !p.fired) {
+            *PRESS.write() = None;
+        }
+    }
+
     /// The click after a lift: swallowed when the press opened the menu.
     pub fn click(&self, e: &MouseEvent) -> bool {
         if lift_click() {

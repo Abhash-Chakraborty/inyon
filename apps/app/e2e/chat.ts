@@ -115,6 +115,8 @@ const server = Bun.serve({
       const agent = (streams.get(`${decodeURIComponent(models[1]!)}:%${models[2]}`)?.state.info as { agent?: string } | undefined)?.agent ?? 'claude'
       return json({ models: CATALOG[agent]?.models ?? [], source: 'fallback', updatedAt: Date.now() })
     }
+    // the Overview's phone card asks whether a phone is paired
+    if (p === '/api/phones') return json([])
     const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(start|send)$/.exec(p)
     if (action && req.method === 'POST') {
       const host = decodeURIComponent(action[1]!)
