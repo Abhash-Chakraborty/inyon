@@ -21,6 +21,8 @@ try {
   if (adopting) {
     const r = adopt(dir);
     if (r.created) console.log('Wrote site.js with the pages it found.');
+    if (!r.css) console.log("Found no kit stylesheet (kit/blueprint.css, or a kit/*.css a page links), so the site bar has no styles yet. Copy the skill's kit/blueprint.css into kit/ and link it.");
+    else if (r.css !== 'kit/blueprint.css') console.log(`Added the site bar's styles to ${r.css}, the stylesheet this site's pages link.`);
     if (r.added.length) console.log(`Listed ${r.added.length} page${r.added.length > 1 ? 's' : ''} under "More": ${r.added.join(', ')}. Give them real groups, titles and blurbs in site.js.`);
     if (r.bar.length) console.log(`Put the site bar on ${r.bar.join(', ')}. Remove any back links or page buttons those pages drew themselves.`);
     if (r.noKit.length) console.log(`These pages don't load kit/kit.js, so they have no site bar yet: ${r.noKit.join(', ')}. Add the kit's scripts and <header class="site-bar"></header> to them, or leave them reachable from the Pages sheet.`);

@@ -86,15 +86,30 @@ const hasNav = (html) => loads(html, 'kit/nav.js');
 const hasKit = (html) => loads(html, 'kit/kit.js');
 const hasBar = (html) => /<header\b[^>]*class\s*=\s*["'][^"']*\bsite-bar\b/i.test(noComments(html));
 
+// The site's own stylesheet: kit/blueprint.css, or the kit stylesheet its pages link when the kit was
+// renamed for the product (kit/acme.css). Undefined when no page links one.
+function kitCss(dir) {
+  const std = join(dir, 'kit', 'blueprint.css');
+  if (existsSync(std)) return std;
+  for (const f of ['index.html', ...htmlFiles(dir)]) {
+    const p = join(dir, f);
+    if (!existsSync(p)) continue;
+    const m = /<link\b[^>]*\bhref\s*=\s*["'](?:\.\/)?kit\/([^"'?#/]+\.css)["']/i.exec(noComments(readFileSync(p, 'utf8')));
+    if (m && existsSync(join(dir, 'kit', m[1]))) return join(dir, 'kit', m[1]);
+  }
+}
+
 // --adopt: bring a site made before the site bar onto it. Copies kit/nav.js, adds the bar's styles to
-// kit/blueprint.css, writes site.js from the pages it finds (or adds the ones site.js is missing), and
-// puts the bar on every page that loads the kit. Pages that don't load the kit are listed but keep their
-// own header; they're reported so you can add the tags by hand.
+// the site's stylesheet (kit/blueprint.css, or the one its pages link), writes site.js from the pages it
+// finds (or adds the ones site.js is missing), and puts the bar on every page that loads the kit. Pages
+// that don't load the kit are listed but keep their own header; they're reported so you can add the tags
+// by hand. `report.css` names the stylesheet the styles went into; without one the bar has no styles.
 export function adopt(dir) {
-  const report = { added: [], bar: [], noKit: [], created: false };
+  const report = { added: [], bar: [], noKit: [], created: false, css: undefined };
   mkdirSync(join(dir, 'kit'), { recursive: true });
   copyFileSync(asset('kit/nav.js'), join(dir, 'kit', 'nav.js'));
-  const css = join(dir, 'kit', 'blueprint.css');
+  const css = kitCss(dir) ?? join(dir, 'kit', 'blueprint.css');
+  if (existsSync(css)) report.css = relative(dir, css).split(sep).join('/');
   const skillCss = readFileSync(asset('kit/blueprint.css'), 'utf8');
   const navCss = skillCss.slice(skillCss.indexOf(NAV_CSS_START), skillCss.indexOf(NAV_CSS_END) + NAV_CSS_END.length);
   if (existsSync(css) && !readFileSync(css, 'utf8').includes(NAV_CSS_START)) writeFileSync(css, `${readFileSync(css, 'utf8').trimEnd()}\n\n${navCss}\n`);

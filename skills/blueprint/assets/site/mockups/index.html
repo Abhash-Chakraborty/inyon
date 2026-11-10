@@ -50,6 +50,15 @@
     #thmBtn { display: inline-grid; }
     .vw-bar .seg button { padding: 0 8px; }
   }
+  /* The device switch is two words where there's room, two icons on a narrow phone (or in the app's
+     frame, which is narrower still), so the screen's name keeps its place in the bar. */
+  .vw-bar #dev svg { display: none; }
+  @media (max-width: 480px) {
+    .vw-bar #dev button span { display: none; }
+    .vw-bar #dev svg { display: block; width: 16px; height: 16px; }
+    .vw-bar #dev button { padding: 0 9px; }
+    .vw-bar h1 { min-width: 56px; }
+  }
   /* On a phone, Phone mode shows the screen itself, full bleed. */
   .vw.native .vw-stage { padding: 0; }
   .vw.native .vw-frame, .vw.native .vw-frame.phone { border-radius: 0; box-shadow: none; transform: none !important; width: 100% !important; height: 100% !important; }
@@ -67,7 +76,7 @@
       <a class="icon-btn" href="../index.html" aria-label="Back to the plan" data-tip="Back to the plan"><i data-lucide="arrow-left"></i></a>
       <button class="icon-btn" data-site-pages aria-label="Pages" data-tip="Pages"><i data-lucide="panels-top-left"></i></button>
       <h1 id="title">Screen</h1><span class="what" id="what"></span>
-      <div class="seg" id="dev" role="group" aria-label="Device"><button data-value="phone" aria-pressed="false">Phone</button><button data-value="desktop" aria-pressed="true">Desktop</button></div>
+      <div class="seg" id="dev" role="group" aria-label="Device"><button data-value="phone" aria-label="Phone" aria-pressed="false"><i data-lucide="smartphone"></i><span>Phone</span></button><button data-value="desktop" aria-label="Desktop" aria-pressed="true"><i data-lucide="monitor"></i><span>Desktop</span></button></div>
       <div class="seg" id="thm" role="group" aria-label="Theme"><button data-value="light" aria-pressed="true">Light</button><button data-value="dark" aria-pressed="false">Dark</button></div>
       <button class="icon-btn" id="thmBtn" aria-label="Switch theme" data-tip="Switch theme"><i data-lucide="sun-moon"></i></button>
       <button class="icon-btn" id="prev" aria-label="Previous screen" data-tip="Previous" data-keys="←"><i data-lucide="chevron-left"></i></button>
