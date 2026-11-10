@@ -28,6 +28,8 @@ pub enum Action {
     /// back a page, past whatever layers are open (the page menu)
     Back,
     Reload,
+    /// folds the sidebar to its rail, or opens it again
+    Sidebar,
     /// send a message that failed again
     Retry {
         host: String,
@@ -918,6 +920,7 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
         }
         Action::Back => super::back::page_back(),
         Action::Reload => dom::reload(),
+        Action::Sidebar => super::shell::fold_sidebar(),
         Action::Retry { host, pane, id, text } => super::composer::retry(chats, host, pane, id, text),
         Action::Dismiss { key, id } => super::composer::dismiss(chats, &key, &id),
         Action::Term(op) => crate::term::menu(op),

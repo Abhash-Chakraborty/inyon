@@ -63,6 +63,29 @@ try {
       const said = (await bubble.innerText()).trim()
       const got = (await page.evaluate(() => navigator.clipboard.readText())).trim()
       check(got === said, `${label}: the message is on the clipboard (${JSON.stringify(got.slice(0, 60))} vs ${JSON.stringify(said.slice(0, 60))})`)
+      // a toast dragged a little and let go springs back; dragged far, it goes
+      if (phone) {
+        const swipe = (dx: number, up: boolean) =>
+          page.locator('.toast').first().evaluate(
+            (t, [dx, up]) => {
+              const r = t.getBoundingClientRect()
+              const at = (type: string, x: number) => t.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, pointerType: 'touch', isPrimary: true, clientX: r.x + 20 + x, clientY: r.y + 10 }))
+              at('pointerdown', 0)
+              at('pointermove', (dx as number) / 2)
+              at('pointermove', dx as number)
+              if (up) at('pointerup', dx as number)
+            },
+            [dx, up] as const,
+          )
+        const moved = () => page.locator('.toast').first().evaluate((t) => t.style.transform)
+        await swipe(40, false)
+        check(await until(async () => (await moved()) === 'translate(40px, 0px)'), `${label}: a toast follows the finger (${await moved()})`)
+        await page.locator('.toast').first().dispatchEvent('pointerup', { bubbles: true, pointerId: 7, pointerType: 'touch', clientX: 60, clientY: 10 })
+        check(await until(async () => (await moved()) === ''), `${label}: and let go short of a fling, it goes back (${await moved()})`)
+        check((await page.locator('.toast').first().evaluate((t) => t.style.opacity + t.style.transition)) === '', `${label}: with nothing of the drag left on it`)
+        await swipe(120, true)
+        check(await until(async () => !(await page.locator('.toast', { hasText: 'Message copied' }).count()), 3000), `${label}: a fling sends it away`)
+      }
       // the toast out of the way of what's clicked next
       await page.locator('.toast').first().waitFor({ state: 'detached', timeout: 10000 }).catch(() => {})
 
@@ -165,7 +188,8 @@ try {
       await page.locator('.topbar').click({ button: 'right', position: { x: phone ? 200 : 700, y: 8 } })
       await menu(page).waitFor()
       const pageItems = await items(page)
-      check(pageItems.join('|') === 'Back|Reload|Search…|New session…', `${label}: the page menu (${pageItems})`)
+      // the sidebar's fold is a wide screen's
+      check(pageItems.join('|') === (phone ? 'Back|Reload|Search…|New session…' : 'Back|Reload|Search…|New session…|Hide sidebar'), `${label}: the page menu (${pageItems})`)
       if (scheme === 'light') await page.screenshot({ path: path.join(shots, `menus-page-${w}-light.png`) })
       await page.keyboard.press('Escape')
       await gone(page)

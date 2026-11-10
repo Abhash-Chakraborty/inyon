@@ -336,13 +336,13 @@ try {
     await page.keyboard.press('Escape')
     await newSheet.waitFor({ state: 'detached' })
 
-    // a right click on nothing in particular: Back and Reload, then Search… and New session…, with their keys
+    // a right click on nothing in particular: Back and Reload, then Search…, New session… and the sidebar's fold, with their keys
     await page.goto(`${base}/next/`)
     await page.locator('.card').nth(3).waitFor()
     await page.locator('.topbar').click({ button: 'right', position: { x: 700, y: 30 } })
     await page.locator('.menu').waitFor()
     const pageMenu = await page.locator('.menu .menu-item').evaluateAll((els) => els.map((e) => [...e.childNodes].filter((n) => n.nodeType !== Node.COMMENT_NODE).map((n) => n.textContent?.trim()).filter(Boolean).join(' ')))
-    check(pageMenu.join('|') === `Back|Reload|Search… ${searchKey}|New session… ${newKey}`, `${label}: the menu on empty space (${pageMenu})`)
+    check(pageMenu.join('|') === `Back|Reload|Search… ${searchKey}|New session… ${newKey}|Hide sidebar ${mac ? '⌘ B' : 'Ctrl B'}`, `${label}: the menu on empty space (${pageMenu})`)
     await page.locator('.menu .menu-item', { hasText: 'Search…' }).click()
     await quick.waitFor()
     await layout(page, label)

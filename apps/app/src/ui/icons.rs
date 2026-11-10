@@ -130,6 +130,8 @@ pub enum Icon {
     AtSign,
     Coins,
     LayoutPanelLeft,
+    PanelLeftClose,
+    PanelLeftOpen,
     // sharing a blueprint
     Share2,
     Users,
@@ -734,6 +736,16 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     path { d: "M15 6h1v4" }
                     path { d: "m6.134 14.768.866-.5 2 3.464" }
                     circle { cx: "16", cy: "8", r: "6" }
+                },
+                Icon::PanelLeftClose => rsx! {
+                    rect { width: "18", height: "18", x: "3", y: "3", rx: "2" }
+                    path { d: "M9 3v18" }
+                    path { d: "m16 15-3-3 3-3" }
+                },
+                Icon::PanelLeftOpen => rsx! {
+                    rect { width: "18", height: "18", x: "3", y: "3", rx: "2" }
+                    path { d: "M9 3v18" }
+                    path { d: "m14 9 3 3-3 3" }
                 },
                 Icon::LayoutPanelLeft => rsx! {
                     rect { width: "7", height: "18", x: "3", y: "3", rx: "1" }

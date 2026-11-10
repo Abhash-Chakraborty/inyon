@@ -121,14 +121,21 @@ fn ToastCard(t: Toast) -> Element {
         ToastTone::Error => (Icon::CircleAlert, "danger"),
     };
     let (x, y) = drag();
-    let style = if x != 0.0 || y != 0.0 { format!("transform:translate({x}px,{y}px);opacity:{};transition:none", 1.0 - (x.abs() / 300.0).min(0.6)) } else { String::new() };
+    // one property each, gone when the swipe is: Dioxus keeps what an earlier `style` set and a
+    // later one leaves out, so a toast let go short of a fling would stay where it was dragged
+    let swiping = x != 0.0 || y != 0.0;
+    let transform = swiping.then(|| format!("translate({x}px,{y}px)"));
+    let opacity = swiping.then(|| (1.0 - (x.abs() / 300.0).min(0.6)).to_string());
+    let transition = swiping.then_some("none");
     let id = t.id;
     let href = t.href.clone();
     rsx! {
         div {
             class: if href.is_some() { "toast toast-link" } else { "toast" },
             role: "status",
-            style: "{style}",
+            transform,
+            opacity,
+            transition,
             onpointerdown: move |e: PointerEvent| {
                 if e.pointer_type() == "touch" {
                     let p = e.client_coordinates();

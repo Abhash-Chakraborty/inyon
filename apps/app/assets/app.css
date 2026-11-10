@@ -309,9 +309,21 @@ input:focus-visible { outline: none; }
 .page { display: flex; min-height: 0; flex: 1; flex-direction: column; animation: page-in var(--dur-small) var(--ease-out-soft); }
 
 .sidebar { display: none; width: 240px; flex-shrink: 0; flex-direction: column; border-right: 1px solid var(--line); background: var(--sidebar); padding-top: env(safe-area-inset-top); }
-.sidebar-head { display: flex; height: 60px; align-items: center; gap: 10px; padding: 0 20px; }
+.sidebar-head { display: flex; height: 60px; align-items: center; gap: 10px; padding: 0 12px 0 20px; }
 .brand { font-size: 17px; font-weight: 600; letter-spacing: -0.04em; }
 .sidebar-offline { margin-left: auto; color: var(--warn); }
+.sidebar-fold { margin-left: auto; width: 32px; height: 32px; border-radius: 9999px; }
+.sidebar-offline + .sidebar-fold { margin-left: 0; }
+/* folded: a rail of icons, each named by its tooltip (AppShell.tsx) */
+.sidebar-rail { width: 60px; align-items: center; animation: fade-in var(--dur-small) var(--ease-out-soft); }
+.rail-head { display: flex; height: 60px; flex-shrink: 0; align-items: center; }
+.rail-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rail-foot { margin-top: auto; border-top: 1px solid var(--line); padding: 12px 0; }
+.rail-item { position: relative; display: flex; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 9999px; color: var(--fg-2); transition: background-color var(--dur-small) var(--ease-out-soft), color var(--dur-small) var(--ease-out-soft); }
+.rail-item:hover { background: color-mix(in srgb, var(--hover) 70%, transparent); color: var(--fg); }
+.rail-active, .rail-active:hover { background: var(--panel); color: var(--fg); box-shadow: var(--highlight), 0 0 0 1px var(--line); }
+.rail-warn { color: var(--warn); }
+.rail-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 9999px; background: var(--fg); box-shadow: 0 0 0 2px var(--sidebar); animation: pop-in var(--dur-small) var(--ease-out-soft); }
 .sidebar-nav { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; }
 .sidebar-foot { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding: 12px; }
 .nav-item {
@@ -342,6 +354,7 @@ input:focus-visible { outline: none; }
 }
 @media (min-width: 1024px) {
   .sidebar { width: 264px; }
+  .sidebar-rail { width: 60px; }
 }
 
 /* ---------- the overview ---------- */
@@ -1886,9 +1899,16 @@ button.nav-item { width: 100%; text-align: left; }
 .fg-warn { color: var(--warn); }
 .fg-danger { color: var(--danger); }
 .underline { text-decoration: underline; text-underline-offset: 2px; }
-.pp { display: flex; width: 420px; min-height: 0; flex-shrink: 0; flex-direction: column; border-left: 1px solid var(--line); background: var(--sidebar); }
+.pp { position: relative; display: flex; width: 420px; min-height: 0; flex-shrink: 0; flex-direction: column; border-left: 1px solid var(--line); background: var(--sidebar); }
 @media (min-width: 1536px) { .pp { width: 480px; } }
 .pp-in { animation: side-in var(--dur-move) var(--ease-out-soft); }
+/* the panel's left edge drags it wider or narrower (session/PanelResize.tsx) */
+.pp-resize { position: absolute; top: 0; bottom: 0; left: -4px; z-index: 10; width: 8px; cursor: col-resize; touch-action: none; outline: none; }
+.pp-resize-line { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); background: var(--line-strong); opacity: 0; transition: opacity var(--dur-small) var(--ease-out-soft); }
+.pp-resize:hover .pp-resize-line { opacity: 1; }
+.pp-resize:focus-visible .pp-resize-line, .pp-resize[data-dragging] .pp-resize-line { background: var(--fg); opacity: 1; }
+.pp-resize-shield { position: fixed; inset: 0; z-index: 90; cursor: col-resize; }
+.resizing, .resizing * { user-select: none; -webkit-user-select: none; }
 .pp.fade-out { animation: fade-out var(--dur-exit) var(--ease-out-soft) forwards; }
 .pp-tabs { position: relative; display: flex; flex-shrink: 0; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; border-bottom: 1px solid var(--line); padding: 8px 10px 0; }
 .pp-tabs::-webkit-scrollbar { display: none; }
