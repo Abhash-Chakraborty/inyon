@@ -65,6 +65,9 @@ pub fn haptic(kind: Haptic) {
     });
 }
 
+/// Recent activity: what agents did lately, newest first, from the notices since the app opened.
+pub static ACTIVITY: GlobalSignal<Vec<inyon_chat_core::store::ActivityEvent>> = Signal::global(Vec::new);
+
 /// Takes a session's notification away (the browser's, or the phone's shade): the session is on
 /// screen.
 pub fn clear_notice(host: &str, pane: &str) {
@@ -93,7 +96,13 @@ pub fn handle(msg: &ServerMsg, here: &Route, hosts: &[HostState]) {
     let terminal_view = terminal_on_screen(here, hosts);
     let ctx = Context { route: &path, terminal_view, visible: dom::visible(), native: false, browser_notices: dom::notice_permission() == Permission::Granted };
     let prefs = PREFS.peek().clone();
-    let (effects, toasts) = state::with_feed(|f| f.notice(msg, &prefs, &ctx, platform::clock().now as u64));
+    let (effects, toasts, activity) = state::with_feed(|f| {
+        let (e, t) = f.notice(msg, &prefs, &ctx, platform::clock().now as u64);
+        (e, t, f.activity().to_vec())
+    });
+    if *ACTIVITY.peek() != activity {
+        *ACTIVITY.write() = activity;
+    }
     for t in toasts {
         toast::show(Toast {
             id: 0,
