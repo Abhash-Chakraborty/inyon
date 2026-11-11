@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stampInstaller } from "../installers/installers.ts";
-import { CSP, checkReleaseFile, download, downloadTable, mb, oldSiteLinks, parseSums, securityTxt } from "./build.ts";
+import { CSP, checkReleaseFile, download, downloadTable, mb, oldSiteLinks, parseSums, retiredRepoLinks, securityTxt } from "./build.ts";
 
 // /download said the APK was 2.7 MB while Chrome said 2.88 MB: sizes are decimal, as browsers count
 test("sizes read as a browser shows them", () => {
@@ -71,6 +71,27 @@ test("old release notes link to the site's new address", () => {
   );
   // a host that only starts the same stays as it is
   expect(oldSiteLinks("https://inyon.abhashchakraborty.tech.example.com/")).toBe("https://inyon.abhashchakraborty.tech.example.com/");
+});
+
+// the changelog had four links that answered 404: notes from 0.6 and from the rename point at the
+// tether-releases and inyon-releases repos, which are gone
+test("links in old notes to the retired release repos become plain words", () => {
+  expect(retiredRepoLinks("Files are in [tether-releases](https://github.com/Abhash-Chakraborty/tether-releases/releases/tag/v0.6.3).")).toBe("Files are in tether-releases.");
+  expect(retiredRepoLinks("The old [inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases) address redirects here.")).toBe("The old inyon-releases address redirects here.");
+  expect(retiredRepoLinks("see https://github.com/Abhash-Chakraborty/tether-releases/releases and <https://github.com/Abhash-Chakraborty/inyon-releases>")).toBe("see tether-releases and inyon-releases");
+  // this repo's own links stay
+  expect(retiredRepoLinks("[0.25.6](https://github.com/Abhash-Chakraborty/inyon/releases/tag/v0.25.6)")).toBe("[0.25.6](https://github.com/Abhash-Chakraborty/inyon/releases/tag/v0.25.6)");
+});
+
+// the hub page's two deploy buttons were pictures from railway.com and render.com, which the
+// site's own policy blocks: no page may ask another site for a picture
+test("no docs page shows a picture from another site", () => {
+  const { readdirSync, readFileSync } = require("node:fs") as typeof import("node:fs");
+  const dir = join(import.meta.dir, "docs");
+  const outside = readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .flatMap((f) => [...readFileSync(join(dir, f), "utf8").matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)].map((m) => `${f}: ${m[1]}`));
+  expect(outside).toEqual([]);
 });
 
 // pages asked fonts.googleapis.com for their fonts on every visit, there was no privacy policy or

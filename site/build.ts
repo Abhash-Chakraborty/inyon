@@ -517,9 +517,18 @@ async function releases(): Promise<GhRelease[]> {
 /** Links in notes written before the move to inyon.tech point here directly instead of through the old address's redirect. */
 export const oldSiteLinks = (md: string) => md.replace(/https?:\/\/inyon\.abhashchakraborty\.tech(?=[/?#)\s"'>]|$)/g, ORIGIN);
 
+/**
+ * Links in old notes to the two repos releases used to live in (tether-releases, inyon-releases),
+ * which are gone: the words stay, without a link that answers 404.
+ */
+export const retiredRepoLinks = (md: string) =>
+  md
+    .replace(/\[([^\]]+)\]\(https?:\/\/github\.com\/Abhash-Chakraborty\/(?:tether|inyon)-releases[^)\s]*\)/g, "$1")
+    .replace(/<?https?:\/\/github\.com\/Abhash-Chakraborty\/((?:tether|inyon)-releases)[^\s)>]*>?/g, "$1");
+
 function notes(r: GhRelease): string {
   // GitHub's "Full Changelog" line is a bare URL; each release links to its page instead
-  const md = oldSiteLinks(r.body || "").replace(/^#+\s.*\n/, "").replace(/^\*\*Full Changelog\*\*:.*$/m, "");
+  const md = retiredRepoLinks(oldSiteLinks(r.body || "")).replace(/^#+\s.*\n/, "").replace(/^\*\*Full Changelog\*\*:.*$/m, "");
   // without their ids the headings' # links would point nowhere, so they go too
   return render(md)
     .html.replace(/<h[23] id="[^"]*"><a class="anchor"[^>]*>#<\/a>/g, "<h4>")

@@ -65,15 +65,15 @@ To update, sync your fork on GitHub; Railway deploys the new commit.
 
 There's also a one-click template by [hmseeb](https://github.com/hmseeb/inyon-railway), which this image is based on. It runs its own image, with Inyon 0.20.2 on the older Bun hub. Railway generates its `INYON_PASSWORD`; copy it from the service's **Variables** to sign in.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/inyon)
+[Deploy on Railway](https://railway.com/deploy/inyon)
 
 A service made from that template can move to this image by connecting its source to your fork, with the root directory and health check above. It keeps its volume, with the password and records on it.
 
 ### On Render
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Abhash-Chakraborty/inyon)
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/Abhash-Chakraborty/inyon)
 
-The button reads [`render.yaml`](https://github.com/Abhash-Chakraborty/inyon/blob/main/render.yaml) from this repo: a web service built from `deploy/hub`, with a 5 GB disk at `/data` for the home folder and the health check on `/healthz`. Render generates `INYON_PASSWORD`; copy it from the service's **Environment** to sign in.
+That link reads [`render.yaml`](https://github.com/Abhash-Chakraborty/inyon/blob/main/render.yaml) from this repo: a web service built from `deploy/hub`, with a 5 GB disk at `/data` for the home folder and the health check on `/healthz`. Render generates `INYON_PASSWORD`; copy it from the service's **Environment** to sign in.
 
 - A disk needs a paid instance. Render's free instances can't keep files and stop after 15 minutes without traffic, so the Blueprint picks `0.5c-512mb` (512 MB). That holds the hub; to run agents in the container too, choose `1c-2g` or more.
 - A service with a disk stops before the new one starts, so a redeploy takes the hub away for a moment.
