@@ -88,9 +88,20 @@ fn answer(stream: &mut UnixStream, keeper: &Mutex<Keeper>) -> std::io::Result<()
     stream.flush()
 }
 
+/// A socket's path has to fit in about a hundred bytes; a longer one fails with words that don't
+/// say what's wrong, so this says it first. (The usual place, under the home folder, is short.)
+pub fn too_long(socket: &Path) -> std::io::Result<()> {
+    let n = socket.as_os_str().len();
+    if n > 100 {
+        return Err(std::io::Error::other(format!("the socket's path is {n} bytes, and a socket's can be 100 at most: set INYON_MUX_SOCKET to a shorter one")));
+    }
+    Ok(())
+}
+
 /// Binds the keeper's socket, in a folder only the user can enter. A socket left by a keeper that's
 /// gone is taken over; one that answers means a keeper already runs.
 pub fn bind(socket: &Path) -> std::io::Result<UnixListener> {
+    too_long(socket)?;
     if let Some(dir) = socket.parent() {
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
@@ -200,6 +211,14 @@ mod tests {
         assert_eq!(r.code, 0, "{r:?}");
         assert!(server.join().unwrap().is_ok());
         assert!(!socket.exists());
+    }
+
+    #[test]
+    fn a_path_too_long_for_a_socket_says_so() {
+        let long = std::env::temp_dir().join("x".repeat(120)).join("keeper.sock");
+        let e = bind(&long).unwrap_err().to_string();
+        assert!(e.contains("can be 100 at most") && e.contains("INYON_MUX_SOCKET"), "{e}");
+        assert!(too_long(Path::new("/home/sam/.inyon/mux/keeper.sock")).is_ok());
     }
 
     #[test]

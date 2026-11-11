@@ -35,6 +35,8 @@ ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 [target.'cfg(unix)'.dependencies]
 # local time for the dashboard (already built for crossterm)
 libc = "0.2"
+# Inyon's own session keeper (from 0.26, in steps): Unix first
+inyon-mux = { path = "../../crates/inyon-mux" }
 # the hub, built in; it runs on Linux and macOS only
 inyon-hub = { path = "../../crates/inyon-hub" }
 

@@ -8,6 +8,8 @@
 //! `#{pane_id} #{pane_title}` ([`format`]) and a key name like `C-c` ([`keys`]).
 
 pub mod args;
+#[cfg(unix)]
+pub mod client;
 pub mod format;
 pub mod keeper;
 pub mod keys;

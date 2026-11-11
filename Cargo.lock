@@ -3444,6 +3444,7 @@ dependencies = [
  "flate2",
  "inyon-engine",
  "inyon-hub",
+ "inyon-mux",
  "libc",
  "minisign",
  "minisign-verify",
@@ -3574,6 +3575,7 @@ dependencies = [
 name = "inyon-mux"
 version = "0.25.7"
 dependencies = [
+ "libc",
  "portable-pty",
  "vt100",
 ]
