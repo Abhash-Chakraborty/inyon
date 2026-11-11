@@ -25,8 +25,19 @@ fn wants_stdin(argv: &[String]) -> bool {
     matches!(argv.first().map(String::as_str), Some("load-buffer" | "loadb")) && argv.last().is_some_and(|a| a == "-")
 }
 
+/// What `-V` prints: the keeper's name and version. Not "tmux …": a script that asks which tmux
+/// this is should learn it's none.
+pub fn version() -> String {
+    format!("inyon-mux {}", env!("CARGO_PKG_VERSION"))
+}
+
 /// Runs one command line and prints its answer; the exit code is the command's.
 pub fn run(argv: &[String]) -> i32 {
+    // answered here, keeper or no keeper: how a script learns this inyon has one
+    if argv.first().is_some_and(|a| a == "-V") {
+        println!("{}", version());
+        return 0;
+    }
     let socket = socket_path();
     let mut stdin = Vec::new();
     if wants_stdin(argv) && std::io::stdin().read_to_end(&mut stdin).is_err() {
@@ -95,6 +106,12 @@ mod tests {
 
     fn w(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_string).collect()
+    }
+
+    #[test]
+    fn the_version_names_the_keeper_not_tmux() {
+        assert!(version().starts_with("inyon-mux 0.") && !version().contains("tmux"), "{}", version());
+        assert_eq!(run(&w("-V")), 0);
     }
 
     #[test]
