@@ -90,6 +90,12 @@ impl Keeper {
         self.sessions.is_empty()
     }
 
+    /// Closes what ended on its own since the last command: a window whose program is gone, and a
+    /// session left with no window.
+    pub fn sweep(&mut self) {
+        self.reap();
+    }
+
     /// Runs one command line (the words after `tmux`); `stdin` is what was piped to it.
     pub fn run(&mut self, argv: &[String], stdin: &[u8]) -> Reply {
         let done = args::parse(argv).and_then(|c| self.call(&c, stdin));
