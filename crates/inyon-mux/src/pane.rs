@@ -4,7 +4,7 @@
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -33,8 +33,15 @@ pub struct Pane {
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     screen: Arc<Mutex<Screen>>,
     dead: Arc<AtomicBool>,
+    /// when the program last wrote something, in seconds since 1970
+    active: Arc<AtomicU64>,
     pid: Option<u32>,
     command: String,
+    cwd: Option<PathBuf>,
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// The user's shell: `$SHELL`, or `sh` where there is none.
@@ -75,7 +82,8 @@ impl Pane {
         let argv = if what.argv.is_empty() { vec![shell()] } else { what.argv.clone() };
         let mut cmd = CommandBuilder::new(&argv[0]);
         cmd.args(&argv[1..]);
-        if let Some(cwd) = what.cwd.clone().filter(|c| c.is_dir()).or_else(|| std::env::current_dir().ok()) {
+        let cwd = what.cwd.clone().filter(|c| c.is_dir()).or_else(|| std::env::current_dir().ok());
+        if let Some(cwd) = &cwd {
             cmd.cwd(cwd);
         }
         cmd.env("TERM", "xterm-256color");
@@ -90,17 +98,21 @@ impl Pane {
         let keys = input(&*master)?;
         let screen = Arc::new(Mutex::new(Screen::new(cols, rows)));
         let dead = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(AtomicU64::new(now_secs()));
         let pid = child.process_id();
         let killer = child.clone_killer();
 
         // what the program writes goes onto the screen as it comes
-        let (draw, gone) = (screen.clone(), dead.clone());
+        let (draw, gone, wrote) = (screen.clone(), dead.clone(), active.clone());
         std::thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => lock(&draw).feed(&buf[..n]),
+                    Ok(n) => {
+                        lock(&draw).feed(&buf[..n]);
+                        wrote.store(now_secs(), Ordering::Relaxed);
+                    }
                 }
             }
             // the terminal closed: the program is gone (or closed its side); reap it
@@ -108,7 +120,7 @@ impl Pane {
             gone.store(true, Ordering::SeqCst);
         });
 
-        Ok(Pane { master, keys: Mutex::new(keys), killer: Mutex::new(killer), screen, dead, pid, command: program_name(&argv[0]) })
+        Ok(Pane { master, keys: Mutex::new(keys), killer: Mutex::new(killer), screen, dead, active, pid, command: program_name(&argv[0]), cwd })
     }
 
     /// Types `bytes` into the pane.
@@ -145,6 +157,22 @@ impl Pane {
         &self.command
     }
 
+    /// When the program last wrote to its terminal, in seconds since 1970.
+    pub fn activity(&self) -> u64 {
+        self.active.load(Ordering::Relaxed)
+    }
+
+    /// The program in front in this terminal right now and the folder it's in: the one that was
+    /// started, or what it has started since (an agent started from a shell). Linux tells; elsewhere
+    /// it's what the pane began with.
+    pub fn foreground(&self) -> (String, Option<PathBuf>) {
+        #[cfg(target_os = "linux")]
+        if let Some(found) = self.pid.and_then(front_of) {
+            return found;
+        }
+        (self.command.clone(), self.cwd.clone())
+    }
+
     /// Ends the program.
     pub fn kill(&self) {
         let _ = lock(&self.killer).kill();
@@ -155,6 +183,17 @@ impl Drop for Pane {
     fn drop(&mut self) {
         self.kill();
     }
+}
+
+/// The process in front in the terminal `pid` leads: its name and its folder, from /proc.
+#[cfg(target_os = "linux")]
+fn front_of(pid: u32) -> Option<(String, Option<PathBuf>)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // "pid (comm) state ppid pgrp session tty tpgid …": comm may hold spaces and brackets, so count from its end
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let front: u32 = rest.split_whitespace().nth(5)?.parse().ok().filter(|&n: &u32| n > 0)?;
+    let name = std::fs::read_to_string(format!("/proc/{front}/comm")).ok()?.trim_end().to_string();
+    Some((name, std::fs::read_link(format!("/proc/{front}/cwd")).ok()))
 }
 
 fn program_name(path: &str) -> String {
@@ -231,6 +270,16 @@ mod tests {
         let want = dir.canonicalize().unwrap_or(dir).to_string_lossy().into_owned();
         assert!(until(|| text(&p).contains("kept xterm-256color")), "{:?}", text(&p));
         assert!(text(&p).lines().next().is_some_and(|l| l == want || want.ends_with(l)), "{:?} vs {want}", text(&p));
+    }
+
+    #[test]
+    fn it_says_when_it_last_wrote_and_what_runs_in_front() {
+        let p = sh("echo up; exec sleep 30");
+        assert!(until(|| text(&p).starts_with("up")));
+        assert!(p.activity() > 1_700_000_000 && p.activity() <= now_secs());
+        // the shell became sleep: on Linux the pane says so, elsewhere it keeps the name it began with
+        let named = |want: &str| until(|| p.foreground().0 == want);
+        assert!(if cfg!(target_os = "linux") { named("sleep") } else { named("sh") }, "{:?}", p.foreground());
     }
 
     #[test]

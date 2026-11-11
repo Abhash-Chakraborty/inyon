@@ -9,6 +9,7 @@
 
 pub mod args;
 pub mod format;
+pub mod keeper;
 pub mod keys;
 pub mod pane;
 pub mod screen;
