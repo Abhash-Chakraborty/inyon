@@ -1,0 +1,9 @@
+[package]
+name = "inyon-mux"
+version.workspace = true
+description = "Inyon's own session keeper: holds terminals the way a tmux server does and answers the tmux commands the hub sends, for a machine without tmux"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

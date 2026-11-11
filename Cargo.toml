@@ -3,10 +3,10 @@
 [workspace]
 resolver = "2"
 # each crate is listed by hand, so a half-made folder under crates/ never breaks the build
-members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-engine", "crates/inyon-core", "crates/inyon-backends", "crates/inyon-api", "crates/inyon-hub", "crates/inyon-phone", "crates/inyon-chat-core", "apps/app"]
+members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-mux", "crates/inyon-engine", "crates/inyon-core", "crates/inyon-backends", "crates/inyon-api", "crates/inyon-hub", "crates/inyon-phone", "crates/inyon-chat-core", "apps/app"]
 # a plain `cargo build` (the release jobs) builds the inyon command and its crates; the Dioxus app
 # (apps/app) is built for the browser with dx (apps/app/build.sh) and checked by --workspace runs
-default-members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-engine", "crates/inyon-core", "crates/inyon-backends", "crates/inyon-api", "crates/inyon-hub", "crates/inyon-phone", "crates/inyon-chat-core"]
+default-members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-mux", "crates/inyon-engine", "crates/inyon-core", "crates/inyon-backends", "crates/inyon-api", "crates/inyon-hub", "crates/inyon-phone", "crates/inyon-chat-core"]
 
 [workspace.package]
 # the release number, the same as package.json; every crate takes it from here

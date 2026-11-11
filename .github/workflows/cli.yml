@@ -46,6 +46,8 @@ jobs:
       - run: cargo test -p inyon-link
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo check --target wasm32-unknown-unknown -p inyon-link
+      # the session keeper (from 0.26, in steps): tmux's command line, targets, formats and key names
+      - run: cargo test -p inyon-mux
       # the machine side (from 0.19): files, answers and wire messages as the Bun engine had them
       - run: cargo test -p inyon-engine
       # the hub's readers (from 0.20): every shared screen capture read as the TS hub reads it
