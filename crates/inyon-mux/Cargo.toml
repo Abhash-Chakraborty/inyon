@@ -7,3 +7,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+portable-pty = "0.9"
+# the screen each pane keeps: what the terminal shows now, its scrollback and its title
+vt100 = "0.18"
