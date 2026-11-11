@@ -12,7 +12,7 @@ import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx
 import { isHosted } from '../lib/base.ts'
 import { keepData } from '../lib/install.ts'
 import { deviceName } from '../lib/deviceName.ts'
-import { claimHub, groupsOf, hubOriginOf, normalizeHubCode, parseHubLink, plainHost, plainRefusal } from '../lib/hubs.ts'
+import { claimHub, groupsOf, hubOriginOf, normalizeHubCode, parseHubLink, plainHost, plainRefusal, forgetHub, listHubs } from '../lib/hubs.ts'
 import { Logo } from './AppShell.tsx'
 
 const PAIR_COMMAND = 'inyon pair'
@@ -62,6 +62,20 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   // a link scanned, pasted or opened, shown with what it says before anything is paired
   const [pending, setPending] = useState<string>()
   const [busy, setBusy] = useState(false)
+  // the attempt in flight. Cancel can't stop the request itself, so it marks the attempt: if the
+  // computer (or hub) pairs after all, it's taken off again and nothing says "Paired"
+  const attempt = useRef<{ cancelled: boolean }>(undefined)
+  // what an attempt that wasn't cancelled paired: a cancelled one that finishes later (the same
+  // computer or hub, tried twice) must not take that off
+  const kept = useRef(new Set<string>())
+  const cancel = () => {
+    if (busy && attempt.current && !attempt.current.cancelled) {
+      attempt.current.cancelled = true
+      setBusy(false)
+      toast({ title: 'Pairing cancelled', body: "If it had already gone through, it's undone.", tone: 'info' })
+    }
+    onClose()
+  }
   const [os, setOs] = useState<keyof typeof SETUP_COMMANDS>('unix')
   const [how, setHow] = useState<'type' | 'paste'>('type')
   // a hub rather than a computer: its address and the code its web app shows
@@ -106,15 +120,21 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
 
   const pairHub = async (url: string, code: string, hubId?: string) => {
     setBusy(true)
+    const mine = (attempt.current = { cancelled: false })
+    const before = new Set(listHubs().map((h) => h.id))
     try {
       // this phone's name as the hub will list it ("Nothing A142")
       const h = await claimHub(url, code, await deviceName(isHosted() ? 'Browser' : 'Phone'), { hubId })
+      // cancelled: only a pairing this attempt made comes off, not one that was there before it
+      // (its token is just a newer one) nor one a later try made
+      if (mine.cancelled) return void (!before.has(h.id) && !kept.current.has(h.id) && forgetHub(h.id))
+      kept.current.add(h.id)
       toast({ title: `Paired with ${h.name}`, body: 'Its machines show here now. Forget it any time in Settings.', tone: 'success' })
       onClose()
     } catch (err) {
-      toast({ title: "Couldn't pair with the hub", body: (err as Error).message, tone: 'error' })
+      if (!mine.cancelled) toast({ title: "Couldn't pair with the hub", body: (err as Error).message, tone: 'error' })
     } finally {
-      setBusy(false)
+      if (attempt.current === mine && !mine.cancelled) setBusy(false)
     }
   }
 
@@ -123,8 +143,24 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     if (asHub) return pairHub(asHub.url, asHub.code, asHub.hubId)
     if (!looksLikeLink(text) && !splitCode(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
     setBusy(true)
+    const mine = (attempt.current = { cancelled: false })
+    const before = new Set(useStore.getState().hosts.map((h) => h.config.id))
     try {
       const paired = await api.pairLaptop(text.trim())
+      // cancelled while it was connecting: the computer that paired after all comes off again,
+      // unless it was listed before this attempt or a later try paired it
+      if (mine.cancelled) {
+        if (before.has(paired.id) || kept.current.has(paired.id)) return
+        try {
+          const r = await api.removeHost(paired.id)
+          // taken off here while the computer was out of reach: it lets the phone in until it hears
+          if (r?.untold) toast({ title: `${r.untold} still trusts this phone`, body: 'Inyon tells it to forget this phone once it is back online. To end it now, run inyon forget on that computer.', tone: 'info' })
+        } catch (err) {
+          toast({ title: 'The cancelled pairing went through', body: `It couldn't be undone (${(err as Error).message}). Remove the computer from the list.`, tone: 'error', href: '/machines' })
+        }
+        return
+      }
+      kept.current.add(paired.id)
       // the web app: ask the browser to keep this pairing when it clears space
       if (isHosted()) keepData()
       // a typed code was never confirmed by its ID, and anyone who saw it could have put their own
@@ -141,9 +177,9 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
       }
       onClose()
     } catch (err) {
-      toast({ title: "Couldn't pair", body: (err as Error).message, tone: 'error' })
+      if (!mine.cancelled) toast({ title: "Couldn't pair", body: (err as Error).message, tone: 'error' })
     } finally {
-      setBusy(false)
+      if (attempt.current === mine && !mine.cancelled) setBusy(false)
     }
   }
 
@@ -238,11 +274,11 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   return (
     <Sheet
       open={open}
-      onClose={onClose}
+      onClose={cancel}
       title={pendingHub || (hub && !pending) ? 'Connect to a hub' : 'Add a computer'}
       footer={
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={cancel}>Cancel</Button>
           <Button variant="primary" type="submit" form="laptop-form" loading={busy} disabled={pending ? !!refusal : hub ? !hubOriginOf(hubAddress) || !normalizeHubCode(hubCode) : how === 'type' ? !typed : !looksLikeLink(link)}>
             {busy ? 'Connecting…' : 'Pair'}
           </Button>

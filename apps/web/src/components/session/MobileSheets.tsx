@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { CircleX, Copy, GitFork, History, Link2, LogOut, Plug, Shrink, RadioTower, RotateCcw, RotateCw, Gauge, Target, Trash2 } from 'lucide-react'
+import { ChevronRight, CircleX, Copy, GitFork, History, Layers, Link2, LogOut, Plug, Shrink, RadioTower, RotateCcw, RotateCw, Gauge, Target, Trash2 } from 'lucide-react'
+import { runningCount } from './SessionHeader.tsx'
 import { useLocation, useNavigate } from 'react-router-dom'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
@@ -16,7 +17,8 @@ import { paneHref } from '../../lib/overview.ts'
 
 const EFFORT_SHORT: Record<string, string> = { default: 'Default', none: 'None', minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'X-high', max: 'Max', ultra: 'Ultra' }
 
-export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boolean; onClose: () => void }) {
+/** `onActivity` opens the Activity sheet: on a phone its button is here, not in the header. */
+export function ControlsSheet({ s, open, onClose, onActivity }: { s: SessionModel; open: boolean; onClose: () => void; onActivity?: () => void }) {
   const [goalOpen, setGoalOpen] = useState(false)
   const [providers, setProviders] = useState(false)
   const nav = useNavigate()
@@ -27,11 +29,24 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
   const goalOn = !!info?.goal && !info.goal.met
   // while the agent asks something, it takes no commands: typing one would answer the question
   const asking = !!s.screen?.prompt
+  const running = runningCount(info)
   const Label = ({ children }: { children: React.ReactNode }) => <div className="mb-2 text-[13px] font-medium text-fg-2">{children}</div>
   return (
     <>
       <Sheet open={open} onClose={onClose} title={def.name} icon={<AgentLogo kind={agent} size={24} />}>
         <div className="space-y-5">
+          {/* a phone's header has no Activity button: it's the first thing here, and stays while the agent asks */}
+          {onActivity && (
+            <button type="button" onClick={onActivity} className="press flex min-h-12 w-full items-center gap-3 rounded-2xl border border-line px-3.5 py-2 text-left hover:bg-hover sm:hidden">
+              <Layers className="size-4 shrink-0 text-fg-2" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14px] font-medium">Activity</span>
+                <span className="block truncate text-[12px] text-fg-3">Running tasks, subagents, changes and files</span>
+              </span>
+              {running > 0 && <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-fg px-1.5 text-[12px] leading-none font-semibold text-bg">{running}</span>}
+              <ChevronRight className="size-4 shrink-0 text-fg-3" />
+            </button>
+          )}
           {asking && (
             <div className="rounded-2xl border border-warn/35 bg-warn-soft/50 px-3.5 py-2.5 text-[13px] text-fg-2">
               {def.name} is asking you something. Answer it in the chat, and the model, effort and mode controls come back.

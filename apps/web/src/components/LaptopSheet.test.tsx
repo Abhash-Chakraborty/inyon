@@ -55,6 +55,92 @@ test('typing the ID and code pairs as soon as the last digit is in', async () =>
   pairLaptop.mockRestore()
 })
 
+test('Cancel while it connects ends the attempt: a computer that pairs after all comes off again, with no "Paired"', async () => {
+  const user = userEvent.setup()
+  let done!: (v: { id: string }) => void
+  const pairLaptop = spyOn(api, 'pairLaptop').mockReturnValue(new Promise((r) => (done = r)) as any)
+  const removeHost = spyOn(api, 'removeHost').mockResolvedValue(undefined as any)
+  let closed = 0
+  await render(<LaptopSheet open onClose={() => closed++} />)
+  await user.type(screen.getByRole('textbox', { name: 'ID' }), 'K7Q4MX0T')
+  await user.keyboard('493812')
+  expect(pairLaptop).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('button', { name: 'Connecting…' })).toBeTruthy()
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(closed).toBe(1)
+  expect(useStore.getState().toasts.at(-1)?.title).toBe('Pairing cancelled')
+  // the sheet is ready for another try at once
+  expect(screen.getByRole('button', { name: 'Pair' })).toBeTruthy()
+  // the computer answers after all
+  done({ id: 'box' })
+  await flush()
+  expect(removeHost.mock.calls).toEqual([['box']])
+  expect(useStore.getState().toasts.map((t) => t.title)).not.toContain('Paired')
+  expect(closed).toBe(1)
+  pairLaptop.mockRestore()
+  removeHost.mockRestore()
+})
+
+test("Cancel, and the computer pairs after all but can't be taken off: it says so, with the way to remove it", async () => {
+  const user = userEvent.setup()
+  let done!: (v: { id: string }) => void
+  const pairLaptop = spyOn(api, 'pairLaptop').mockReturnValue(new Promise((r) => (done = r)) as any)
+  const removeHost = spyOn(api, 'removeHost').mockRejectedValue(new Error('The hub is restarting'))
+  await render(<LaptopSheet open onClose={() => {}} />)
+  await user.type(screen.getByRole('textbox', { name: 'ID' }), 'K7Q4MX0T')
+  await user.keyboard('493812')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  done({ id: 'box' })
+  await flush()
+  const last = useStore.getState().toasts.at(-1)!
+  expect(last.title).toBe('The cancelled pairing went through')
+  expect(last.body).toContain('The hub is restarting')
+  expect(last.href).toBe('/machines')
+  pairLaptop.mockRestore()
+  removeHost.mockRestore()
+})
+
+test('Cancel never takes off a computer that was already paired, or one a later try paired', async () => {
+  const user = userEvent.setup()
+  const waits: ((v: { id: string }) => void)[] = []
+  const pairLaptop = spyOn(api, 'pairLaptop').mockImplementation(() => new Promise((r) => waits.push(r)) as any)
+  const removeHost = spyOn(api, 'removeHost').mockResolvedValue(undefined as any)
+  await render(<LaptopSheet open onClose={() => {}} />)
+  const again = async () => {
+    await user.clear(screen.getByRole('textbox', { name: 'Code' }))
+    await user.type(screen.getByRole('textbox', { name: 'ID' }), '{Control>}a{/Control}K7Q4MX0T')
+    await user.type(screen.getByRole('textbox', { name: 'Code' }), '493812')
+  }
+  // the first try is cancelled; the second, for the same computer, goes through
+  await again()
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await again()
+  expect(pairLaptop).toHaveBeenCalledTimes(2)
+  waits[1]!({ id: 'box' })
+  await flush()
+  expect(useStore.getState().toasts.map((t) => t.title)).toContain('Paired')
+  // then the cancelled one answers too
+  waits[0]!({ id: 'box' })
+  await flush()
+  expect(removeHost).not.toHaveBeenCalled()
+  pairLaptop.mockRestore()
+  removeHost.mockRestore()
+})
+
+test("Cancel while it connects: a failure that comes later says nothing", async () => {
+  const user = userEvent.setup()
+  let fail!: (e: Error) => void
+  const pairLaptop = spyOn(api, 'pairLaptop').mockReturnValue(new Promise((_, r) => (fail = r)) as any)
+  await render(<LaptopSheet open onClose={() => {}} />)
+  await user.type(screen.getByRole('textbox', { name: 'ID' }), 'K7Q4MX0T')
+  await user.keyboard('493812')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  fail(new Error('The computer did not answer'))
+  await flush()
+  expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['Pairing cancelled'])
+  pairLaptop.mockRestore()
+})
+
 test("after a typed code, the computer's ID shows, to check against the one inyon printed", async () => {
   const user = userEvent.setup()
   const pairLaptop = spyOn(api, 'pairLaptop').mockResolvedValue({ id: 'box', machineId: 'ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u' })

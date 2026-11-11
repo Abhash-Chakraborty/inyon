@@ -63,7 +63,17 @@ function UsageChip({ s, onOpen }: { s: SessionModel; onOpen: () => void }) {
   )
 }
 
-/** Header for a session: identity, usage at a glance and the view switch. Controls live in the composer. */
+/** What runs in the background of a session: its shells, monitors and workflows, and its subagents. */
+export const runningCount = (info: SessionModel['info']) =>
+  // a background subagent is also listed as a task (the kind the transcript can't name), so only
+  // shells, monitors and workflows count from the task list
+  (info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (info?.subagents.filter((x) => x.status === 'running').length ?? 0)
+
+/**
+ * Header for a session: identity, usage at a glance and the view switch. Controls live in the composer.
+ * On a phone it holds four things (back, the title, the view switch and the menu): usage, Ultracode,
+ * Remote Control and Activity are in the menu's sheet, and the menu's button counts what's running.
+ */
 export function SessionHeader({
   s,
   view,
@@ -99,9 +109,7 @@ export function SessionHeader({
   }, [switchable])
   // the companion goes by that name, whatever its conversation is called
   const title = (ref?.pane.companion && 'Companion') || ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
-  // a background subagent is also listed as a task (the kind the transcript can't name), so only
-  // shells, monitors and workflows count from the task list
-  const busy = (info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (info?.subagents.filter((x) => x.status === 'running').length ?? 0)
+  const busy = runningCount(info)
 
   const subtitle = [def?.name ?? 'Terminal', ref?.host.config.name, ref && `${ref.session.name}:${ref.window.index}`, shortPath(info?.cwd ?? ref?.pane.cwd, 28)]
     .filter(Boolean)
@@ -130,7 +138,11 @@ export function SessionHeader({
             <StatePill state={shownState(ref.pane.agent, ref.host)} title={ref.pane.agent.background} />
           </span>
         )}
-        {agent && <UsageChip s={s} onOpen={() => openSheet('controls')} />}
+        {agent && (
+          <span className="max-sm:hidden sm:contents">
+            <UsageChip s={s} onOpen={() => openSheet('controls')} />
+          </span>
+        )}
         {def?.set.ultracode && s.ultracode && (
           <Menu
             header="Ultracode is on"
@@ -138,7 +150,7 @@ export function SessionHeader({
             width={240}
             items={[{ key: 'off', label: 'Turn off', icon: <Power className="size-4" />, danger: true, onSelect: () => actions.ultracode(false) }]}
             trigger={({ toggle, ref: r, open }) => (
-              <button ref={r} type="button" onClick={toggle} title="Ultracode is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover hover:text-fg', open && 'bg-hover text-fg')}>
+              <button ref={r} type="button" onClick={toggle} title="Ultracode is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover hover:text-fg max-sm:hidden', open && 'bg-hover text-fg')}>
                 <Gauge className="ultracode-mark size-4" />
               </button>
             )}
@@ -154,7 +166,7 @@ export function SessionHeader({
               { key: 'off', label: 'Turn off', icon: <Power className="size-4" />, danger: true, onSelect: () => actions.rc(false) },
             ]}
             trigger={({ toggle, ref: r, open }) => (
-              <button ref={r} type="button" onClick={toggle} title="Remote Control is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover hover:text-fg', open && 'bg-hover text-fg')}>
+              <button ref={r} type="button" onClick={toggle} title="Remote Control is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover hover:text-fg max-sm:hidden', open && 'bg-hover text-fg')}>
                 <RadioTower className="size-4" />
               </button>
             )}
@@ -172,7 +184,7 @@ export function SessionHeader({
           ]}
         />
         {agent && (
-          <span className="min-[1180px]:hidden">
+          <span className="max-sm:hidden min-[1180px]:hidden">
             <IconButton label="Running tasks, subagents and changes" onClick={() => openSheet('activity')}>
               <span className="relative">
                 <Layers className="size-[17px]" />
@@ -191,8 +203,12 @@ export function SessionHeader({
         {agent && def && (
           // phones get the same actions in the session controls sheet
           <span className="md:hidden">
-            <IconButton label="More" onClick={() => openSheet('controls')}>
-              <MoreHorizontal className="size-[17px]" />
+            <IconButton label={busy > 0 ? `More, ${busy} running` : 'More'} title="More" onClick={() => openSheet('controls')}>
+              <span className="relative">
+                <MoreHorizontal className="size-[17px]" />
+                {/* a phone has no Activity button up here: what's running is counted on the menu */}
+                {busy > 0 && <span className="absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-fg px-1 text-[12px] leading-none font-semibold text-bg sm:hidden">{busy}</span>}
+              </span>
             </IconButton>
           </span>
         )}

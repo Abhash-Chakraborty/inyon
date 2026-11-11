@@ -158,7 +158,7 @@ export function PanePage() {
             </Suspense>
           )}
         </div>
-        <ControlsSheet s={s} open={sheet === 'controls'} onClose={() => setSheet(null)} />
+        <ControlsSheet s={s} open={sheet === 'controls'} onClose={() => setSheet(null)} onActivity={() => setSheet('activity')} />
         <ActivitySheet s={s} items={items} open={sheet === 'activity'} onClose={() => setSheet(null)} onTask={setTask} onSubagent={setSub} />
         <Suspense fallback={null}>
           {task && <TaskOutputSheet host={host} task={task} onClose={() => setTask(null)} />}
