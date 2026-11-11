@@ -165,6 +165,12 @@ mod imp {
         Some(f64::from(el(id)?.parent_element()?.client_width()))
     }
 
+    /// The right edge on screen of the element that holds `id`. A panel at the end of its row ends
+    /// there too, and unlike the panel's own box this doesn't move while the panel slides in.
+    pub fn parent_right(id: &str) -> Option<f64> {
+        Some(el(id)?.parent_element()?.get_bounding_client_rect().right())
+    }
+
     /// Sends the pointer's moves and its release to `id` wherever it goes, until it lifts.
     pub fn capture_pointer(id: &str, pointer: i32) {
         if let Some(e) = el(id) {
@@ -1268,6 +1274,9 @@ mod imp {
         None
     }
     pub fn parent_width(_id: &str) -> Option<f64> {
+        None
+    }
+    pub fn parent_right(_id: &str) -> Option<f64> {
         None
     }
     pub fn capture_pointer(_id: &str, _pointer: i32) {}
