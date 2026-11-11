@@ -285,7 +285,9 @@ fn ResizeHandle(live: Signal<Option<f64>>) -> Element {
                 if e.trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary) {
                     return;
                 }
-                let Some((_, _, right, _)) = dom::rect(PANEL_ID) else { return };
+                // the row's right edge, where the panel ends: the panel's own box is up to 8px off
+                // while it slides in, and a drag begun then kept that much too little or too much
+                let Some(right) = dom::parent_right(PANEL_ID) else { return };
                 e.prevent_default();
                 dom::capture_pointer(HANDLE_ID, e.pointer_id());
                 drag.set(Some((right, row())));
