@@ -6,7 +6,7 @@ import { useStore } from '../lib/store.ts'
 import { agentPanes, allPanes, type PaneRef } from '../lib/overview.ts'
 import { nextWake, sortPanes } from '../lib/organize.ts'
 import { ActivityFeed, LimitsCard, MachinesTable, SessionCard } from '../components/Overview.tsx'
-import { Logo } from '../components/AppShell.tsx'
+import { Logo, openNewSession } from '../components/AppShell.tsx'
 import { Button, Empty, Segmented, SectionLabel } from '../components/ui/primitives.tsx'
 import { api } from '../lib/api.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
@@ -274,7 +274,17 @@ export function Home() {
                 )}
                 {!shownAny ? (
                   <div className="rounded-3xl border border-dashed border-line-strong">
-                    <Empty title={panes.length ? 'Nothing here' : 'No agent sessions'}>
+                    <Empty
+                      title={panes.length ? 'Nothing here' : 'No agent sessions'}
+                      // the first minute: one button to a working chat, where the eye already is
+                      action={
+                        !panes.length && (
+                          <Button variant="primary" onClick={openNewSession}>
+                            <Plus className="size-3.5" /> {hosts.some((h) => h.status === 'online') ? 'Start a session' : isPhone() ? 'Add a computer' : 'Add a machine'}
+                          </Button>
+                        )
+                      }
+                    >
                       {panes.length ? (q ? `No session matches “${q}”.` : 'Try another filter.') : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'computer' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
                     </Empty>
                   </div>

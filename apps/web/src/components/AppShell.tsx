@@ -307,6 +307,10 @@ function usePagesFeed() {
   }, [])
 }
 
+const NEW_SESSION = 'inyon:new-session'
+/** Opens New session (Add a machine while none is online), as + and N do, from anywhere in the app. */
+export const openNewSession = () => void window.dispatchEvent(new Event(NEW_SESSION))
+
 export function AppShell() {
   const [newOpen, setNewOpen] = useState(false)
   const [search, setSearch] = useState(false)
@@ -325,8 +329,11 @@ export function AppShell() {
       else if (what === 'sidebar') useStore.getState().setSettings({ sidebar: !useStore.getState().settings.sidebar })
       else setNewOpen(true)
     }
+    // a page's own button for it (the Overview with no sessions yet)
+    const onNew = () => setNewOpen(true)
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener(NEW_SESSION, onNew)
+    return () => (window.removeEventListener('keydown', onKey), window.removeEventListener(NEW_SESSION, onNew))
   }, [])
 
   const online = useStore((s) => s.hosts.some((h) => h.status === 'online'))
