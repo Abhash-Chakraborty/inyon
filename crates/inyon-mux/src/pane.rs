@@ -88,6 +88,10 @@ impl Pane {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("LANG", std::env::var("LANG").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "C.UTF-8".into()));
+        // started from inside a tmux, the keeper carries that tmux's TMUX and TMUX_PANE: a pane here
+        // isn't in it
+        cmd.env_remove("TMUX");
+        cmd.env_remove("TMUX_PANE");
         for (k, v) in &what.env {
             cmd.env(k, v);
         }

@@ -223,7 +223,9 @@ impl Keeper {
 
     /// A window with one pane running what the command asks for.
     fn window(&mut self, c: &Call, cols: u16, rows: u16) -> Result<Window, String> {
-        let pane = Pane::start(&start_of(c, cols, rows)).map_err(|e| format!("{}: {e}", c.name))?;
+        let mut start = start_of(c, cols, rows);
+        start.env.push(pane_env(self.next_pane));
+        let pane = Pane::start(&start).map_err(|e| format!("{}: {e}", c.name))?;
         let window = Window { id: self.next_window, name: c.value('n').map(str::to_string), panes: vec![Entry { id: self.next_pane, pane }], active: 0 };
         self.next_window += 1;
         self.next_pane += 1;
@@ -242,6 +244,7 @@ impl Keeper {
         if start.cwd.is_none() {
             start.cwd = entry.pane.foreground().1;
         }
+        start.env.push(pane_env(entry.id));
         entry.pane = Pane::start(&start).map_err(|e| format!("respawn-pane: {e}"))?;
         Ok(String::new())
     }
@@ -445,6 +448,13 @@ impl Keeper {
     }
 }
 
+/// What a program in a pane is told about where it runs: its pane's id as `TMUX_PANE`, the name
+/// Inyon's agent hooks look their pane up by. `TMUX` itself stays unset, so a program doesn't
+/// take this for a tmux it can send tmux's own escape sequences or commands to.
+fn pane_env(id: u32) -> (String, String) {
+    ("TMUX_PANE".to_string(), format!("%{id}"))
+}
+
 /// The buffer a command uses when it names none.
 const BUFFER: &str = "buffer0";
 
@@ -586,6 +596,17 @@ mod tests {
         for line in [vec!["set-option", "-g", "mouse", "on"], vec!["bind-key", "-n", "WheelUpPane", "send-keys", "-M"], vec!["list-clients", "-F", "#{session_id}"]] {
             assert_eq!(run(&mut k, &line), Reply::default(), "{line:?}");
         }
+    }
+
+    #[test]
+    fn a_program_is_told_its_pane_the_way_the_agent_hooks_look_for_it() {
+        let mut k = Keeper::new();
+        session(&mut k, "first");
+        out(&mut k, &["new-session", "-d", "-s", "second", "echo \"pane=$TMUX_PANE tmux=[$TMUX]\"; exec cat"]);
+        assert!(until(|| out(&mut k, &["capture-pane", "-p", "-t", "second"]).starts_with("pane=%1 tmux=[]")));
+        // a program started again in the pane is told the same
+        out(&mut k, &["respawn-pane", "-k", "-t", "second", "echo \"again=$TMUX_PANE\"; exec cat"]);
+        assert!(until(|| out(&mut k, &["capture-pane", "-p", "-t", "second"]).starts_with("again=%1")));
     }
 
     #[test]
