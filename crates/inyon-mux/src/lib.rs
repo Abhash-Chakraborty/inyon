@@ -10,5 +10,6 @@
 pub mod args;
 pub mod format;
 pub mod keys;
+pub mod pane;
 pub mod screen;
 pub mod target;
