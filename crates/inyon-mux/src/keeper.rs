@@ -69,12 +69,13 @@ fn number<T: std::str::FromStr>(c: &Call, flag: char) -> Result<Option<T>, Strin
     c.value(flag).map(|v| v.parse().map_err(|_| format!("{}: -{flag} {v} isn't a number", c.name))).transpose()
 }
 
-/// What to start: one word goes through the shell, as tmux does it; several are the program and
-/// its arguments; none is the user's shell.
+/// What to start: one word goes through the user's shell, as tmux does it (a shell that then
+/// becomes the program, so the pane is named after the program); several are the program and its
+/// arguments; none is the shell itself.
 fn start_of(c: &Call, cols: u16, rows: u16) -> Start {
     let argv = match c.words.as_slice() {
         [] => vec![],
-        [line] => vec!["/bin/sh".to_string(), "-c".to_string(), line.clone()],
+        [line] => vec![crate::pane::shell(), "-c".to_string(), line.clone()],
         many => many.to_vec(),
     };
     Start { argv, cwd: c.value('c').map(PathBuf::from), env: vec![], cols, rows }
@@ -367,7 +368,8 @@ impl Keeper {
             "pane_dead" => yes(entry.pane.dead()),
             "pane_current_command" => entry.pane.foreground().0,
             "pane_current_path" => entry.pane.foreground().1.map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(),
-            "pane_title" => entry.pane.screen().title().to_string(),
+            // until the program names its terminal, the title is the machine's name, as in tmux
+            "pane_title" => Some(entry.pane.screen().title().to_string()).filter(|t| !t.is_empty()).unwrap_or_else(hostname),
             _ => return None,
         })
     }
@@ -453,6 +455,20 @@ impl Keeper {
 /// take this for a tmux it can send tmux's own escape sequences or commands to.
 fn pane_env(id: u32) -> (String, String) {
     ("TMUX_PANE".to_string(), format!("%{id}"))
+}
+
+/// This machine's name.
+fn hostname() -> String {
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        // SAFETY: the buffer is ours and its length is passed; the name is cut to fit it
+        if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0 {
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            return String::from_utf8_lossy(&buf[..end]).into_owned();
+        }
+    }
+    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default()
 }
 
 /// The buffer a command uses when it names none.
@@ -607,6 +623,17 @@ mod tests {
         // a program started again in the pane is told the same
         out(&mut k, &["respawn-pane", "-k", "-t", "second", "echo \"again=$TMUX_PANE\"; exec cat"]);
         assert!(until(|| out(&mut k, &["capture-pane", "-p", "-t", "second"]).starts_with("again=%1")));
+    }
+
+    #[test]
+    fn a_pane_is_titled_after_the_machine_until_its_program_says_otherwise() {
+        let mut k = Keeper::new();
+        let pane = session(&mut k, "titled");
+        let title = |k: &mut Keeper| out(k, &["display-message", "-p", "-t", &pane, "#{pane_title}"]);
+        assert_eq!(title(&mut k).trim(), hostname());
+        assert!(!hostname().is_empty());
+        out(&mut k, &["respawn-pane", "-k", "-t", &pane, "printf '\\033]2;Fix the test\\007'; exec cat"]);
+        assert!(until(|| title(&mut k) == "Fix the test\n"), "{:?}", title(&mut k));
     }
 
     #[test]
