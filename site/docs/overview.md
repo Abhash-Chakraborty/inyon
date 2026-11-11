@@ -6,6 +6,8 @@ description: Every agent session on every machine in one place, each in a spot t
 
 The overview is the first screen. It lists every agent running in tmux on every machine you've added. Each session keeps its place while agents work and ask, so a click lands where you aimed.
 
+Before any agent runs it says *No agent sessions*. From 0.25.7 that card has a **Start a session** button, which opens the same sheet as **+** and `N` (or **Add a machine** while none is online).
+
 ![Three phones: the overview with a Codex prompt waiting for an answer, a Claude Code session as a chat with its to-do list, and the Machines page with four machines, one offline](../../docs/phones-light.webp)
 
 ## What's on it

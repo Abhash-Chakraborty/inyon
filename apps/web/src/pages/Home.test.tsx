@@ -23,6 +23,35 @@ const home = () =>
 
 beforeEach(() => useStore.setState({ hostsLoaded: true, toasts: [], connected: true }))
 
+describe('with no sessions yet', () => {
+  // the card said "tap + to start one" and left finding + to the reader
+  test('the empty Overview has one button to a first session, which opens what + and N open', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [host('box', { panes: [] })] })
+    let asked = 0
+    const onNew = () => asked++
+    window.addEventListener('inyon:new-session', onNew)
+    await home()
+    expect(screen.getByText('No agent sessions')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Start a session' }))
+    window.removeEventListener('inyon:new-session', onNew)
+    expect(asked).toBe(1)
+  })
+
+  test('with no machine online the button adds one instead', async () => {
+    useStore.setState({ hosts: [host('box', { panes: [], status: 'error' })] })
+    await home()
+    expect(screen.getByRole('button', { name: 'Add a machine' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Start a session' })).toBeNull()
+  })
+
+  test("a filter that hides every session offers no such button", async () => {
+    useStore.setState({ hosts: [host('box', { panes: [agentPane('%2', 'claude', { title: 'Write docs' })] })] })
+    await home()
+    expect(screen.queryByRole('button', { name: 'Start a session' })).toBeNull()
+  })
+})
+
 describe('agent sessions', () => {
   // a Needs-you section above the list grew and shrank as agents asked, moving every card under the pointer
   test('a session that asks something answers from its own card, in its own place', async () => {

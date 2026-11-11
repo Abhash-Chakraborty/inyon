@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test'
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { AppShell } from './AppShell.tsx'
+import { AppShell, openNewSession } from './AppShell.tsx'
 import { useStore } from '../lib/store.ts'
 import { agentPane, host } from '../test/fixtures.ts'
 import { renderSettled as render } from '../test/render.tsx'
@@ -50,4 +50,12 @@ test('folded stays folded: the choice is kept with the settings', async () => {
   expect(JSON.parse(localStorage.getItem('inyon.settings.v2')!).sidebar).toBe(false)
   const { container } = await shell()
   expect(container.querySelector('aside')!.getAttribute('data-sidebar')).toBe('rail')
+})
+
+test("a page's own Start a session button opens New session, as + and N do", async () => {
+  useStore.setState({ hosts: [host('box', { panes: [] })], hostsLoaded: true, connected: true, authed: true })
+  await shell()
+  expect(screen.queryByRole('dialog')).toBeNull()
+  act(() => openNewSession())
+  expect(within(await screen.findByRole('dialog')).getByRole('heading', { name: /New session/ })).toBeTruthy()
 })
