@@ -174,16 +174,20 @@ fn a_laptop_that_stops_answering_pings_is_dropped_and_comes_back() {
         links.resume();
         tokio::time::sleep(Duration::from_secs(4)).await;
         assert!(node_link::is_up("laptop"));
+        // each step waits for what happened (a close, a new dial), not for the link to be seen
+        // down: it comes back within a few milliseconds, which a check every 50 ms can miss, and on
+        // a busy runner did ("never: dropped")
+        let dials = || net.dialed.borrow().len();
+        let before = dials();
         m.answers_pings.set(false);
         links.resume();
-        until("dropped", || !node_link::is_up("laptop")).await;
-        assert!(net.closed.borrow().iter().any(|(_, c, r)| *c == 4408 && r == "no answer"));
+        until("dropped", || net.closed.borrow().iter().any(|(_, c, r)| *c == 4408 && r == "no answer")).await;
         m.answers_pings.set(true);
-        until("back", || node_link::is_up("laptop")).await;
+        until("back", || dials() > before && node_link::is_up("laptop")).await;
         // it vanishes: down, then back on its own
+        let before = dials();
         m.vanish();
-        until("gone", || !node_link::is_up("laptop")).await;
-        until("back again", || node_link::is_up("laptop")).await;
+        until("gone and back again", || dials() > before && node_link::is_up("laptop")).await;
     });
 }
 
