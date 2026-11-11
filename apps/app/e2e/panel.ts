@@ -213,10 +213,24 @@ for (const [w, h] of SIZES)
         const width = () => panel(page).evaluate((p) => Math.round(p.getBoundingClientRect().width))
         const chat = () => page.locator('.session-body > .session-view').evaluate((c) => Math.round(c.getBoundingClientRect().width))
         const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('inyon.settings.v2') ?? '{}') as { panelWidth?: number; sidebar?: boolean })
+        // the handle's box once it has held still: while the panel settles (it slides in, or a width
+        // just changed) the handle moves, and a press aimed at where it was misses it
+        const still = async () => {
+          let b = (await handle.boundingBox())!
+          for (let i = 0; i < 40; i++) {
+            await page.waitForTimeout(50)
+            const n = (await handle.boundingBox())!
+            if (n.x === b.x && n.width === b.width) return n
+            b = n
+          }
+          return b
+        }
         const drag = async (to: number, during?: () => Promise<void>) => {
-          const b = (await handle.boundingBox())!
+          const b = await still()
           await page.mouse.move(b.x + b.width / 2, 400)
           await page.mouse.down()
+          // the press took before the pointer moves on
+          await until(async () => (await handle.getAttribute('data-dragging')) === 'true', 3000)
           await page.mouse.move(to, 420, { steps: 5 })
           await during?.()
           await page.mouse.up()
