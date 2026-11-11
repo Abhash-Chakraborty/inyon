@@ -30,6 +30,8 @@ When the terminal is on the same phone, tap **Type a code** and enter the ID (li
 
 A code works once, for 10 minutes, and five wrong tries cancel it.
 
+Pairing can take up to a minute when the computer is slow to answer. From 0.25.7 **Cancel** while the button says *Connecting…* ends the attempt: the sheet closes, and if the computer (or hub) pairs after all, the app takes it off again. Before, the attempt carried on and the computer could turn up later.
+
 ### Connect to a hub
 
 If you run a [hub](hub.md), sign in to its web app and choose **Open on your phone** (on the overview, under Machines, or in Settings). In the app tap **Connect to a hub**, then scan the code, or type the hub's address and the ID and code it shows.

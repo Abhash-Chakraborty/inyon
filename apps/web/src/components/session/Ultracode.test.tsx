@@ -45,3 +45,21 @@ test("the phone's controls sheet has the switch, and says what it does while on"
   await user.click(screen.getByRole('switch', { name: 'Ultracode' }))
   expect(ultracode).toHaveBeenLastCalledWith(false)
 })
+
+test("the phone's controls sheet opens Activity, counting what runs, and keeps it while the agent asks", async () => {
+  const user = userEvent.setup()
+  const opened = mock(() => {})
+  const s = session(false)
+  const busy = { ...s, info: { ...s.info!, tasks: [{ id: 'b1', type: 'shell', description: 'Dev server', status: 'running' }], subagents: [{ toolUseId: 'a1', type: 'Explore', description: 'Find callers', status: 'running' }] }, screen: { prompt: { body: ['Run it?'], options: [] } } } as unknown as SessionModel
+  await render(
+    <MemoryRouter>
+      <ControlsSheet s={busy} open onClose={nothing} onActivity={opened} />
+    </MemoryRouter>,
+  )
+  const row = screen.getByRole('button', { name: /^Activity/ })
+  expect(row.textContent).toContain('2')
+  // the model and mode controls give way to the question; Activity doesn't
+  expect(screen.getByText(/is asking you something/)).toBeTruthy()
+  await user.click(row)
+  expect(opened).toHaveBeenCalledTimes(1)
+})

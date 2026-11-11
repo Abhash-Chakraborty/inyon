@@ -458,7 +458,15 @@ try {
       check(await until(() => state.calls.includes('DELETE /api/pages-cleaned')), `${label}: dismissed on the hub`)
       check((await cleaned.count()) === 0, `${label}: the clean-up line goes`)
       await page.goto(`${base}/m/local/p/11`)
-      await page.getByRole('button', { name: 'Running tasks, subagents and changes' }).click()
+      // a phone's header holds four things: back, the title, the view switch and the menu
+      const header = page.locator('header', { has: page.getByRole('link', { name: 'Back' }) })
+      await header.getByRole('radiogroup', { name: 'View' }).waitFor()
+      await page.screenshot({ path: path.join(shots, `session-header-390-${scheme}.png`), clip: { x: 0, y: 0, width: 390, height: 140 } })
+      const shown = await header.locator('a, button, [role=radiogroup]').evaluateAll((els) => els.filter((e) => !e.closest('[role=radiogroup] button') && e.getClientRects().length && !e.closest('h1')).map((e) => e.getAttribute('aria-label') ?? e.getAttribute('title') ?? e.textContent))
+      check(shown.join('|') === 'Back|View|More', `${label}: the session header's controls on a phone (${shown})`)
+      check(!(await page.getByRole('button', { name: 'Running tasks, subagents and changes' }).isVisible()), `${label}: Activity is in the menu's sheet, not the header`)
+      await page.getByRole('button', { name: /^More/ }).filter({ visible: true }).first().click()
+      await page.getByRole('dialog').getByRole('button', { name: /^Activity/ }).click()
       const sheet = page.getByRole('dialog')
       // the sheet's five tabs fit across a phone
       const strip = await sheet.getByRole('radiogroup').first().evaluate((el) => el.scrollWidth - el.clientWidth)

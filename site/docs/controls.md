@@ -62,7 +62,7 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 
 ## Background work
 
-The layers button in the header (or the side panel on a wide screen) shows what's running beside the conversation. From 0.25.3, when its tabs don't all fit (a narrow panel, a phone), the row scrolls sideways with the hidden side faded, the tab you pick scrolls into view, and the arrow keys, `Home` and `End` move along it. Every row of tabs in the app does the same.
+The layers button in the header (or the side panel on a wide screen) shows what's running beside the conversation. From 0.25.7 a phone's header holds only back, the title, the chat and terminal switch and **⋯**: there **⋯** opens the session's sheet, whose first row is **Activity**, and **⋯** counts what's running. From 0.25.3, when its tabs don't all fit (a narrow panel, a phone), the row scrolls sideways with the hidden side faded, the tab you pick scrolls into view, and the arrow keys, `Home` and `End` move along it. Every row of tabs in the app does the same.
 
 From 0.25.6 the side panel can be resized: drag its left edge, or focus the edge and press `←` or `→`. It never gets narrower than 340 px or leaves the chat less than 420 px, and a double-click (or `Home`) puts back the width it comes with. The app remembers the width.
 
@@ -84,7 +84,7 @@ To comment on a line, tap its number in any diff, in either view. Comments colle
 
 ## Usage and limits
 
-The ring in the header shows how full the context window is; it turns amber past 60% and red past 85%. Tap it, or open **Usage** in the side panel, for:
+The ring in the header shows how full the context window is; it turns amber past 60% and red past 85%. Tap it, or open **Usage** in the side panel, for the list below. On a phone (from 0.25.7) the ring isn't in the header: **⋯** opens the same sheet, and the Ultracode and Remote Control marks are its switches there.
 
 - the context window, with **Compact now**;
 - the plan and its limits: the 5-hour window and the week, with when each resets, plus Codex credits;
