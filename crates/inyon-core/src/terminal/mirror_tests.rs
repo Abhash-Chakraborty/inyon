@@ -132,3 +132,29 @@ fn a_full_screen_program_gets_the_mouse_wheel_and_a_shell_keeps_the_mouse_to_its
     assert_eq!(up, [Input::Hex("\x1b[<64;10;5M".bytes().map(|b| format!("{b:02x}")).collect())]);
     assert_eq!(batch_commands("%55.2", &up)[0].0, "tmux send-keys -t '%55.2' -H 1b 5b 3c 36 34 3b 31 30 3b 35 4d");
 }
+
+#[test]
+fn the_rows_above_the_screen_are_the_history() {
+    // six rows captured from a pane three rows tall: three of history, then the screen
+    let capture = "one\ntwo\nthree\nscreen 1\nscreen 2\n\n";
+    assert_eq!(history_lines(capture, 3), ["one", "two", "three"]);
+    // nothing has scrolled past yet
+    assert_eq!(history_lines("screen 1\nscreen 2\n\n", 3), Vec::<String>::new());
+    assert_eq!(history_lines("", 3), Vec::<String>::new());
+    // a machine that sends CR LF
+    assert_eq!(history_lines("old\r\nscreen\r\n", 1), ["old"]);
+    assert_eq!(history_command("%3"), "tmux capture-pane -p -e -S -2000 -t '%3'");
+}
+
+#[test]
+fn history_goes_to_the_terminals_own_scrollback_before_the_first_screen() {
+    let lines = vec!["\u{1b}[1mbold".to_string(), "plain".to_string()];
+    let pre = history_prelude(&lines, 3);
+    // wrapped, each line's style ended, then pushed off a view three rows tall
+    assert_eq!(pre, "\u{1b}[0m\u{1b}[?7h\u{1b}[1mbold\u{1b}[0m\r\nplain\u{1b}[0m\r\n\r\n\r\n\r\n");
+    assert_eq!(history_prelude(&[], 24), "");
+    // the screen that follows clears the view, never the scrollback
+    let screen = Screen { width: 10.0, height: 1.0, cursor: Cursor { x: 0.0, y: 0.0, visible: true }, lines: vec!["now".into()], mouse: false };
+    let first = draw_screen(None, &screen);
+    assert!(first.contains("\u{1b}[2J") && !first.contains("\u{1b}[3J"), "{first:?}");
+}

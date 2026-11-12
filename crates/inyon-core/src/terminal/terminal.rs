@@ -57,12 +57,13 @@ pub fn open_terminal(host_id: &str, pane_id: &str, cols: u16, rows: u16, on_data
             });
             Box::new(off) as Box<dyn Fn()>
         });
-        return Ok(open_mirror(host, pane_id, cols, rows, on_data, Some(sub)));
+        return Ok(open_mirror(host, pane_id, cols, rows, on_data, Some(sub), false));
     }
     // Inyon's own keeper has no clients to attach: the terminal is drawn from the pane's screen
     // and typed into with send-keys, with no output events to hurry it (it reads on its own beat)
     if registry().get(host_id).is_some_and(|r| r.borrow().probe.as_ref().is_some_and(|p| p.borrow().keeper)) {
-        return Ok(open_mirror(host, pane_id, cols, rows, on_data, None));
+        // with the session's history first, for the view's own scrollback
+        return Ok(open_mirror(host, pane_id, cols, rows, on_data, None, true));
     }
     let id = crate::ids::random_uuid().replace('-', "");
     let view = format!("{VIEW_PREFIX}{}", &id[..6]);
