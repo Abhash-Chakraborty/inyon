@@ -492,9 +492,32 @@ pub fn qr_path(text: &str) -> Option<(usize, String)> {
     Some((w + 2, d))
 }
 
+/// What a machine's choice of where it keeps its sessions means there, in one line
+/// (SetupPanel.tsx sessionsLine).
+pub fn sessions_line(mode: &str, tmux: bool) -> &'static str {
+    match (mode, tmux) {
+        ("own", _) => "Inyon keeps new sessions itself. Sessions you start in tmux don’t show here.",
+        ("auto", true) => "tmux is installed, so new sessions go there. Without it, Inyon would keep them itself.",
+        ("auto", false) => "tmux isn’t installed, so Inyon keeps new sessions itself.",
+        (_, true) => "New sessions go to tmux.",
+        (_, false) => "New sessions need tmux, which isn’t installed. Automatic lets Inyon keep them itself.",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_choice_of_where_sessions_are_kept_reads_true_with_tmux_and_without() {
+        assert_eq!(sessions_line("tmux", true), "New sessions go to tmux.");
+        assert_eq!(sessions_line("tmux", false), "New sessions need tmux, which isn’t installed. Automatic lets Inyon keep them itself.");
+        assert_eq!(sessions_line("auto", true), "tmux is installed, so new sessions go there. Without it, Inyon would keep them itself.");
+        assert_eq!(sessions_line("auto", false), "tmux isn’t installed, so Inyon keeps new sessions itself.");
+        assert_eq!(sessions_line("own", true), sessions_line("own", false));
+        // a word this app doesn't know reads as tmux, as the machine itself reads it
+        assert_eq!(sessions_line("later", true), "New sessions go to tmux.");
+    }
     use serde_json::json;
 
     #[test]

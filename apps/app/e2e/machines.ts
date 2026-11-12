@@ -50,6 +50,8 @@ function machines(): Host[] {
 }
 
 const state = {
+  /** each choice of where the machine keeps its sessions that the app saved */
+  sessionsAsked: [] as string[],
   authed: true,
   hosts: machines(),
   calls: [] as { method: string; path: string; body?: unknown }[],
@@ -74,6 +76,7 @@ const setup = {
   os: 'Ubuntu 24.04',
   pkg: 'apt',
   sudo: false,
+  sessions: { mode: 'auto', tmux: true, keeper: false } as { mode: string; tmux: boolean; keeper: boolean },
   checks: [
     { id: 'tmux', label: 'tmux 3.4', ok: true, detail: '/usr/bin/tmux' },
     { id: 'git', label: 'git', ok: false, detail: 'Not found', manual: 'sudo apt install -y git' },
@@ -142,7 +145,15 @@ const server = Bun.serve({
       }
       if (rest === '/launch') return json({ pane: '%31' })
       if (rest === '/setup' && req.method === 'GET') return json(setup)
-      if (rest === '/setup') return json({ ok: true, version: '0.50.1' })
+      if (rest === '/setup') {
+        // where the machine keeps its sessions: saved, and in the next report
+        const asked = (state.calls.at(-1)?.body as { sessions?: string } | undefined)?.sessions
+        if (asked) {
+          state.sessionsAsked.push(asked)
+          setup.sessions = { mode: asked, tmux: true, keeper: asked === 'own' }
+        }
+        return json({ ok: true, version: '0.50.1' })
+      }
       if (rest === '/configs') {
         return json([
           { agent: 'claude', label: 'settings.json', path: '/home/sam/.claude/settings.json', format: 'json', exists: true, size: 412, mtime: Date.now() / 1000 - 3600 },
@@ -441,12 +452,22 @@ try {
     await page.getByText('Ubuntu 24.04 · apt · no passwordless sudo').waitFor()
     check(await page.getByText('sudo apt install -y git').isVisible(), 'setup: the command to run by hand')
     check(await page.getByText('0.49.0 · not signed in').isVisible(), 'setup: an agent behind and signed out')
+    // where the machine keeps its sessions: the choice, what it means here, and a pick saved
+    const kept = page.getByRole('radiogroup', { name: 'Where sessions are kept' })
+    check((await kept.getByRole('radio', { checked: true }).textContent())?.trim() === 'Automatic', 'setup: the Sessions row shows the machine’s choice')
+    check(await page.getByText('tmux is installed, so new sessions go there.').isVisible(), 'setup: and says what it means on this machine')
     await page.screenshot({ path: path.join(shots, 'machine-setup-1440-light.png') })
+    await kept.getByRole('radio', { name: 'Inyon’s own' }).click()
+    await page.getByText('Inyon keeps new sessions itself. Sessions you start in tmux don’t show here.').waitFor()
+    check(JSON.stringify(state.sessionsAsked) === '["own"]', `setup: the pick is saved on the machine (${JSON.stringify(state.sessionsAsked)})`)
+    check((await kept.getByRole('radio', { checked: true }).textContent())?.trim() === 'Inyon’s own', 'setup: and the row follows the fresh report')
+    check(await page.getByText('Keep a session running').isVisible(), 'setup: the row above stops saying tmux')
     await page.getByRole('button', { name: 'Update to 0.50.1' }).click()
     await page.getByText('Codex updated to 0.50.1').waitFor()
-    check(JSON.stringify((await calls('POST', '/api/hosts/build-box/setup'))[0]?.body) === JSON.stringify({ action: 'update:codex' }), 'setup: Update runs update:codex')
+    // the choice of sessions above was this tab's first request
+    check(JSON.stringify((await calls('POST', '/api/hosts/build-box/setup', 2))[1]?.body) === JSON.stringify({ action: 'update:codex' }), 'setup: Update runs update:codex')
     await page.getByRole('switch', { name: 'Keep a tmux session running' }).click()
-    check(JSON.stringify((await calls('POST', '/api/hosts/build-box/setup', 2))[1]?.body) === JSON.stringify({ keepSession: false }), 'setup: the switch')
+    check(JSON.stringify((await calls('POST', '/api/hosts/build-box/setup', 3))[2]?.body) === JSON.stringify({ keepSession: false }), 'setup: the switch')
 
     // Config: JSON checked as you type, saved with PUT
     await page.getByRole('radio', { name: 'Config' }).click()

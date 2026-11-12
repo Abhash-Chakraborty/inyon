@@ -10,7 +10,7 @@ use dioxus::prelude::*;
 use inyon_protocol::{AgentKind, HostState, HostStatus, OpenCodeProvider, ProviderVia};
 
 use super::icons::{AgentMark, Glyph, Icon};
-use super::kit::{Busy, Notice, Sheet, Toggle, Tone, WaitRows};
+use super::kit::{Busy, Notice, Segmented, Sheet, Toggle, Tone, WaitRows};
 use super::toast::{self, confirm, Ask, ToastTone};
 use crate::machines as m;
 use crate::route::{self, Route};
@@ -160,6 +160,8 @@ pub fn SetupPanel(host: HostState) -> Element {
     let reload = load.clone();
     let keep_id = id.clone();
     let keep_load = load.clone();
+    let sessions_id = id.clone();
+    let sessions_load = load.clone();
     let after_sign_in = load.clone();
     let after_providers = load;
     let about = format!("{}{}{}", r.os, r.pkg.as_ref().map(|p| format!(" · {p}")).unwrap_or_default(), if r.sudo { " · sudo available" } else { " · no passwordless sudo" });
@@ -228,7 +230,7 @@ pub fn SetupPanel(host: HostState) -> Element {
                 div { class: "setup-row",
                     div { class: "setup-line",
                         div { class: "setup-words setup-indent-words",
-                            div { class: "setup-label", "Keep a tmux session running" }
+                            div { class: "setup-label", if r.sessions.as_ref().is_some_and(|s| s.keeper) { "Keep a session running" } else { "Keep a tmux session running" } }
                             div { class: "setup-detail", "If every session closes, Inyon starts a fresh one called “main”." }
                         }
                         Toggle {
@@ -244,6 +246,37 @@ pub fn SetupPanel(host: HostState) -> Element {
                                     load();
                                 });
                             },
+                        }
+                    }
+                }
+                // where the machine keeps its sessions (from 0.26): only where its inyon can keep them
+                if let Some(choice) = r.sessions.clone() {
+                    div { class: "setup-row",
+                        div { class: "setup-line setup-line-wrap",
+                            div { class: "setup-words setup-indent-words",
+                                div { class: "setup-label", "Sessions" }
+                                div { class: "setup-detail", "{m::sessions_line(&choice.mode, choice.tmux)} Sessions already running stay where they are." }
+                            }
+                            div { class: "setup-choice",
+                                Segmented {
+                                    value: choice.mode.clone(),
+                                    label: "Where sessions are kept".to_string(),
+                                    options: vec![("tmux".to_string(), "tmux".to_string()), ("auto".to_string(), "Automatic".to_string()), ("own".to_string(), "Inyon’s own".to_string())],
+                                    on_change: move |mode: String| {
+                                        if mode == choice.mode {
+                                            return;
+                                        }
+                                        let id = sessions_id.clone();
+                                        let load = sessions_load.clone();
+                                        spawn(async move {
+                                            if let Err(e) = api::set_sessions(&id, &mode).await {
+                                                toast::toast("Could not change where sessions are kept", Some(e.message), ToastTone::Error);
+                                            }
+                                            load();
+                                        });
+                                    },
+                                }
+                            }
                         }
                     }
                 }
