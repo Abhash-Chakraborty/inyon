@@ -58,6 +58,7 @@ The tabs:
 It checks the machine and fixes what it can:
 
 - **tmux**, and a tmux session to work in (it can keep one called `main` running).
+- **Sessions**, from 0.26 on a Linux or macOS machine whose `inyon` is that new: where the machine keeps its sessions, **tmux**, **Automatic** or **Inyon's own**. See [Sessions without tmux](install.md#sessions-without-tmux) for what each means and what isn't there yet.
 - **Node.js**, needed for the agents installed through npm (Codex, Gemini CLI and GitHub Copilot).
 - **Each agent:** installed or not, its version, whether it's signed in, and from 0.17.4 whether it's up to date: the row says *up to date*, or shows **Update to 0.50.0** when a newer version is on npm.
 

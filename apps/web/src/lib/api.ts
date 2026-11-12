@@ -259,6 +259,18 @@ export interface SetupReport {
   checks: SetupCheck[]
   agents: SetupAgent[]
   keepSession: boolean
+  /** where the machine keeps its sessions; only on a machine whose inyon can keep them itself (from 0.26) */
+  sessions?: SessionsChoice
+}
+
+/** tmux only, Inyon's own keeper where tmux isn't installed, or the keeper even where it is */
+export type SessionsMode = 'tmux' | 'auto' | 'own'
+export interface SessionsChoice {
+  mode: SessionsMode
+  /** tmux itself is installed there */
+  tmux: boolean
+  /** new sessions are kept by Inyon itself right now */
+  keeper: boolean
 }
 
 /** What a setup step came back with; `manual` and `hint` only when it failed. */
@@ -480,6 +492,7 @@ export const api = {
   setup: (id: string) => request<SetupReport>('GET', `${h(id)}/setup?catalog=${AGENT_CATALOG}`),
   runSetup: (id: string, action: string) => request<SetupResult>('POST', `${h(id)}/setup`, { action }),
   keepSession: (id: string, keepSession: boolean) => request('POST', `${h(id)}/setup`, { keepSession }),
+  setSessions: (id: string, sessions: SessionsMode) => request('POST', `${h(id)}/setup`, { sessions }),
   hubUpdate: (refresh = false) => request<HubUpdate>('GET', `/api/hub/update${refresh ? '?refresh=1' : ''}`, undefined, 60_000),
   startHubUpdate: () => request<{ started: boolean }>('POST', '/api/hub/update'),
   settings: () => request<HubSettings>('GET', '/api/settings'),

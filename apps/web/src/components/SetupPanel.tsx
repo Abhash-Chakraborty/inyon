@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { Check, Copy, Download, ExternalLink, LogIn, Plug, RefreshCw, TriangleAlert } from 'lucide-react'
 import { agentDef, type AgentKind, type HostState } from '@inyon/protocol'
-import { api, type SetupReport } from '../lib/api.ts'
+import { api, type SessionsChoice, type SessionsMode, type SetupReport } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { paneHref } from '../lib/overview.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Toggle, Waiting } from './ui/primitives.tsx'
+import { Button, Segmented, Toggle, Waiting } from './ui/primitives.tsx'
 import { SignInSheet } from './SignInSheet.tsx'
 import { ProvidersSheet } from './ProvidersSheet.tsx'
 import { copyText } from '../lib/clipboard.ts'
@@ -62,6 +62,49 @@ function FailureBlock({ f, className }: { f: Failure; className?: string }) {
 }
 
 /** Everything a machine needs for Inyon, with one-tap fixes where it's safe to run them. */
+/** What each choice means on this machine, in one line. */
+export const sessionsLine = (c: SessionsChoice) =>
+  c.mode === 'own'
+    ? 'Inyon keeps new sessions itself. Sessions you start in tmux don’t show here.'
+    : c.mode === 'auto'
+      ? c.tmux
+        ? 'tmux is installed, so new sessions go there. Without it, Inyon would keep them itself.'
+        : 'tmux isn’t installed, so Inyon keeps new sessions itself.'
+      : c.tmux
+        ? 'New sessions go to tmux.'
+        : 'New sessions need tmux, which isn’t installed. Automatic lets Inyon keep them itself.'
+
+/**
+ * Where the machine keeps its sessions (from 0.26): tmux, Inyon's own keeper where tmux isn't
+ * installed, or the keeper always. Sessions already running stay where they were started.
+ */
+function SessionsRow({ id, choice, onChanged }: { id: string; choice: SessionsChoice; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const pick = async (mode: SessionsMode) => {
+    if (mode === choice.mode || busy) return
+    setBusy(true)
+    try {
+      await api.setSessions(id, mode)
+      onChanged()
+    } catch (e) {
+      toast({ title: 'Could not change where sessions are kept', body: (e as Error).message, tone: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3.5">
+      <div className="min-w-0 flex-[1_1_220px] pl-8">
+        <div className="text-[14px] font-medium">Sessions</div>
+        <div className="text-[12.5px] text-fg-3">{sessionsLine(choice)} New in 0.26: the Terminal view needs tmux.</div>
+      </div>
+      <div className="pl-8 sm:pl-0">
+        <Segmented size="sm" label="Where sessions are kept" value={choice.mode} onChange={pick} options={[{ v: 'tmux', label: 'tmux' }, { v: 'auto', label: 'Automatic' }, { v: 'own', label: 'Inyon’s own' }]} />
+      </div>
+    </div>
+  )
+}
+
 export function SetupPanel({ host }: { host: HostState }) {
   const [report, setReport] = useState<SetupReport | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -145,11 +188,12 @@ export function SetupPanel({ host }: { host: HostState }) {
         ))}
         <div className="flex items-center gap-3 px-4 py-3.5">
           <div className="min-w-0 flex-1 pl-8">
-            <div className="text-[14px] font-medium">Keep a tmux session running</div>
+            <div className="text-[14px] font-medium">{report.sessions?.keeper ? 'Keep a session running' : 'Keep a tmux session running'}</div>
             <div className="text-[12.5px] text-fg-3">If every session closes, Inyon starts a fresh one called “main”.</div>
           </div>
           <Toggle on={report.keepSession} onChange={async (v) => (await api.keepSession(id, v), load())} label="Keep a tmux session running" />
         </div>
+        {report.sessions && <SessionsRow id={id} choice={report.sessions} onChanged={load} />}
       </section>
 
       <section>

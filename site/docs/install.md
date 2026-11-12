@@ -98,7 +98,7 @@ Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) 
 
 ## Sessions without tmux
 
-From 0.26 a Linux or macOS computer can keep its sessions in Inyon itself, with no tmux installed. This is new and off unless you turn it on, one computer at a time:
+From 0.26 a Linux or macOS computer can keep its sessions in Inyon itself, with no tmux installed. This is new and off unless you turn it on, one computer at a time. In the app, open the machine's page, then **Setup**, and choose under **Sessions**: **tmux**, **Automatic** (Inyon's own where tmux isn't installed) or **Inyon's own**. The row is there when that computer's `inyon` is 0.26 or newer. The choice is one word in a file, so a terminal does it too:
 
 ```sh
 echo auto > ~/.inyon/sessions   # Inyon's own sessions where tmux isn't installed
