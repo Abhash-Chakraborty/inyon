@@ -48,6 +48,6 @@ If the connection drops, the view says *Terminal closed* with **Reconnect**. If 
 
 ## Windows
 
-From 0.26 the same goes for a computer that keeps its sessions [without tmux](install.md#sessions-without-tmux): the terminal there is drawn from the pane's screen too.
+From 0.26 the same goes for a computer that keeps its sessions [without tmux](install.md#sessions-without-tmux): the terminal there is drawn from the pane's screen too. From 0.26.2 it opens with the session's last 2000 lines above the screen to scroll back through.
 
 On Windows, Inyon drives [psmux](https://github.com/marlocarlo/psmux), the native tmux for Windows. The terminal is drawn from the pane's screen, so it shows what's on screen now, without tmux's scrollback, and the window takes the phone's size while it's open. From 0.22.1, on Windows 11 build 22523 or newer, the wheel, or a finger drag on a phone, scrolls a full-screen program such as Claude Code, which keeps its own history; a plain shell doesn't scroll. While a full-screen program runs, select text with Shift held, since the mouse goes to the program. Everything else works as on Linux.

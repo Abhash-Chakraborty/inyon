@@ -418,6 +418,48 @@ fn a_restart_keeps_a_flag_value_with_spaces_in_it_whole_read_from_the_real_argum
 // ---------- mirror.test.ts, end to end ----------
 
 #[test]
+fn a_terminal_opened_with_history_gets_what_scrolled_past_before_its_first_screen() {
+    let own = Own::new("mirror-history");
+    run_core(|| async {
+        let host = own_tmux(&own, "mirror-history").await;
+        // forty lines through a pane ten rows tall: thirty and more have scrolled past
+        let pane = tmux(&host, r#"new-session -d -s past -x 60 -y 10 -P -F '#{pane_id}' "i=1; while [ \$i -le 40 ]; do echo line-\$i-end; i=\$((i+1)); done; exec cat""#).await;
+        let (h, p) = (host.clone(), pane.clone());
+        until(
+            move || {
+                let (h, p) = (h.clone(), p.clone());
+                Box::pin(async move { h.run(&format!("tmux capture-pane -p -t {p}")).await.unwrap().stdout.contains("line-40-end") })
+            },
+            5000,
+        )
+        .await;
+        let shown = Rc::new(RefCell::new(String::new()));
+        let s = shown.clone();
+        let term = open_mirror(host.clone(), &pane, 60, 10, move |d| s.borrow_mut().push_str(&String::from_utf8_lossy(&d)), None, true);
+        let sh = shown.clone();
+        // the first screen starts with a clear; by then the history is in
+        until(
+            move || {
+                let ok = sh.borrow().contains("\u{1b}[2J") && sh.borrow().contains("line-40-end");
+                Box::pin(async move { ok })
+            },
+            5000,
+        )
+        .await;
+        let all = shown.borrow().clone();
+        let clear = all.find("\u{1b}[2J").unwrap();
+        let (before, after) = all.split_at(clear);
+        // the oldest line and one from the middle came before the screen, in order, once each
+        assert!(before.contains("line-1-end") && before.contains("line-20-end"), "{before:?}");
+        assert!(before.find("line-1-end").unwrap() < before.find("line-20-end").unwrap());
+        assert_eq!(all.matches("line-1-end").count(), 1);
+        // and the screen itself follows the clear
+        assert!(after.contains("line-40-end") && !after.contains("line-1-end"));
+        term.kill();
+    });
+}
+
+#[test]
 fn a_terminal_on_a_pane_shows_its_screen_types_into_it_and_gives_the_window_back_when_closed() {
     let own = Own::new("mirror");
     run_core(|| async {
@@ -425,7 +467,7 @@ fn a_terminal_on_a_pane_shows_its_screen_types_into_it_and_gives_the_window_back
         let pane = tmux(&host, r#"new-session -d -s mirror -x 80 -y 20 -P -F '#{pane_id}' "printf 'ready\\n'; exec cat -v""#).await;
         let shown = Rc::new(RefCell::new(String::new()));
         let s = shown.clone();
-        let term = open_mirror(host.clone(), &pane, 60, 15, move |d| s.borrow_mut().push_str(&String::from_utf8_lossy(&d)), None);
+        let term = open_mirror(host.clone(), &pane, 60, 15, move |d| s.borrow_mut().push_str(&String::from_utf8_lossy(&d)), None, false);
         let size = |h: Host, p: String| async move { h.run(&format!("tmux display -p -t {p} '#{{window_width}}x#{{window_height}}'")).await.unwrap().stdout.trim().to_owned() };
         let on_screen = |h: Host, p: String| async move { h.run(&format!("tmux capture-pane -p -t {p}")).await.unwrap().stdout };
         let sh = shown.clone();
@@ -513,7 +555,7 @@ fn the_terminal_ends_when_its_pane_goes_away() {
     run_core(|| async {
         let host = own_tmux(&own, "mirror").await;
         let p = tmux(&host, "new-session -d -s gone -P -F '#{pane_id}' 'sleep 600'").await;
-        let term = open_mirror(host.clone(), &p, 40, 10, |_| {}, None);
+        let term = open_mirror(host.clone(), &p, 40, 10, |_| {}, None, false);
         tokio::time::sleep(Duration::from_millis(200)).await;
         tmux(&host, "kill-session -t gone").await;
         assert!(tokio::time::timeout(Duration::from_secs(5), term.exited.wait()).await.is_ok(), "still open");

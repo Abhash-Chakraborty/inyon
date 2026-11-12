@@ -106,7 +106,7 @@ echo own > ~/.inyon/sessions    # Inyon's own sessions even where tmux is instal
 rm ~/.inyon/sessions            # back to tmux, as before
 ```
 
-A small keeper process starts with the first session and ends with the last one, as a tmux server does. From the app you can start an agent, chat with it, answer its questions, open its **Terminal** view, and end it. The Terminal view there is drawn from the session's screen, as [on Windows](terminal.md): it shows what's on screen now, without scrolling back.
+A small keeper process starts with the first session and ends with the last one, as a tmux server does. From the app you can start an agent, chat with it, answer its questions, open its **Terminal** view, and end it. The Terminal view there is drawn from the session's screen, as [on Windows](terminal.md). From 0.26.2 it opens with the session's last 2000 lines above the screen, so you can scroll back through what was there; lines that scroll past while the view is open aren't added until you open it again.
 
 From 0.26.1 `inyon attach <session>` opens one of these sessions in a terminal of your own, as `tmux attach` does for tmux's: the session's window takes that terminal's size, `Ctrl-b d` lets go and leaves it running, and `Ctrl-b Ctrl-b` sends a real `Ctrl-b`. Without a name it opens the newest session.
 

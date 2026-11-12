@@ -235,6 +235,43 @@ pub fn read_command(pane: &str) -> String {
     )
 }
 
+/// How far back the view's history goes when it opens.
+pub const HISTORY_ROWS: usize = 2000;
+
+/// Reads the pane's screen with up to [`HISTORY_ROWS`] rows above it (with colours).
+pub fn history_command(pane: &str) -> String {
+    format!("tmux capture-pane -p -e -S -{HISTORY_ROWS} -t {}", shq(pane))
+}
+
+/// The rows above the screen out of a capture that ends with the screen's own `height` rows.
+pub fn history_lines(stdout: &str, height: usize) -> Vec<String> {
+    let normal = stdout.replace("\r\n", "\n");
+    let mut rows: Vec<&str> = normal.split('\n').collect();
+    // the capture ends with a newline
+    if rows.last() == Some(&"") {
+        rows.pop();
+    }
+    let above = rows.len().saturating_sub(height);
+    rows[..above].iter().map(|r| (*r).to_owned()).collect()
+}
+
+/// What to write to the browser terminal before the first screen so `lines` end up in its own
+/// scrollback: the lines, wrapped rather than cut, then enough blank rows to push the last of them
+/// off a view `rows` tall. The wheel, a finger and text selection then work on them as on any text
+/// the terminal has scrolled past. Nothing when there's no history.
+pub fn history_prelude(lines: &[String], rows: u16) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\x1b[0m\x1b[?7h");
+    for l in lines {
+        out.push_str(l);
+        out.push_str("\x1b[0m\r\n");
+    }
+    out.push_str(&"\r\n".repeat(usize::from(rows.max(1))));
+    out
+}
+
 pub fn parse_screen(stdout: &str) -> Option<Screen> {
     let normal = stdout.replace("\r\n", "\n");
     let mut rows = normal.split('\n');
@@ -303,6 +340,8 @@ struct State {
     pending: String,
     writing: bool,
     off: Option<Box<dyn Fn()>>,
+    /// the pane's history is still to be handed to the view, before its first screen
+    history: bool,
 }
 
 struct Mirror {
@@ -381,6 +420,22 @@ async fn read(m: &Rc<Mirror>) {
                 }
             }
             Some(next) => {
+                // once, before the first screen: what scrolled past before the view opened, for the
+                // browser terminal's own scrollback. Not under a full-screen program, whose screen isn't
+                // the end of that history
+                let first = {
+                    let mut st = m.st.borrow_mut();
+                    st.shown.is_none() && std::mem::take(&mut st.history)
+                };
+                if first && !next.mouse {
+                    if let Ok(h) = m.host.exec(&history_command(&m.pane), ExecOptions::timeout(10_000)).await {
+                        let rows = m.st.borrow().size.1;
+                        let pre = if h.code == 0 { history_prelude(&history_lines(&h.stdout, next.height as usize), rows) } else { String::new() };
+                        if !pre.is_empty() && !m.st.borrow().closed {
+                            (m.on_data.borrow_mut())(pre.into_bytes());
+                        }
+                    }
+                }
                 let d = {
                     let mut st = m.st.borrow_mut();
                     let base = st.shown.as_ref().filter(|s| s.width == next.width && s.height == next.height);
@@ -436,7 +491,8 @@ fn flush(m: Rc<Mirror>) -> LocalBoxFuture<'static, ()> {
 }
 
 /// Opens the mirror on a pane: `cols`×`rows` is the phone's terminal, `on_data` gets what to draw.
-pub fn open_mirror(host: Host, pane_id: &str, cols: u16, rows: u16, on_data: impl FnMut(Vec<u8>) + 'static, on_output: Option<OnOutput>) -> PtyHandle {
+/// With `history`, the view first gets what scrolled past before it opened.
+pub fn open_mirror(host: Host, pane_id: &str, cols: u16, rows: u16, on_data: impl FnMut(Vec<u8>) + 'static, on_output: Option<OnOutput>, history: bool) -> PtyHandle {
     let m = Rc::new(Mirror {
         host,
         pane: pane_id.to_owned(),
@@ -453,6 +509,7 @@ pub fn open_mirror(host: Host, pane_id: &str, cols: u16, rows: u16, on_data: imp
             pending: String::new(),
             writing: false,
             off: None,
+            history,
         }),
         on_data: RefCell::new(Box::new(on_data)),
         exited: Deferred::new(),
