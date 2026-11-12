@@ -5,7 +5,7 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -30,17 +30,34 @@ pub struct Start {
 
 pub struct Pane {
     master: Box<dyn MasterPty + Send>,
-    keys: Mutex<Box<dyn Write + Send>>,
+    keys: Input,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     screen: Arc<Mutex<Screen>>,
     dead: Arc<AtomicBool>,
     /// terminals following the pane live: each gets every byte the program writes
-    watchers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
+    watchers: Arc<Mutex<Vec<SyncSender<Vec<u8>>>>>,
     /// when the program last wrote something, in seconds since 1970
     active: Arc<AtomicU64>,
     pid: Option<u32>,
     command: String,
     cwd: Option<PathBuf>,
+}
+
+/// How many chunks (16 KB at most each) a watcher may leave unread before it's let go: a terminal
+/// that stopped reading mustn't grow the keeper's memory while the program keeps printing.
+pub const BACKLOG: usize = 512;
+
+/// Where a pane's keys go, on its own lock: an attached terminal types through it without holding
+/// the keeper, so a program that stopped reading stalls that one terminal and nothing else.
+#[derive(Clone)]
+pub struct Input(Arc<Mutex<Box<dyn Write + Send>>>);
+
+impl Input {
+    pub fn write(&self, bytes: &[u8]) -> std::io::Result<()> {
+        let mut k = lock(&self.0);
+        k.write_all(bytes)?;
+        k.flush()
+    }
 }
 
 fn now_secs() -> u64 {
@@ -110,10 +127,11 @@ impl Pane {
         let killer = child.clone_killer();
 
         // what the program writes goes onto the screen as it comes
-        let watchers: Arc<Mutex<Vec<Sender<Vec<u8>>>>> = Arc::default();
+        let watchers: Arc<Mutex<Vec<SyncSender<Vec<u8>>>>> = Arc::default();
         let (draw, gone, wrote, watching) = (screen.clone(), dead.clone(), active.clone(), watchers.clone());
         std::thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
+            let mut switches = crate::switches::Filter::default();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
@@ -121,8 +139,16 @@ impl Pane {
                         // the screen stays locked while the bytes go on to the watchers, so one that
                         // joins gets each byte once: in its first picture or after it, never both
                         let mut screen = lock(&draw);
+                        let other = screen.alternate();
                         screen.feed(&buf[..n]);
-                        lock(&watching).retain(|w| w.send(buf[..n].to_vec()).is_ok());
+                        // a watching terminal stays on one screen of its own: the program's switches are
+                        // taken out, and when it did switch, the terminal gets the new screen whole
+                        let plain = switches.pass(&buf[..n]);
+                        let chunk = if screen.alternate() != other { crate::switches::strip(&screen.repaint()) } else { plain };
+                        // one that's full is let go rather than waited for: the reader never blocks here
+                        if !chunk.is_empty() {
+                            lock(&watching).retain(|w| w.try_send(chunk.clone()).is_ok());
+                        }
                         drop(screen);
                         wrote.store(now_secs(), Ordering::Relaxed);
                     }
@@ -135,22 +161,25 @@ impl Pane {
             lock(&watching).clear();
         });
 
-        Ok(Pane { master, keys: Mutex::new(keys), killer: Mutex::new(killer), screen, dead, watchers, active, pid, command: program_name(&argv[0]), cwd })
+        Ok(Pane { master, keys: Input(Arc::new(Mutex::new(keys))), killer: Mutex::new(killer), screen, dead, watchers, active, pid, command: program_name(&argv[0]), cwd })
     }
 
     /// Types `bytes` into the pane.
     pub fn write(&self, bytes: &[u8]) -> std::io::Result<()> {
-        let mut k = lock(&self.keys);
-        k.write_all(bytes)?;
-        k.flush()
+        self.keys.write(bytes)
+    }
+
+    /// A handle for typing into the pane from another thread.
+    pub fn input(&self) -> Input {
+        self.keys.clone()
     }
 
     /// Follows the pane live: the bytes that draw its screen as it is now, then everything the
     /// program writes from here on. The stream ends when the program does.
     pub fn watch(&self) -> (Vec<u8>, Receiver<Vec<u8>>) {
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(BACKLOG);
         let screen = lock(&self.screen);
-        let first = screen.repaint();
+        let first = crate::switches::strip(&screen.repaint());
         if !self.dead() {
             lock(&self.watchers).push(tx);
         }
@@ -329,6 +358,46 @@ mod tests {
         // watching a pane that has ended gives its last screen and nothing after
         let (last, rx) = p.watch();
         assert!(!last.is_empty() && rx.recv_timeout(Duration::from_secs(2)).is_err());
+    }
+
+    #[test]
+    fn a_watcher_that_stops_reading_is_let_go_and_the_pane_goes_on() {
+        let p = sh("read go; i=0; while [ $i -lt 3000 ]; do echo line-$i; i=$((i+1)); done; echo finished; sleep 30");
+        let (_, slow) = p.watch();
+        p.write(b"\r").unwrap();
+        // nobody reads `slow`: the program still gets to its end
+        assert!(until(|| text(&p).contains("finished")), "{:?}", text(&p));
+        // and what `slow` holds is bounded, then its stream is over
+        let mut held = 0;
+        while slow.recv_timeout(Duration::from_millis(300)).is_ok() {
+            held += 1;
+        }
+        assert!(held <= BACKLOG, "{held}");
+    }
+
+    #[test]
+    fn a_watcher_stays_on_one_screen_while_the_program_switches() {
+        let p = sh("echo first; read a; printf '\\033[?1049hfull screen'; read b; printf '\\033[?1049l'; echo back; sleep 30");
+        assert!(until(|| text(&p).starts_with("first")));
+        let (first, rx) = p.watch();
+        let mut all = first;
+        let mut seen = Screen::new(40, 5);
+        let drain = |all: &mut Vec<u8>, seen: &mut Screen| {
+            while let Ok(b) = rx.recv_timeout(Duration::from_millis(150)) {
+                seen.feed(&b);
+                all.extend(b);
+            }
+        };
+        p.write(b"\r").unwrap();
+        assert!(until(|| p.screen().alternate()));
+        drain(&mut all, &mut seen);
+        // the watcher shows the program's full screen, without having been told to switch
+        assert!(seen.capture(Capture::default()).contains("full screen") && !seen.alternate());
+        p.write(b"\r").unwrap();
+        assert!(until(|| text(&p).contains("back")));
+        drain(&mut all, &mut seen);
+        assert_eq!(seen.capture(Capture::default()), text(&p));
+        assert!(!String::from_utf8_lossy(&all).contains("1049"), "a switch got through");
     }
 
     #[test]

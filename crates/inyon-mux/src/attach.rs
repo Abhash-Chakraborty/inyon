@@ -67,9 +67,13 @@ impl Raw {
         }
         let was = t;
         // SAFETY: as above; cfmakeraw only edits the struct
-        unsafe {
+        let raw = unsafe {
             libc::cfmakeraw(&mut t);
-            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t);
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t)
+        };
+        // without raw mode keys would echo and wait for Enter: better not to start
+        if raw != 0 {
+            return None;
         }
         print!("\x1b[?1049h\x1b[H\x1b[2J");
         let _ = std::io::stdout().flush();
@@ -92,6 +96,22 @@ impl Drop for Raw {
 
 /// Runs `inyon attach [session]`; the exit code.
 pub fn run(target: Option<&str>) -> i32 {
+    run_with(target.map(str::to_string))
+}
+
+/// `inyon mux attach-session …`: the target as tmux's own flags give it (`-t work`, `-twork`).
+pub fn run_args(argv: &[String]) -> i32 {
+    match crate::args::parse(argv) {
+        Ok(c) => run_with(c.value('t').map(str::to_string)),
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
+fn run_with(target: Option<String>) -> i32 {
+    let target = target.as_deref();
     // SAFETY: isatty only looks at the descriptor
     let terminal = unsafe { libc::isatty(libc::STDIN_FILENO) == 1 && libc::isatty(libc::STDOUT_FILENO) == 1 };
     if !terminal {
@@ -185,6 +205,8 @@ pub fn run(target: Option<&str>) -> i32 {
         println!("[detached, still running: inyon attach{}]", target.map(|t| format!(" {t}")).unwrap_or_default());
     } else if why == "exited" {
         println!("[the session ended]");
+    } else if why == "behind" {
+        println!("[disconnected: this terminal fell too far behind. inyon attach opens it again]");
     } else {
         println!("[disconnected]");
     }

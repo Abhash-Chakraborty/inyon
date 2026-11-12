@@ -69,6 +69,8 @@ pub struct Attached {
     pub pane: u32,
     pub first: Vec<u8>,
     pub output: Receiver<Vec<u8>>,
+    /// where its keys go, without asking the keeper
+    pub input: crate::pane::Input,
 }
 
 #[derive(Default)]
@@ -424,18 +426,20 @@ impl Keeper {
             let _ = entry.pane.resize(cols, rows);
         }
         let (first, output) = entry.pane.watch();
+        let input = entry.pane.input();
         let client = self.next_client;
         self.next_client += 1;
         self.clients.push(Client { id: client, pane, activity: now_secs() });
-        Ok(Attached { client, pane, first, output })
+        Ok(Attached { client, pane, first, output, input })
     }
 
-    /// Keys from an attached terminal. False once its pane is gone.
-    pub fn client_input(&mut self, client: u32, bytes: &[u8]) -> bool {
+    /// Notes that an attached terminal just typed. False once it's detached or its pane is gone.
+    /// (The keys themselves go through [`Attached::input`], so nothing here waits on a program.)
+    pub fn client_typed(&mut self, client: u32) -> bool {
         let Some(cl) = self.clients.iter_mut().find(|c| c.id == client) else { return false };
         cl.activity = now_secs();
         let pane = cl.pane;
-        self.find_pane(pane).is_some_and(|at| self.entry(at).pane.write(bytes).is_ok())
+        self.find_pane(pane).is_some_and(|at| !self.entry(at).pane.dead())
     }
 
     /// An attached terminal changed size: its pane's window follows.
@@ -769,7 +773,7 @@ mod tests {
         assert_eq!((f[0], f[1], f[3]), ("$0", "0", "%0"));
         assert!(f[2].parse::<u64>().unwrap() > 1_700_000_000);
         // what it types reaches the program, and what the program writes reaches it
-        assert!(k.client_input(a.client, b"typed here\r"));
+        assert!(k.client_typed(a.client) && a.input.write(b"typed here\r").is_ok());
         assert!(until(|| {
             while let Ok(b) = a.output.try_recv() {
                 seen.feed(&b);
@@ -780,7 +784,7 @@ mod tests {
         assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_width}x#{pane_height}"]), "70x20\n");
         k.detach(a.client);
         assert_eq!(out(&mut k, &["list-clients"]), "");
-        assert!(!k.client_input(a.client, b"x"));
+        assert!(!k.client_typed(a.client));
         // letting go ends nothing
         assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_dead} #{session_attached}"]), "0 0\n");
         assert_eq!(k.attach(Some("nope"), 80, 24).err().as_deref(), Some("can't find session: nope"));
@@ -791,12 +795,12 @@ mod tests {
         let mut k = Keeper::new();
         out(&mut k, &["new-session", "-d", "-s", "brief", "read x"]);
         let a = k.attach(Some("brief"), 80, 24).unwrap();
-        assert!(k.client_input(a.client, b"\r"));
+        assert!(k.client_typed(a.client) && a.input.write(b"\r").is_ok());
         // the stream ends with the program
         let end = Instant::now() + Duration::from_secs(10);
         while a.output.recv_timeout(Duration::from_millis(200)).is_ok() || (Instant::now() < end && !k.is_empty_after_sweep()) {}
         assert_eq!(out(&mut k, &["list-clients"]), "");
-        assert!(!k.client_input(a.client, b"x"));
+        assert!(!k.client_typed(a.client));
     }
 
     #[test]

@@ -35,8 +35,7 @@ pub fn version() -> String {
 pub fn run(argv: &[String]) -> i32 {
     // the one command that takes over the terminal
     if matches!(argv.first().map(String::as_str), Some("attach-session" | "attach")) {
-        let target = argv.iter().position(|a| a == "-t").and_then(|i| argv.get(i + 1)).map(String::as_str);
-        return crate::attach::run(target);
+        return crate::attach::run_args(argv);
     }
     // answered here, keeper or no keeper: how a script learns this inyon has one
     if argv.first().is_some_and(|a| a == "-V") {

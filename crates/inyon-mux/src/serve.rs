@@ -128,15 +128,17 @@ fn carry(mut stream: UnixStream, keeper: Arc<Mutex<Keeper>>, a: crate::keeper::A
         held(&keeper).detach(a.client);
         return;
     };
-    let client = a.client;
+    let (client, input, watching) = (a.client, a.input, keeper.clone());
     std::thread::spawn(move || {
         let mut ok = put_frame(&mut out, frame::OUTPUT, &a.first).is_ok();
         while ok {
             match a.output.recv() {
                 Ok(bytes) => ok = put_frame(&mut out, frame::OUTPUT, &bytes).is_ok(),
-                // the program ended: say so, and hang up so the other thread stops waiting for keys
+                // the stream is over: the program ended, or this terminal read too slowly and was let
+                // go. Say which, and hang up so the other thread stops waiting for keys
                 Err(_) => {
-                    let _ = put_frame(&mut out, frame::END, b"exited");
+                    let alive = held(&watching).client_typed(client);
+                    let _ = put_frame(&mut out, frame::END, if alive { b"behind".as_slice() } else { b"exited" });
                     break;
                 }
             }
@@ -147,8 +149,10 @@ fn carry(mut stream: UnixStream, keeper: Arc<Mutex<Keeper>>, a: crate::keeper::A
         let _ = stream.set_read_timeout(None);
         loop {
             match take_frame(&mut stream) {
+                // the keeper is asked only whether this terminal is still attached; the write itself
+                // waits on the program alone, never with the keeper held
                 Ok((frame::INPUT, bytes)) => {
-                    if !held(&keeper).client_input(client, &bytes) {
+                    if !held(&keeper).client_typed(client) || input.write(&bytes).is_err() {
                         break;
                     }
                 }
@@ -186,7 +190,11 @@ fn answer(mut stream: UnixStream, keeper: &Arc<Mutex<Keeper>>) -> std::io::Resul
         });
         return match attached {
             Ok(a) => {
-                send(&mut stream, &Reply::default())?;
+                // a terminal that hung up before its answer was never attached
+                if let Err(e) = send(&mut stream, &Reply::default()) {
+                    held(keeper).detach(a.client);
+                    return Err(e);
+                }
                 carry(stream, keeper.clone(), a);
                 Ok(())
             }
