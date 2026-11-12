@@ -50,7 +50,7 @@ impl Machine {
         let home = self.home.s();
         let mut env = vec![("HOME", home.as_str()), ("PATH", path.as_str())];
         env.extend_from_slice(extra);
-        let (_, out, err) = sh(&format!("{UTF8_TMUX}tmux ls -F x"), None, &env);
+        let (_, out, err) = sh(&format!("{UTF8_TMUX}tmux ls -F x; [ -z \"$_inyon_keeper\" ] || echo '[keeper]'"), None, &env);
         format!("{out}{err}").trim().to_string()
     }
 }
@@ -65,14 +65,14 @@ fn with_no_word_it_is_tmux_and_nothing_else_as_before() {
 #[test]
 fn auto_takes_the_keeper_only_where_tmux_is_not_installed() {
     assert_eq!(Machine::new().with_tmux().with_inyon(true).sessions("auto").tmux(&[]), "real tmux: -u ls -F x");
-    assert_eq!(Machine::new().with_inyon(true).sessions("auto").tmux(&[]), "keeper: mux ls -F x");
+    assert_eq!(Machine::new().with_inyon(true).sessions("auto").tmux(&[]), "keeper: mux ls -F x\n[keeper]");
     // an inyon from before the keeper: still no tmux, as before
     assert!(Machine::new().with_inyon(false).sessions("auto").tmux(&[]).contains("not found"));
 }
 
 #[test]
 fn own_takes_the_keeper_even_where_tmux_is_installed() {
-    assert_eq!(Machine::new().with_tmux().with_inyon(true).sessions("own").tmux(&[]), "keeper: mux ls -F x");
+    assert_eq!(Machine::new().with_tmux().with_inyon(true).sessions("own").tmux(&[]), "keeper: mux ls -F x\n[keeper]");
 }
 
 #[test]
@@ -87,6 +87,6 @@ fn the_engine_says_where_inyon_is_and_an_unknown_word_means_tmux() {
     let m = Machine::new().with_tmux().sessions("own");
     m.program(&m.bin, "inyon-elsewhere", r#"[ "$1 $2" = "mux -V" ] && exit 0; echo "elsewhere: $*""#);
     let exe = m.bin.path("inyon-elsewhere").to_string_lossy().into_owned();
-    assert_eq!(m.tmux(&[("INYON_EXE", &exe)]), "elsewhere: mux ls -F x");
+    assert_eq!(m.tmux(&[("INYON_EXE", &exe)]), "elsewhere: mux ls -F x\n[keeper]");
     assert_eq!(Machine::new().with_tmux().with_inyon(true).sessions("maybe").tmux(&[]), "real tmux: -u ls -F x");
 }

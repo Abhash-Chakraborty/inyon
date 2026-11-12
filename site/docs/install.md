@@ -106,11 +106,10 @@ echo own > ~/.inyon/sessions    # Inyon's own sessions even where tmux is instal
 rm ~/.inyon/sessions            # back to tmux, as before
 ```
 
-A small keeper process starts with the first session and ends with the last one, as a tmux server does. From the app you can start an agent, chat with it, answer its questions, and end it.
+A small keeper process starts with the first session and ends with the last one, as a tmux server does. From the app you can start an agent, chat with it, answer its questions, open its **Terminal** view, and end it. The Terminal view there is drawn from the session's screen, as [on Windows](terminal.md): it shows what's on screen now, without scrolling back.
 
 Not there yet, so stay on tmux if you need any of these:
 
-- the app's **Terminal** view of a session;
 - opening a session from a terminal of your own (`tmux attach` has no counterpart yet);
 - more than one pane in a window;
 - Windows, which keeps using psmux.

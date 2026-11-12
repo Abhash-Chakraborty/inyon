@@ -209,6 +209,8 @@ pub struct ProbeResult {
     pub agy_titles: IndexMap<String, String>,
     /// whether Inyon's status line is in Antigravity CLI's settings (None when agy isn't installed)
     pub agy_integration: Option<bool>,
+    /// the machine keeps its sessions in Inyon's own keeper, not tmux (from 0.26)
+    pub keeper: bool,
     /// the agents other than Claude Code whose settings run Inyon's hook
     pub hooked: Vec<AgentKind>,
     /// pane id → unix seconds of the last key a person pressed in a tmux client showing it
@@ -246,6 +248,7 @@ impl ProbeResult {
             agy_status: IndexMap::new(),
             agy_titles: IndexMap::new(),
             agy_integration: None,
+            keeper: false,
             hooked: vec![],
             machine_kind: None,
             keys_at: IndexMap::new(),
@@ -316,6 +319,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        keeper: false,
         hooked: vec![],
         machine_kind: None,
         keys_at: IndexMap::new(),
@@ -343,6 +347,8 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
             res.account = if v == "-" { None } else { Some(v.to_owned()) };
         } else if let Some(v) = line.strip_prefix("@@AGYINT ") {
             res.agy_integration = Some(v.jtrim() == "installed");
+        } else if line == "@@KEEPER 1" {
+            res.keeper = true;
         } else if line == "@@NOSERVER" {
             res.tmux = TmuxProbe::NoServer;
         } else if line == "@@NOTMUX" {
@@ -819,6 +825,7 @@ echo "@@KIND $(head -n 1 "$k" 2>/dev/null)"
 
 echo "@@BINS"
 for b in claude codex opencode copilot gemini agy cursor-agent grok pi amp goose hermes kimi kiro-cli kiro-cli-chat qwen qodercli qoder codebuddy; do command -v "$b" >/dev/null 2>&1 && echo "$b"; done
+[ -z "$_inyon_keeper" ] || echo "@@KEEPER 1"
 if command -v tmux >/dev/null 2>&1; then
   echo "@@TMUX"
   tmux list-panes -a -F '#{session_id}#{session_name}#{session_attached}#{window_id}#{window_index}#{window_name}#{window_active}#{window_activity}#{pane_id}#{pane_index}#{pane_active}#{pane_pid}#{pane_current_command}#{pane_current_path}#{pane_title}#{pane_width}#{pane_height}#{pane_dead}#{window_width}#{window_height}' 2>/dev/null || echo "@@NOSERVER"
@@ -1167,6 +1174,11 @@ mod tests {
         .join("\n");
         let r = parse_probe(&out, "", 0, 12.0).unwrap();
         assert_eq!((r.hostname.as_str(), r.os.as_str(), r.now), ("box", "Linux", 2000.0));
+        // tmux unless the machine says it keeps its sessions itself, a line that belongs to no section
+        assert!(!r.keeper);
+        let own = parse_probe(&out.replace("@@HOOK", "@@KEEPER 1\n@@HOOK"), "", 0, 12.0).unwrap();
+        assert!(own.keeper);
+        assert_eq!((own.installed.clone(), own.integration), (r.installed.clone(), r.integration));
         assert_eq!(r.machine_kind, Some(MachineKind::Server));
         assert_eq!(r.installed, vec![AgentKind::Claude]);
         assert_eq!(r.signed_in, vec![AgentKind::Claude, AgentKind::Codex]);
