@@ -603,7 +603,8 @@ pub async fn run_setup(host_id: &str, action: &str) -> HubResult<SetupResult> {
 }
 
 /// Where a machine keeps its sessions from now on: writes (or removes) `~/.inyon/sessions` there.
-/// Sessions already running stay where they are. Inyon's own is refused on a machine whose inyon
+/// The word goes into a file beside it first and is moved into place, so a write that fails (a full
+/// disk) leaves the old choice standing. Sessions already running stay where they are. Inyon's own is refused on a machine whose inyon
 /// has no keeper, which would leave it with no sessions at all.
 pub async fn set_sessions_mode(host_id: &str, mode: SessionsMode) -> HubResult<()> {
     let host = registry().host(host_id)?;
@@ -611,7 +612,7 @@ pub async fn set_sessions_mode(host_id: &str, mode: SessionsMode) -> HubResult<(
         SessionsMode::Tmux => r#"rm -f "$HOME/.inyon/sessions""#.to_string(),
         SessionsMode::Auto | SessionsMode::Own => format!(
             r#""${{INYON_EXE:-$HOME/.inyon/bin/inyon}}" mux -V >/dev/null 2>&1 || {{ echo NOKEEPER; exit 3; }}
-mkdir -p "$HOME/.inyon" && printf '%s\n' {} > "$HOME/.inyon/sessions""#,
+f="$HOME/.inyon/sessions"; mkdir -p "$HOME/.inyon" && printf '%s\n' {} > "$f.new" && mv -f "$f.new" "$f" || {{ rm -f "$f.new"; exit 1; }}"#,
             if mode == SessionsMode::Own {
                 {
                     "own"

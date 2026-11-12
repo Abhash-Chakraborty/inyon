@@ -78,14 +78,15 @@ export const sessionsLine = (c: SessionsChoice) =>
  * Where the machine keeps its sessions (from 0.26): tmux, Inyon's own keeper where tmux isn't
  * installed, or the keeper always. Sessions already running stay where they were started.
  */
-function SessionsRow({ id, choice, onChanged }: { id: string; choice: SessionsChoice; onChanged: () => void }) {
+function SessionsRow({ id, choice, onChanged }: { id: string; choice: SessionsChoice; onChanged: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false)
   const pick = async (mode: SessionsMode) => {
     if (mode === choice.mode || busy) return
     setBusy(true)
     try {
       await api.setSessions(id, mode)
-      onChanged()
+      // busy until the fresh report is in: until then the row still shows the old choice
+      await onChanged()
     } catch (e) {
       toast({ title: 'Could not change where sessions are kept', body: (e as Error).message, tone: 'error' })
     } finally {

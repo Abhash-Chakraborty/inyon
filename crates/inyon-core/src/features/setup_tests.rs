@@ -239,8 +239,14 @@ fn the_choice_is_written_on_the_machine_and_refused_where_it_would_leave_no_sess
         set_sessions_mode("h", SessionsMode::Tmux).await.unwrap();
         let ran: Vec<String> = f.cmds().into_iter().filter(|c| c.contains(".inyon/sessions")).collect();
         assert_eq!(ran.len(), 3, "{ran:?}");
-        assert!(ran[0].ends_with(r#"mkdir -p "$HOME/.inyon" && printf '%s\n' auto > "$HOME/.inyon/sessions""#) && ran[0].contains("mux -V"), "{}", ran[0]);
-        assert!(ran[1].contains("printf '%s\\n' own > "), "{}", ran[1]);
+        // written beside the file and moved into place, so a write that fails keeps the old choice
+        assert!(
+            ran[0].ends_with(r#"f="$HOME/.inyon/sessions"; mkdir -p "$HOME/.inyon" && printf '%s\n' auto > "$f.new" && mv -f "$f.new" "$f" || { rm -f "$f.new"; exit 1; }"#)
+                && ran[0].contains("mux -V"),
+            "{}",
+            ran[0]
+        );
+        assert!(ran[1].contains("printf '%s\\n' own > \"$f.new\""), "{}", ran[1]);
         // back to tmux needs no keeper, so it never asks for one
         assert_eq!(ran[2], r#"rm -f "$HOME/.inyon/sessions""#);
 
