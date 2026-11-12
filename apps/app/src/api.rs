@@ -849,6 +849,21 @@ pub struct SetupReport {
     pub agents: Vec<SetupAgent>,
     #[serde(default)]
     pub keep_session: bool,
+    /// where the machine keeps its sessions; only on a machine whose inyon can keep them itself (from 0.26)
+    #[serde(default)]
+    pub sessions: Option<SessionsChoice>,
+}
+
+/// `mode` is tmux, auto (Inyon's own keeper where tmux isn't installed) or own (the keeper always).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SessionsChoice {
+    pub mode: String,
+    /// tmux itself is installed there
+    #[serde(default)]
+    pub tmux: bool,
+    /// new sessions are kept by Inyon itself right now
+    #[serde(default)]
+    pub keeper: bool,
 }
 
 /// What a setup step came back with: a terminal to watch it in, or how it went.
@@ -885,6 +900,16 @@ pub async fn run_setup(id: &str, action: &str) -> Result<SetupResult, ApiError> 
 #[serde(rename_all = "camelCase")]
 struct KeepSession {
     keep_session: bool,
+}
+
+#[derive(Serialize)]
+struct Sessions<'a> {
+    sessions: &'a str,
+}
+
+/// Where the machine keeps its sessions from now on: tmux, auto or own.
+pub async fn set_sessions(id: &str, mode: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/setup", host_path(id)), json(&Sessions { sessions: mode })).await.map(drop)
 }
 
 pub async fn keep_session(id: &str, keep: bool) -> Result<(), ApiError> {

@@ -1197,6 +1197,10 @@ input:focus-visible { outline: none; }
 .quiet-button:hover { background: var(--hover); color: var(--fg); }
 .setup-row { padding: 14px 16px; }
 .setup-line { display: flex; align-items: center; gap: 12px; }
+.setup-line-wrap { flex-wrap: wrap; row-gap: 8px; }
+.setup-line-wrap > .setup-words { flex: 1 1 220px; }
+.setup-choice { padding-left: 32px; }
+@media (min-width: 640px) { .setup-choice { padding-left: 0; } }
 .setup-agent { flex-wrap: wrap; }
 .setup-words { display: block; min-width: 0; flex: 1; }
 .setup-agent-words { flex: 1 1 180px; }
