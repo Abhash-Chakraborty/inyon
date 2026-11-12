@@ -66,6 +66,12 @@ impl Screen {
         self.parser.screen().application_cursor()
     }
 
+    /// The bytes that draw this screen on a terminal that shows something else: the contents, the
+    /// cursor, and the modes the program asked for. What a terminal that joins late is sent first.
+    pub fn repaint(&self) -> Vec<u8> {
+        self.parser.screen().state_formatted().into_bytes()
+    }
+
     /// Where the cursor is (column, row, from 0), and whether it shows.
     pub fn cursor(&self) -> (u16, u16, bool) {
         let (row, col) = self.parser.screen().cursor_position();
@@ -273,6 +279,17 @@ mod tests {
         assert_eq!((s.cursor(), s.alternate()), ((9, 2, false), true));
         s.feed(b"\x1b[?1049l\x1b[?25h");
         assert!(!s.alternate() && s.cursor().2);
+    }
+
+    #[test]
+    fn a_repaint_fed_to_a_blank_screen_gives_the_same_screen() {
+        let mut s = Screen::new(30, 4);
+        s.feed(b"\x1b[1;31mError\x1b[0m: one\r\ntwo\x1b[?2004h");
+        let mut late = Screen::new(30, 4);
+        late.feed(&s.repaint());
+        let styled = Capture { escapes: true, ..Capture::default() };
+        assert_eq!(late.capture(styled), s.capture(styled));
+        assert_eq!((late.cursor(), late.bracketed_paste()), (s.cursor(), true));
     }
 
     #[test]

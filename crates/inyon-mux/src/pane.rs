@@ -5,6 +5,7 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -33,6 +34,8 @@ pub struct Pane {
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     screen: Arc<Mutex<Screen>>,
     dead: Arc<AtomicBool>,
+    /// terminals following the pane live: each gets every byte the program writes
+    watchers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
     /// when the program last wrote something, in seconds since 1970
     active: Arc<AtomicU64>,
     pid: Option<u32>,
@@ -107,14 +110,20 @@ impl Pane {
         let killer = child.clone_killer();
 
         // what the program writes goes onto the screen as it comes
-        let (draw, gone, wrote) = (screen.clone(), dead.clone(), active.clone());
+        let watchers: Arc<Mutex<Vec<Sender<Vec<u8>>>>> = Arc::default();
+        let (draw, gone, wrote, watching) = (screen.clone(), dead.clone(), active.clone(), watchers.clone());
         std::thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        lock(&draw).feed(&buf[..n]);
+                        // the screen stays locked while the bytes go on to the watchers, so one that
+                        // joins gets each byte once: in its first picture or after it, never both
+                        let mut screen = lock(&draw);
+                        screen.feed(&buf[..n]);
+                        lock(&watching).retain(|w| w.send(buf[..n].to_vec()).is_ok());
+                        drop(screen);
                         wrote.store(now_secs(), Ordering::Relaxed);
                     }
                 }
@@ -122,9 +131,11 @@ impl Pane {
             // the terminal closed: the program is gone (or closed its side); reap it
             let _ = child.wait();
             gone.store(true, Ordering::SeqCst);
+            // nothing more will come: letting go of the senders tells each watcher so
+            lock(&watching).clear();
         });
 
-        Ok(Pane { master, keys: Mutex::new(keys), killer: Mutex::new(killer), screen, dead, active, pid, command: program_name(&argv[0]), cwd })
+        Ok(Pane { master, keys: Mutex::new(keys), killer: Mutex::new(killer), screen, dead, watchers, active, pid, command: program_name(&argv[0]), cwd })
     }
 
     /// Types `bytes` into the pane.
@@ -132,6 +143,18 @@ impl Pane {
         let mut k = lock(&self.keys);
         k.write_all(bytes)?;
         k.flush()
+    }
+
+    /// Follows the pane live: the bytes that draw its screen as it is now, then everything the
+    /// program writes from here on. The stream ends when the program does.
+    pub fn watch(&self) -> (Vec<u8>, Receiver<Vec<u8>>) {
+        let (tx, rx) = channel();
+        let screen = lock(&self.screen);
+        let first = screen.repaint();
+        if !self.dead() {
+            lock(&self.watchers).push(tx);
+        }
+        (first, rx)
     }
 
     /// The pane's screen, to read or to ask about.
@@ -284,6 +307,28 @@ mod tests {
         // the shell became sleep: on Linux the pane says so, elsewhere it keeps the name it began with
         let named = |want: &str| until(|| p.foreground().0 == want);
         assert!(if cfg!(target_os = "linux") { named("sleep") } else { named("sh") }, "{:?}", p.foreground());
+    }
+
+    #[test]
+    fn a_watcher_gets_the_screen_as_it_is_then_every_byte_once_and_the_end() {
+        let p = sh("echo before; read x; echo \"after $x\"");
+        assert!(until(|| text(&p).starts_with("before")));
+        let (first, rx) = p.watch();
+        // a screen fed the first picture and then the stream shows what the pane's own does
+        let mut seen = Screen::new(40, 5);
+        seen.feed(&first);
+        assert!(seen.capture(Capture::default()).starts_with("before\n"));
+        p.write(b"go\r").unwrap();
+        // the stream ends when the program does
+        while let Ok(bytes) = rx.recv_timeout(Duration::from_secs(10)) {
+            seen.feed(&bytes);
+        }
+        assert!(until(|| p.dead()));
+        assert_eq!(seen.capture(Capture::default()), text(&p));
+        assert!(text(&p).contains("after go"));
+        // watching a pane that has ended gives its last screen and nothing after
+        let (last, rx) = p.watch();
+        assert!(!last.is_empty() && rx.recv_timeout(Duration::from_secs(2)).is_err());
     }
 
     #[test]
