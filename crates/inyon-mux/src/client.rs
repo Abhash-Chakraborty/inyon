@@ -33,6 +33,10 @@ pub fn version() -> String {
 
 /// Runs one command line and prints its answer; the exit code is the command's.
 pub fn run(argv: &[String]) -> i32 {
+    // the one command that takes over the terminal
+    if matches!(argv.first().map(String::as_str), Some("attach-session" | "attach")) {
+        return crate::attach::run_args(argv);
+    }
     // answered here, keeper or no keeper: how a script learns this inyon has one
     if argv.first().is_some_and(|a| a == "-V") {
         println!("{}", version());

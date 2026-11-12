@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 
 use crate::args::{self, Call};
 use crate::format;
@@ -53,9 +54,30 @@ struct Session {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct At(usize, usize, usize);
 
+/// A terminal attached to a pane (`inyon attach`): a person's own, as a tmux client is.
+struct Client {
+    id: u32,
+    pane: u32,
+    /// when a key last came from it, in seconds since 1970
+    activity: u64,
+}
+
+/// What a terminal gets when it attaches: the pane it shows, the bytes that draw the pane's
+/// screen as it is, and then everything the program writes, until the program ends.
+pub struct Attached {
+    pub client: u32,
+    pub pane: u32,
+    pub first: Vec<u8>,
+    pub output: Receiver<Vec<u8>>,
+    /// where its keys go, without asking the keeper
+    pub input: crate::pane::Input,
+}
+
 #[derive(Default)]
 pub struct Keeper {
     sessions: Vec<Session>,
+    clients: Vec<Client>,
+    next_client: u32,
     buffers: BTreeMap<String, Vec<u8>>,
     next_session: u32,
     next_window: u32,
@@ -91,6 +113,12 @@ impl Keeper {
         self.sessions.is_empty()
     }
 
+    #[cfg(test)]
+    fn is_empty_after_sweep(&mut self) -> bool {
+        self.reap();
+        self.is_empty()
+    }
+
     /// Closes what ended on its own since the last command: a window whose program is gone, and a
     /// session left with no window.
     pub fn sweep(&mut self) {
@@ -115,8 +143,14 @@ impl Keeper {
                 Ok(self.sessions.iter().enumerate().map(|(i, _)| self.line(c.value('F').unwrap_or("#{session_name}: #{session_windows} windows"), self.first_of(i))).collect())
             }
             "list-panes" => self.list_panes(c),
-            // nothing is ever attached to the keeper's sessions in a terminal of its own (yet)
-            "list-clients" => Ok(String::new()),
+            // a line for each terminal a person has attached (`inyon attach`)
+            "list-clients" => {
+                let fmt = c.value('F').unwrap_or("#{session_name}: #{pane_id}");
+                let only = c.value('t').map(|t| self.session_at(Some(t))).transpose()?;
+                let lines: Vec<String> =
+                    self.clients.iter().filter_map(|cl| self.find_pane(cl.pane).filter(|at| only.is_none_or(|s| s == at.0)).map(|at| self.client_line(fmt, cl, at))).collect();
+                Ok(lines.concat())
+            }
             "has-session" => self.session_at(c.value('t')).map(|_| String::new()),
             "display-message" => {
                 let at = self.pane_at(c.value('t'))?;
@@ -187,7 +221,8 @@ impl Keeper {
                 let fmt = c.value('F').unwrap_or("#{window_index}: #{window_name}");
                 Ok((0..self.sessions[s].windows.len()).map(|w| self.line(fmt, At(s, w, self.sessions[s].windows[w].active))).collect())
             }
-            "attach-session" => Err("sessions Inyon keeps itself can't be attached to from a terminal yet".into()),
+            // a stream, not an answer: the keeper's socket takes it before it gets here (`attach`)
+            "attach-session" => Err("attach-session needs a terminal: run inyon attach".into()),
             other => Err(format!("unknown command: {other}")),
         }
     }
@@ -351,7 +386,7 @@ impl Keeper {
         Some(match name {
             "session_id" => format!("${}", session.id),
             "session_name" => session.name.clone(),
-            "session_attached" => "0".into(),
+            "session_attached" => self.clients.iter().filter(|cl| self.find_pane(cl.pane).is_some_and(|at| at.0 == s)).count().to_string(),
             "session_windows" => session.windows.len().to_string(),
             "window_id" => format!("@{}", window.id),
             "window_index" => w.to_string(),
@@ -376,6 +411,67 @@ impl Keeper {
             "pane_title" => Some(entry.pane.screen().title().to_string()).filter(|t| !t.is_empty()).unwrap_or_else(hostname),
             _ => return None,
         })
+    }
+
+    // ---------- a person's terminal ----------
+
+    /// Attaches a terminal of `cols`×`rows` to the pane `target` names: the window takes the
+    /// terminal's size, as with tmux, and the terminal gets the screen and what follows.
+    pub fn attach(&mut self, target: Option<&str>, cols: u16, rows: u16) -> Result<Attached, String> {
+        self.reap();
+        let at = self.pane_at(target)?;
+        let entry = self.entry(at);
+        let pane = entry.id;
+        if cols > 0 && rows > 0 {
+            let _ = entry.pane.resize(cols, rows);
+        }
+        let (first, output) = entry.pane.watch();
+        let input = entry.pane.input();
+        let client = self.next_client;
+        self.next_client += 1;
+        self.clients.push(Client { id: client, pane, activity: now_secs() });
+        Ok(Attached { client, pane, first, output, input })
+    }
+
+    /// Notes that an attached terminal just typed. False once it's detached or its pane is gone.
+    /// (The keys themselves go through [`Attached::input`], so nothing here waits on a program.)
+    pub fn client_typed(&mut self, client: u32) -> bool {
+        let Some(cl) = self.clients.iter_mut().find(|c| c.id == client) else { return false };
+        cl.activity = now_secs();
+        let pane = cl.pane;
+        self.find_pane(pane).is_some_and(|at| !self.entry(at).pane.dead())
+    }
+
+    /// An attached terminal changed size: its pane's window follows.
+    pub fn client_resize(&mut self, client: u32, cols: u16, rows: u16) {
+        let Some(at) = self.clients.iter().find(|c| c.id == client).and_then(|c| self.find_pane(c.pane)) else { return };
+        for e in &self.sessions[at.0].windows[at.1].panes {
+            let _ = e.pane.resize(cols, rows);
+        }
+    }
+
+    /// The terminal let go, or its connection ended.
+    pub fn detach(&mut self, client: u32) {
+        self.clients.retain(|c| c.id != client);
+    }
+
+    fn find_pane(&self, id: u32) -> Option<At> {
+        self.sessions
+            .iter()
+            .enumerate()
+            .find_map(|(s, session)| session.windows.iter().enumerate().find_map(|(w, window)| window.panes.iter().position(|e| e.id == id).map(|p| At(s, w, p))))
+    }
+
+    /// `fmt` for one attached terminal: its own values, then its pane's.
+    fn client_line(&self, fmt: &str, cl: &Client, at: At) -> String {
+        let mut s = format::expand(fmt, &|name| match name {
+            "client_control_mode" => Some("0".into()),
+            "client_activity" => Some(cl.activity.to_string()),
+            "client_name" | "client_tty" => Some(format!("inyon-attach-{}", cl.id)),
+            other => self.value(other, at),
+        });
+        s.push('\n');
+        s
     }
 
     // ---------- finding ----------
@@ -451,7 +547,14 @@ impl Keeper {
             }
         }
         self.sessions.retain(|s| !s.windows.is_empty());
+        // a terminal whose pane is gone has nothing left to show
+        let live: Vec<u32> = self.sessions.iter().flat_map(|s| s.windows.iter().flat_map(|w| w.panes.iter().map(|e| e.id))).collect();
+        self.clients.retain(|c| live.contains(&c.pane));
     }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// What a program in a pane is told about where it runs: its pane's id as `TMUX_PANE`, the name
@@ -650,6 +753,54 @@ mod tests {
         assert_eq!(run(&mut k, &["resize-window", "-t", &pane, "-A"]), Reply::default());
         assert_eq!(run(&mut k, &["set-option", "-w", "-t", &pane, "-u", "window-size"]), Reply::default());
         assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_width}x#{pane_height}"]), "100x30\n");
+    }
+
+    #[test]
+    fn a_terminal_attaches_sees_the_screen_types_resizes_and_lets_go() {
+        let mut k = Keeper::new();
+        let pane = session(&mut k, "mine");
+        assert_eq!(out(&mut k, &["list-clients", "-F", "#{session_id}"]), "");
+        let a = k.attach(Some("mine"), 90, 25).unwrap();
+        assert_eq!((a.client, a.pane), (0, 0));
+        // the window took the terminal's size, and the first picture holds what was there
+        assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_width}x#{pane_height} #{session_attached}"]), "90x25 1\n");
+        let mut seen = crate::screen::Screen::new(90, 25);
+        seen.feed(&a.first);
+        assert!(seen.capture(crate::screen::Capture::default()).starts_with("ready\n"));
+        // the hub's question about who's attached, as it asks it
+        let line = out(&mut k, &["list-clients", "-F", "#{session_id} #{client_control_mode} #{client_activity} #{pane_id}"]);
+        let f: Vec<&str> = line.trim().split(' ').collect();
+        assert_eq!((f[0], f[1], f[3]), ("$0", "0", "%0"));
+        assert!(f[2].parse::<u64>().unwrap() > 1_700_000_000);
+        // what it types reaches the program, and what the program writes reaches it
+        assert!(k.client_typed(a.client) && a.input.write(b"typed here\r").is_ok());
+        assert!(until(|| {
+            while let Ok(b) = a.output.try_recv() {
+                seen.feed(&b);
+            }
+            seen.capture(crate::screen::Capture::default()).matches("typed here").count() == 2
+        }));
+        k.client_resize(a.client, 70, 20);
+        assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_width}x#{pane_height}"]), "70x20\n");
+        k.detach(a.client);
+        assert_eq!(out(&mut k, &["list-clients"]), "");
+        assert!(!k.client_typed(a.client));
+        // letting go ends nothing
+        assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_dead} #{session_attached}"]), "0 0\n");
+        assert_eq!(k.attach(Some("nope"), 80, 24).err().as_deref(), Some("can't find session: nope"));
+    }
+
+    #[test]
+    fn a_terminal_whose_program_ends_is_let_go_of() {
+        let mut k = Keeper::new();
+        out(&mut k, &["new-session", "-d", "-s", "brief", "read x"]);
+        let a = k.attach(Some("brief"), 80, 24).unwrap();
+        assert!(k.client_typed(a.client) && a.input.write(b"\r").is_ok());
+        // the stream ends with the program
+        let end = Instant::now() + Duration::from_secs(10);
+        while a.output.recv_timeout(Duration::from_millis(200)).is_ok() || (Instant::now() < end && !k.is_empty_after_sweep()) {}
+        assert_eq!(out(&mut k, &["list-clients"]), "");
+        assert!(!k.client_typed(a.client));
     }
 
     #[test]

@@ -9,12 +9,15 @@
 
 pub mod args;
 #[cfg(unix)]
+pub mod attach;
+#[cfg(unix)]
 pub mod client;
 pub mod format;
 pub mod keeper;
 pub mod keys;
 pub mod pane;
 pub mod screen;
+pub mod switches;
 // the process and its socket: Unix first; Windows gets a named pipe with its own terminals
 #[cfg(unix)]
 pub mod serve;

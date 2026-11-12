@@ -66,7 +66,8 @@ const SPECS: &[Spec] = &[
     spec("set-option", "set", "t", "aFgopqsuUw"),
     spec("set-window-option", "setw", "t", "aFgoqu"),
     spec("bind-key", "bind", "NT", "nr"),
-    spec("attach-session", "attach", "tc", "dErx"),
+    // -x and -y: the attaching terminal's size (the keeper's own, as `inyon attach` sends it)
+    spec("attach-session", "attach", "tcxy", "dEr"),
     spec("kill-server", "", "", ""),
 ];
 
