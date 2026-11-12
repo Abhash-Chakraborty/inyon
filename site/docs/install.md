@@ -108,9 +108,10 @@ rm ~/.inyon/sessions            # back to tmux, as before
 
 A small keeper process starts with the first session and ends with the last one, as a tmux server does. From the app you can start an agent, chat with it, answer its questions, open its **Terminal** view, and end it. The Terminal view there is drawn from the session's screen, as [on Windows](terminal.md): it shows what's on screen now, without scrolling back.
 
+From 0.26.1 `inyon attach <session>` opens one of these sessions in a terminal of your own, as `tmux attach` does for tmux's: the session's window takes that terminal's size, `Ctrl-b d` lets go and leaves it running, and `Ctrl-b Ctrl-b` sends a real `Ctrl-b`. Without a name it opens the newest session.
+
 Not there yet, so stay on tmux if you need any of these:
 
-- opening a session from a terminal of your own (`tmux attach` has no counterpart yet);
 - more than one pane in a window;
 - Windows, which keeps using psmux.
 

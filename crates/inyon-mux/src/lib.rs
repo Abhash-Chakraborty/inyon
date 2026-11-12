@@ -9,6 +9,8 @@
 
 pub mod args;
 #[cfg(unix)]
+pub mod attach;
+#[cfg(unix)]
 pub mod client;
 pub mod format;
 pub mod keeper;

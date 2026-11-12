@@ -51,6 +51,11 @@ enum Command {
     Phones,
     /// Unpair a phone
     Forget { phone: String },
+    /// Open a session Inyon keeps itself in this terminal (Ctrl-b d lets go)
+    Attach {
+        /// The session's name; the newest one when left out
+        session: Option<String>,
+    },
     /// Add this machine to an Inyon hub, with the token in INYON_TOKEN
     Join {
         hub: String,
@@ -530,6 +535,13 @@ pub fn main() {
             commands::finish(commands::setup(&sys, theme(), Some(&flags), tty), json)
         }
         Some(Command::Pair { args }) => commands::finish(commands::pair(&args, json), json),
+        #[cfg(unix)]
+        Some(Command::Attach { session }) => std::process::exit(inyon_mux::attach::run(session.as_deref())),
+        #[cfg(not(unix))]
+        Some(Command::Attach { .. }) => {
+            eprintln!("On Windows sessions are in psmux: open one with psmux attach -t <session>.");
+            std::process::exit(1)
+        }
         #[cfg(unix)]
         Some(Command::Mux { args }) => std::process::exit(inyon_mux::client::run(&args)),
         #[cfg(unix)]

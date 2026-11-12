@@ -32,6 +32,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon stop` | Stop everything Inyon runs in the background here |
 | `inyon logs` | Show the service's output |
 | `inyon doctor` | Check that everything is in place |
+| `inyon attach [session]` | From 0.26.1: open a session Inyon keeps itself ([without tmux](install.md#sessions-without-tmux)) in this terminal. `Ctrl-b d` lets go |
 | `inyon update` | Update to the newest release |
 | `inyon skill list`, `add`, `remove` | Install the agent skills that come with each release |
 | `inyon blueprints add`, `ls`, `rm` | Show a site's folder in the app under Blueprints (`inyon pages` works too) |
