@@ -462,7 +462,7 @@ pub fn join(sys: &Sys, hub: &str, token: &str, cert: Option<&str>, autostart: bo
         }
     }
     let mut notes = Vec::new();
-    if let Some(m) = service::missing_mux(sys.platform) {
+    if let Some(m) = service::missing_mux(sys.platform).filter(|_| sys.platform == Platform::Windows || service::own_sessions_in(&paths::home()).is_none()) {
         notes.push(format!("Note: {m}"));
     }
     if !autostart {
@@ -832,6 +832,10 @@ pub fn doctor(sys: &Sys) -> Outcome {
     checks.push((true, "inyon".into(), format!("{VERSION} at {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default())));
     match service::missing_mux(sys.platform) {
         None => checks.push((true, if sys.platform == Platform::Windows { "psmux" } else { "tmux" }.into(), "installed".into())),
+        // from 0.26 a Linux or macOS computer can keep its sessions without it
+        Some(_) if sys.platform != Platform::Windows && service::own_sessions_in(&paths::home()).is_some() => {
+            checks.push((true, "sessions".into(), "kept by Inyon itself (tmux isn't installed)".into()))
+        }
         Some(m) => checks.push((false, "tmux".into(), m)),
     }
     let agents: Vec<&str> = ["claude", "codex", "gemini", "opencode"].into_iter().filter(|a| which(a).is_some()).collect();

@@ -94,7 +94,7 @@ npm installs only the `inyon` command and puts it on your `PATH`. It picks the b
 | Windows x64 | Yes | No (use WSL) |
 | Windows arm64 | Yes | No |
 
-Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) on Windows. (From 0.26 a Linux or macOS computer can do without it: see [Sessions without tmux](#sessions-without-tmux).) From 0.17.2 `inyon setup` installs it when it's missing, after asking: with winget (or cargo) on Windows, Homebrew on macOS, and your package manager through `sudo` on Linux. `inyon uninstall` offers to remove it again only when setup installed it. The setup tab in the app can install it, and the agents, too. See [Computers](computers.md#windows).
+Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) on Windows. From 0.26 a Linux or macOS computer can do without it, and setup there no longer stops at a missing tmux: when tmux isn't installed (you said no, there's no terminal for `sudo`, no package manager, or the install failed), setup writes `auto` to `~/.inyon/sessions` and says *Inyon keeps this computer's sessions itself*. Install tmux later and it takes over for new sessions. See [Sessions without tmux](#sessions-without-tmux). From 0.17.2 `inyon setup` installs it when it's missing, after asking: with winget (or cargo) on Windows, Homebrew on macOS, and your package manager through `sudo` on Linux. `inyon uninstall` offers to remove it again only when setup installed it. The setup tab in the app can install it, and the agents, too. See [Computers](computers.md#windows).
 
 ## Sessions without tmux
 
