@@ -66,6 +66,17 @@ impl Screen {
         self.parser.screen().application_cursor()
     }
 
+    /// Where the cursor is (column, row, from 0), and whether it shows.
+    pub fn cursor(&self) -> (u16, u16, bool) {
+        let (row, col) = self.parser.screen().cursor_position();
+        (col, row, !self.parser.screen().hide_cursor())
+    }
+
+    /// The program is on the alternate screen (a full-screen program such as vim or an agent's TUI).
+    pub fn alternate(&self) -> bool {
+        self.parser.screen().alternate_screen()
+    }
+
     /// The program takes a paste between brackets, so a pasted newline doesn't run a line.
     pub fn bracketed_paste(&self) -> bool {
         self.parser.screen().bracketed_paste()
@@ -250,6 +261,18 @@ mod tests {
         assert!(!s.bracketed_paste() && !s.application_cursor());
         s.feed(b"\x1b[?2004h\x1b[?1h");
         assert!(s.bracketed_paste() && s.application_cursor());
+    }
+
+    #[test]
+    fn the_cursor_and_the_alternate_screen_are_told() {
+        let mut s = Screen::new(20, 4);
+        s.feed(b"ab\r\ncde");
+        assert_eq!((s.cursor(), s.alternate()), ((3, 1, true), false));
+        // a full-screen program: the other screen, the cursor hidden and put somewhere
+        s.feed(b"\x1b[?1049h\x1b[?25l\x1b[3;10H");
+        assert_eq!((s.cursor(), s.alternate()), ((9, 2, false), true));
+        s.feed(b"\x1b[?1049l\x1b[?25h");
+        assert!(!s.alternate() && s.cursor().2);
     }
 
     #[test]

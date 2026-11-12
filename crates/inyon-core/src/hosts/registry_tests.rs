@@ -442,6 +442,7 @@ fn mode_probe(now: f64) -> ProbeResult {
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        keeper: false,
         hooked: vec![],
         machine_kind: None,
         keys_at: Default::default(),

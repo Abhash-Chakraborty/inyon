@@ -972,6 +972,9 @@ impl Registry {
         });
         // live updates for every tmux session that has an agent in it
         let with_agents: Vec<String> = pr.borrow().sessions.iter().filter(|s| s.windows.iter().any(|w| w.panes.iter().any(|p| p.agent.is_some()))).map(|s| s.id.clone()).collect();
+        // tmux's control mode has no counterpart in Inyon's own keeper, and `exec tmux` would reach
+        // past it to a real tmux with sessions of the same ids: such a machine is polled instead
+        let with_agents = if pr.borrow().keeper { vec![] } else { with_agents };
         let live = rt.borrow().live.clone();
         if let Some(l) = live {
             l.sync(&with_agents);

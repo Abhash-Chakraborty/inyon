@@ -366,6 +366,10 @@ impl Keeper {
             "pane_active" => yes(window.active == p),
             "pane_pid" => entry.pane.pid().map(|n| n.to_string()).unwrap_or_default(),
             "pane_dead" => yes(entry.pane.dead()),
+            "cursor_x" => entry.pane.screen().cursor().0.to_string(),
+            "cursor_y" => entry.pane.screen().cursor().1.to_string(),
+            "cursor_flag" => yes(entry.pane.screen().cursor().2),
+            "alternate_on" => yes(entry.pane.screen().alternate()),
             "pane_current_command" => entry.pane.foreground().0,
             "pane_current_path" => entry.pane.foreground().1.map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(),
             // until the program names its terminal, the title is the machine's name, as in tmux
@@ -634,6 +638,18 @@ mod tests {
         assert!(!hostname().is_empty());
         out(&mut k, &["respawn-pane", "-k", "-t", &pane, "printf '\\033]2;Fix the test\\007'; exec cat"]);
         assert!(until(|| title(&mut k) == "Fix the test\n"), "{:?}", title(&mut k));
+    }
+
+    #[test]
+    fn the_terminal_view_gets_the_size_the_cursor_and_the_screen_in_one_go() {
+        let mut k = Keeper::new();
+        let pane = session(&mut k, "view");
+        // what the mirror asks before each drawing, by tmux's short name for it
+        assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{alternate_on}"]), "100 30 0 1 1 0\n");
+        // and how it lets go of a size it set: both are taken, and change nothing
+        assert_eq!(run(&mut k, &["resize-window", "-t", &pane, "-A"]), Reply::default());
+        assert_eq!(run(&mut k, &["set-option", "-w", "-t", &pane, "-u", "window-size"]), Reply::default());
+        assert_eq!(out(&mut k, &["display", "-p", "-t", &pane, "#{pane_width}x#{pane_height}"]), "100x30\n");
     }
 
     #[test]

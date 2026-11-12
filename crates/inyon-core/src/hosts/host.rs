@@ -148,12 +148,13 @@ fn backend(config: &HostConfig) -> HubResult<Rc<dyn HostBackend>> {
 ///
 /// From 0.26 a machine can keep its sessions without tmux, in Inyon's own keeper (`inyon mux`,
 /// which answers the same commands). A machine opts in with one word in `~/.inyon/sessions`:
-/// `auto` uses the keeper where tmux isn't installed, `own` uses it even where it is. No file is
+/// `auto` uses the keeper where tmux isn't installed, `own` uses it even where it is (`_inyon_keeper`
+/// is then set, which the probe passes on). No file is
 /// tmux only, as before. The keeper is only taken when this machine's inyon has one (`mux -V`).
 ///
 /// On Windows `tmux` is already a shell function around psmux, so neither branch runs there.
 pub const UTF8_TMUX: &str = r#"_s=; [ -r "$HOME/.inyon/sessions" ] && read -r _s < "$HOME/.inyon/sessions"
-_inyon_mux() { _i=${INYON_EXE:-$HOME/.inyon/bin/inyon}; "$_i" mux -V >/dev/null 2>&1 || return 1; tmux() { "$_i" mux "$@"; }; }
+_inyon_mux() { _i=${INYON_EXE:-$HOME/.inyon/bin/inyon}; "$_i" mux -V >/dev/null 2>&1 || return 1; tmux() { "$_i" mux "$@"; }; _inyon_keeper=1; }
 case "$(command -v tmux 2>/dev/null)" in
 /*) { [ "$_s" = own ] && _inyon_mux; } || tmux() { command tmux -u "$@"; } ;;
 '') case $_s in own | auto) _inyon_mux ;; esac ;;
