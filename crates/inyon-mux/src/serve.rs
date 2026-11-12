@@ -4,6 +4,9 @@
 //!
 //! One command per connection. The request is the words and what was piped in; the answer is the
 //! exit code, the output and the complaint. Every length is four bytes, big end first.
+//!
+//! `attach-session` is the one command that stays: after its answer the connection carries a
+//! terminal both ways in frames (a kind byte, a length, the bytes) until either side lets go.
 
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -67,25 +70,131 @@ pub fn ask(socket: &Path, argv: &[String], stdin: &[u8]) -> std::io::Result<Repl
     Ok(Reply { code, out: text(&mut s)?, err: text(&mut s)? })
 }
 
+/// Frames on an attached connection. To the terminal: what to draw, or that it's over (with why).
+/// From the terminal: keys, its new size (columns then rows, two bytes each), or that it lets go.
+pub mod frame {
+    pub const OUTPUT: u8 = 1;
+    pub const END: u8 = 2;
+    pub const INPUT: u8 = 1;
+    pub const RESIZE: u8 = 2;
+    pub const DETACH: u8 = 3;
+}
+
+pub fn put_frame(w: &mut impl Write, kind: u8, bytes: &[u8]) -> std::io::Result<()> {
+    w.write_all(&[kind])?;
+    put(w, bytes)?;
+    w.flush()
+}
+
+pub fn take_frame(r: &mut impl Read) -> std::io::Result<(u8, Vec<u8>)> {
+    let mut kind = [0u8; 1];
+    r.read_exact(&mut kind)?;
+    Ok((kind[0], take(r)?))
+}
+
+/// Asks to attach a terminal of `cols`×`rows` to `target`. Ok(Ok(stream)) is the open connection,
+/// frames from here on; Ok(Err(reply)) is the keeper's refusal.
+pub fn attach(socket: &Path, target: Option<&str>, cols: u16, rows: u16) -> std::io::Result<Result<UnixStream, Reply>> {
+    let mut argv = vec!["attach-session".to_string(), "-x".into(), cols.to_string(), "-y".into(), rows.to_string()];
+    if let Some(t) = target {
+        argv.extend(["-t".to_string(), t.to_string()]);
+    }
+    let mut s = UnixStream::connect(socket)?;
+    s.write_all(&(argv.len() as u32).to_be_bytes())?;
+    for a in &argv {
+        put(&mut s, a.as_bytes())?;
+    }
+    put(&mut s, b"")?;
+    s.flush()?;
+    let code = number(&mut s)? as i32;
+    let reply = Reply { code, out: text(&mut s)?, err: text(&mut s)? };
+    Ok(if code == 0 { Ok(s) } else { Err(reply) })
+}
+
 /// What a command answers when no keeper runs: tmux's own words for it, which the hub knows.
 pub fn no_server(socket: &Path) -> Reply {
     Reply { out: String::new(), err: format!("no server running on {}\n", socket.display()), code: 1 }
 }
 
-fn answer(stream: &mut UnixStream, keeper: &Mutex<Keeper>) -> std::io::Result<()> {
+/// The keeper, even after a thread that held it panicked: its sessions are still worth answering for.
+fn held(k: &Mutex<Keeper>) -> std::sync::MutexGuard<'_, Keeper> {
+    k.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Carries one attached terminal: a thread sends it what the pane writes, this one takes its keys.
+/// Ends when the terminal lets go, its connection drops, or the program in the pane ends.
+fn carry(mut stream: UnixStream, keeper: Arc<Mutex<Keeper>>, a: crate::keeper::Attached) {
+    let Ok(mut out) = stream.try_clone() else {
+        held(&keeper).detach(a.client);
+        return;
+    };
+    let client = a.client;
+    std::thread::spawn(move || {
+        let mut ok = put_frame(&mut out, frame::OUTPUT, &a.first).is_ok();
+        while ok {
+            match a.output.recv() {
+                Ok(bytes) => ok = put_frame(&mut out, frame::OUTPUT, &bytes).is_ok(),
+                // the program ended: say so, and hang up so the other thread stops waiting for keys
+                Err(_) => {
+                    let _ = put_frame(&mut out, frame::END, b"exited");
+                    break;
+                }
+            }
+        }
+        let _ = out.shutdown(std::net::Shutdown::Both);
+    });
+    std::thread::spawn(move || {
+        let _ = stream.set_read_timeout(None);
+        loop {
+            match take_frame(&mut stream) {
+                Ok((frame::INPUT, bytes)) => {
+                    if !held(&keeper).client_input(client, &bytes) {
+                        break;
+                    }
+                }
+                Ok((frame::RESIZE, b)) if b.len() == 4 => held(&keeper).client_resize(client, u16::from_be_bytes([b[0], b[1]]), u16::from_be_bytes([b[2], b[3]])),
+                // it let go, hung up, or sent something else
+                _ => break,
+            }
+        }
+        held(&keeper).detach(client);
+        // the sender thread's next write fails, and it ends too
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    });
+}
+
+fn answer(mut stream: UnixStream, keeper: &Arc<Mutex<Keeper>>) -> std::io::Result<()> {
     // a client that stops mid-request mustn't hold the keeper up
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-    let count = number(stream)? as usize;
+    let count = number(&mut stream)? as usize;
     if count > 4096 {
         return Err(std::io::Error::other("too many words"));
     }
-    let argv = (0..count).map(|_| text(stream)).collect::<std::io::Result<Vec<_>>>()?;
-    let stdin = take(stream)?;
+    let argv = (0..count).map(|_| text(&mut stream)).collect::<std::io::Result<Vec<_>>>()?;
+    let stdin = take(&mut stream)?;
+    let send = |stream: &mut UnixStream, reply: &Reply| -> std::io::Result<()> {
+        stream.write_all(&(reply.code as u32).to_be_bytes())?;
+        put(stream, reply.out.as_bytes())?;
+        put(stream, reply.err.as_bytes())?;
+        stream.flush()
+    };
+    // the one command that stays on the line
+    if matches!(argv.first().map(String::as_str), Some("attach-session" | "attach")) {
+        let attached = crate::args::parse(&argv).and_then(|c| {
+            let size = |f: char| c.value(f).and_then(|v| v.parse::<u16>().ok()).unwrap_or(0);
+            keeper.lock().unwrap_or_else(std::sync::PoisonError::into_inner).attach(c.value('t'), size('x'), size('y'))
+        });
+        return match attached {
+            Ok(a) => {
+                send(&mut stream, &Reply::default())?;
+                carry(stream, keeper.clone(), a);
+                Ok(())
+            }
+            Err(e) => send(&mut stream, &Reply { out: String::new(), err: format!("{e}\n"), code: 1 }),
+        };
+    }
     let reply = keeper.lock().unwrap_or_else(std::sync::PoisonError::into_inner).run(&argv, &stdin);
-    stream.write_all(&(reply.code as u32).to_be_bytes())?;
-    put(stream, reply.out.as_bytes())?;
-    put(stream, reply.err.as_bytes())?;
-    stream.flush()
+    send(&mut stream, &reply)
 }
 
 /// A socket's path has to fit in about a hundred bytes; a longer one fails with words that don't
@@ -122,10 +231,11 @@ pub fn serve(listener: UnixListener, socket: &Path) -> std::io::Result<()> {
     let mut had_one = false;
     loop {
         match listener.accept() {
-            Ok((mut stream, _)) => {
+            Ok((stream, _)) => {
                 stream.set_nonblocking(false)?;
                 // one at a time: commands are short, and the order they came in is the order they ran
-                let _ = answer(&mut stream, &keeper);
+                // (an attached terminal goes on in threads of its own)
+                let _ = answer(stream, &keeper);
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(15)),
             Err(e) => return Err(e),
@@ -219,6 +329,64 @@ mod tests {
         let e = bind(&long).unwrap_err().to_string();
         assert!(e.contains("can be 100 at most") && e.contains("INYON_MUX_SOCKET"), "{e}");
         assert!(too_long(Path::new("/home/sam/.inyon/mux/keeper.sock")).is_ok());
+    }
+
+    /// Reads frames until `seen` holds, feeding a screen with what's drawn. Err is the END reason.
+    fn watch_until(stream: &mut UnixStream, screen: &mut crate::screen::Screen, mut seen: impl FnMut(&str) -> bool) -> Result<(), String> {
+        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        loop {
+            match take_frame(stream) {
+                Ok((frame::OUTPUT, b)) => {
+                    screen.feed(&b);
+                    if seen(&screen.capture(crate::screen::Capture::default())) {
+                        return Ok(());
+                    }
+                }
+                Ok((frame::END, why)) => return Err(String::from_utf8_lossy(&why).into_owned()),
+                Ok(_) => {}
+                Err(e) => return Err(format!("closed: {e}")),
+            }
+        }
+    }
+
+    #[test]
+    fn a_terminal_attaches_over_the_socket_types_resizes_detaches_and_hears_the_end() {
+        let (socket, server) = keeper("attach");
+        let run = |line: &[&str]| ask(&socket, &words(line), b"").unwrap();
+        assert_eq!(run(&["new-session", "-d", "-s", "work", "echo up; read x; echo \"got $x\"; read y"]).code, 0);
+        assert!(until(|| run(&["capture-pane", "-p", "-t", "work"]).out.starts_with("up")));
+        // a session that isn't there is refused with the usual words, and nothing stays open
+        let no = attach(&socket, Some("nope"), 80, 24).unwrap().unwrap_err();
+        assert_eq!((no.code, no.err.as_str()), (1, "can't find session: nope\n"));
+
+        let mut term = attach(&socket, Some("work"), 60, 12).unwrap().unwrap();
+        let mut screen = crate::screen::Screen::new(60, 12);
+        // the first picture is what was already there, at the terminal's size
+        watch_until(&mut term, &mut screen, |s| s.starts_with("up")).unwrap();
+        assert_eq!(run(&["display", "-p", "-t", "work", "#{pane_width}x#{pane_height} #{session_attached}"]).out, "60x12 1\n");
+        // keys go in, and what the program answers comes back, while plain commands still run
+        put_frame(&mut term, frame::INPUT, b"hello\r").unwrap();
+        watch_until(&mut term, &mut screen, |s| s.contains("got hello")).unwrap();
+        put_frame(&mut term, frame::RESIZE, &[0, 100, 0, 30]).unwrap();
+        assert!(until(|| run(&["display", "-p", "-t", "work", "#{pane_width}x#{pane_height}"]).out == "100x30\n"));
+        // letting go ends nothing
+        put_frame(&mut term, frame::DETACH, b"").unwrap();
+        assert!(until(|| run(&["list-clients"]).out.is_empty()));
+        assert_eq!(run(&["display", "-p", "-t", "work", "#{pane_dead} #{session_attached}"]).out, "0 0\n");
+
+        // a terminal that just goes away is let go of too
+        let gone = attach(&socket, Some("work"), 60, 12).unwrap().unwrap();
+        assert!(until(|| run(&["list-clients"]).out.lines().count() == 1));
+        drop(gone);
+        assert!(until(|| run(&["list-clients"]).out.is_empty()));
+
+        // and one that's attached when the program ends is told, and the keeper stops as usual
+        let mut last = attach(&socket, Some("work"), 60, 12).unwrap().unwrap();
+        let mut screen = crate::screen::Screen::new(60, 12);
+        watch_until(&mut last, &mut screen, |s| s.contains("got hello")).unwrap();
+        put_frame(&mut last, frame::INPUT, b"\r").unwrap();
+        assert_eq!(watch_until(&mut last, &mut screen, |_| false), Err("exited".to_string()));
+        assert!(server.join().unwrap().is_ok());
     }
 
     #[test]
