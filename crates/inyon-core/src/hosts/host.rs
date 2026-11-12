@@ -140,11 +140,25 @@ fn backend(config: &HostConfig) -> HubResult<Rc<dyn HostBackend>> {
     Ok(pick(config))
 }
 
-/// tmux only writes UTF-8 when the locale says so, and a non-interactive SSH shell often has no
-/// locale at all: then its field separator and every non-ASCII character come out as "_", and a
-/// machine with sessions running lists none. -u makes it write UTF-8 whatever the locale. Only for
-/// the real binary: on Windows `tmux` is already a shell function around psmux.
-pub const UTF8_TMUX: &str = "case \"$(command -v tmux 2>/dev/null)\" in /*) tmux() { command tmux -u \"$@\"; };; esac\n";
+/// What `tmux` means on a machine, set before every command the hub runs there.
+///
+/// The real binary gets `-u`: tmux only writes UTF-8 when the locale says so, and a
+/// non-interactive SSH shell often has no locale at all: then its field separator and every
+/// non-ASCII character come out as "_", and a machine with sessions running lists none.
+///
+/// From 0.26 a machine can keep its sessions without tmux, in Inyon's own keeper (`inyon mux`,
+/// which answers the same commands). A machine opts in with one word in `~/.inyon/sessions`:
+/// `auto` uses the keeper where tmux isn't installed, `own` uses it even where it is. No file is
+/// tmux only, as before. The keeper is only taken when this machine's inyon has one (`mux -V`).
+///
+/// On Windows `tmux` is already a shell function around psmux, so neither branch runs there.
+pub const UTF8_TMUX: &str = r#"_s=; [ -r "$HOME/.inyon/sessions" ] && read -r _s < "$HOME/.inyon/sessions"
+_inyon_mux() { _i=${INYON_EXE:-$HOME/.inyon/bin/inyon}; "$_i" mux -V >/dev/null 2>&1 || return 1; tmux() { "$_i" mux "$@"; }; }
+case "$(command -v tmux 2>/dev/null)" in
+/*) { [ "$_s" = own ] && _inyon_mux; } || tmux() { command tmux -u "$@"; } ;;
+'') case $_s in own | auto) _inyon_mux ;; esac ;;
+esac
+"#;
 
 /// Runs POSIX shell snippets on one machine, whichever way it's reached. Clones share the
 /// machine's settings, as every holder of the TS object does.
@@ -214,3 +228,7 @@ impl Host {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "host_tests.rs"]
+mod tests;

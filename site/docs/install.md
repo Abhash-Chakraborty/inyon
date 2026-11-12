@@ -94,7 +94,30 @@ npm installs only the `inyon` command and puts it on your `PATH`. It picks the b
 | Windows x64 | Yes | No (use WSL) |
 | Windows arm64 | Yes | No |
 
-Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) on Windows. From 0.17.2 `inyon setup` installs it when it's missing, after asking: with winget (or cargo) on Windows, Homebrew on macOS, and your package manager through `sudo` on Linux. `inyon uninstall` offers to remove it again only when setup installed it. The setup tab in the app can install it, and the agents, too. See [Computers](computers.md#windows).
+Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) on Windows. (From 0.26 a Linux or macOS computer can do without it: see [Sessions without tmux](#sessions-without-tmux).) From 0.17.2 `inyon setup` installs it when it's missing, after asking: with winget (or cargo) on Windows, Homebrew on macOS, and your package manager through `sudo` on Linux. `inyon uninstall` offers to remove it again only when setup installed it. The setup tab in the app can install it, and the agents, too. See [Computers](computers.md#windows).
+
+## Sessions without tmux
+
+From 0.26 a Linux or macOS computer can keep its sessions in Inyon itself, with no tmux installed. This is new and off unless you turn it on, one computer at a time:
+
+```sh
+echo auto > ~/.inyon/sessions   # Inyon's own sessions where tmux isn't installed
+echo own > ~/.inyon/sessions    # Inyon's own sessions even where tmux is installed
+rm ~/.inyon/sessions            # back to tmux, as before
+```
+
+A small keeper process starts with the first session and ends with the last one, as a tmux server does. From the app you can start an agent, chat with it, answer its questions, and end it.
+
+Not there yet, so stay on tmux if you need any of these:
+
+- the app's **Terminal** view of a session;
+- opening a session from a terminal of your own (`tmux attach` has no counterpart yet);
+- more than one pane in a window;
+- Windows, which keeps using psmux.
+
+Sessions you run in tmux yourself don't show while a computer is set to `own`, and Inyon's own sessions never show in `tmux ls`. Switching back doesn't end either kind: each stays where it was started.
+
+> **Note:** A hub older than 0.26 ignores the file. The computer's own `inyon` does the keeping, so it has to be 0.26 or newer too, and a server you reach over SSH with no `inyon` on it keeps needing tmux.
 
 ## Put inyon on your PATH
 

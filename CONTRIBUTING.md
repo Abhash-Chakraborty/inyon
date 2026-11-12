@@ -71,7 +71,8 @@ apps/mobile        Capacitor shell for Android (and an unshipped iOS project); s
 crates/            the Rust side: inyon-core (readers, machines), inyon-api (the routes and app
                    sockets, no server), inyon-hub (the hub), inyon-engine and inyon-link (the
                    phone link), inyon-backends, inyon-protocol, inyon-phone (the phone core as
-                   wasm, for the Android app and the browser copy)
+                   wasm, for the Android app and the browser copy), inyon-mux (the session keeper
+                   for machines without tmux, being built from 0.26)
 packages/protocol  types and the agent registry shared by hub and app
 conformance/       recorded scenarios the hub must keep answering the same way
 site/              the website and docs at inyon.tech

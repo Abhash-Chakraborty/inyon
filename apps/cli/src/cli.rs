@@ -166,6 +166,13 @@ enum Command {
     },
     /// Print the version
     Version,
+    /// Inyon's own session keeper, spoken to as tmux is (`inyon mux new-session -d -s work`).
+    /// Being built from 0.26: nothing uses it yet
+    #[command(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    Mux { args: Vec<String> },
+    /// The keeper's own process, started by the first `inyon mux new-session`
+    #[command(hide = true)]
+    MuxServer,
     /// Move services set up as tether-node to inyon's own, and off the Bun engine
     #[command(hide = true)]
     Migrate {
@@ -523,6 +530,15 @@ pub fn main() {
             commands::finish(commands::setup(&sys, theme(), Some(&flags), tty), json)
         }
         Some(Command::Pair { args }) => commands::finish(commands::pair(&args, json), json),
+        #[cfg(unix)]
+        Some(Command::Mux { args }) => std::process::exit(inyon_mux::client::run(&args)),
+        #[cfg(unix)]
+        Some(Command::MuxServer) => std::process::exit(inyon_mux::client::server()),
+        #[cfg(not(unix))]
+        Some(Command::Mux { .. } | Command::MuxServer) => {
+            eprintln!("Inyon's own sessions aren't on Windows yet; it uses psmux there.");
+            std::process::exit(1)
+        }
         Some(Command::Phones) => commands::finish(commands::phones(), json),
         Some(Command::Forget { phone }) => commands::finish(commands::forget(&phone), json),
         Some(Command::Join { hub, no_autostart }) => {
