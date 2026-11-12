@@ -175,6 +175,89 @@ fn steps(f: &Fake) -> Vec<String> {
     f.cmds().into_iter().filter(|c| c.contains("INYON_VERSION")).collect()
 }
 
+/// machine "h" answering the report with these lines about tmux and the keeper, and the choice's
+/// own command with `code` and `out`
+fn sessions_machine(lines: &'static str, code: i32, out: &'static str) -> Rc<Fake> {
+    machine("h", "local", serde_json::json!([])).borrow_mut().hold_polls();
+    Fake::install(move |_, cmd, _| {
+        if cmd.contains("echo \"OS ") {
+            return ExecResult { code: 0, stdout: format!("OS Linux x86_64\nPKG apt\nSUDO 1\nSESSIONS 0\n{lines}\n"), stderr: String::new() };
+        }
+        ExecResult { code, stdout: out.into(), stderr: if code == 0 { String::new() } else { "disk full".into() } }
+    })
+}
+
+fn tmux_check(r: &SetupReport) -> (bool, String, bool) {
+    let c = r.checks.iter().find(|c| c.id == "tmux").unwrap();
+    (c.ok, c.detail.clone().unwrap_or_default(), c.fix.is_some())
+}
+
+#[test]
+fn the_report_offers_inyons_own_sessions_only_where_the_machines_inyon_can_keep_them() {
+    run(|| async {
+        registry_answering("0.50.0");
+        // an inyon from before the keeper: no choice, and tmux missing reads as it always did
+        sessions_machine("TMUX \nREALTMUX \nKEEPER \nSESSMODE ", 0, "");
+        let r = setup_report("h").await.unwrap();
+        assert_eq!(serde_json::to_value(&r).unwrap().get("sessions"), None);
+        assert_eq!(tmux_check(&r), (false, "Not installed. Inyon lists and controls agents through tmux.".into(), true));
+
+        // it has one, tmux is missing, nothing chosen: tmux can still be installed, and the other way is named
+        sessions_machine("TMUX \nREALTMUX \nKEEPER inyon-mux 0.26.0\nSESSMODE ", 0, "");
+        let r = setup_report("h").await.unwrap();
+        assert_eq!(serde_json::to_value(r.sessions).unwrap(), serde_json::json!({ "mode": "tmux", "tmux": false, "keeper": false }));
+        assert_eq!(tmux_check(&r), (false, "Not installed. Install it, or choose Automatic under Sessions below and Inyon keeps the sessions itself.".into(), true));
+
+        // Automatic with no tmux: the keeper answers `tmux -V`, and the check is met without tmux
+        sessions_machine("TMUX inyon-mux 0.26.0\nREALTMUX \nKEEPER inyon-mux 0.26.0\nSESSMODE auto", 0, "");
+        let r = setup_report("h").await.unwrap();
+        assert_eq!(serde_json::to_value(r.sessions).unwrap(), serde_json::json!({ "mode": "auto", "tmux": false, "keeper": true }));
+        assert_eq!(tmux_check(&r), (true, "Not needed: Inyon keeps the sessions itself".into(), false));
+        // and the next row doesn't ask for a tmux session
+        let session = r.checks.iter().find(|c| c.id == "session").unwrap();
+        assert_eq!((session.label.as_str(), session.detail.as_deref(), session.fix.is_some()), ("A session to work in", Some("No sessions yet"), true));
+
+        // Automatic where tmux is installed stays with tmux; Inyon's own doesn't
+        sessions_machine("TMUX tmux 3.4\nREALTMUX tmux 3.4\nKEEPER inyon-mux 0.26.0\nSESSMODE auto", 0, "");
+        let r = setup_report("h").await.unwrap();
+        assert_eq!(serde_json::to_value(r.sessions).unwrap(), serde_json::json!({ "mode": "auto", "tmux": true, "keeper": false }));
+        assert_eq!(tmux_check(&r), (true, "tmux 3.4".into(), false));
+        sessions_machine("TMUX inyon-mux 0.26.0\nREALTMUX tmux 3.4\nKEEPER inyon-mux 0.26.0\nSESSMODE own", 0, "");
+        let r = setup_report("h").await.unwrap();
+        assert_eq!(serde_json::to_value(r.sessions).unwrap(), serde_json::json!({ "mode": "own", "tmux": true, "keeper": true }));
+        // a word nobody wrote is tmux, as the machine's own shell reads it
+        assert_eq!((SessionsMode::parse("maybe"), SessionsMode::named("maybe"), SessionsMode::named("own")), (SessionsMode::Tmux, None, Some(SessionsMode::Own)));
+    });
+}
+
+#[test]
+fn the_choice_is_written_on_the_machine_and_refused_where_it_would_leave_no_sessions() {
+    run(|| async {
+        let f = sessions_machine("", 0, "");
+        set_sessions_mode("h", SessionsMode::Auto).await.unwrap();
+        set_sessions_mode("h", SessionsMode::Own).await.unwrap();
+        set_sessions_mode("h", SessionsMode::Tmux).await.unwrap();
+        let ran: Vec<String> = f.cmds().into_iter().filter(|c| c.contains(".inyon/sessions")).collect();
+        assert_eq!(ran.len(), 3, "{ran:?}");
+        // written beside the file and moved into place, so a write that fails keeps the old choice
+        assert!(
+            ran[0].ends_with(r#"f="$HOME/.inyon/sessions"; mkdir -p "$HOME/.inyon" && printf '%s\n' auto > "$f.new" && mv -f "$f.new" "$f" || { rm -f "$f.new"; exit 1; }"#)
+                && ran[0].contains("mux -V"),
+            "{}",
+            ran[0]
+        );
+        assert!(ran[1].contains("printf '%s\\n' own > \"$f.new\""), "{}", ran[1]);
+        // back to tmux needs no keeper, so it never asks for one
+        assert_eq!(ran[2], r#"rm -f "$HOME/.inyon/sessions""#);
+
+        sessions_machine("", 3, "NOKEEPER\n");
+        let e = set_sessions_mode("h", SessionsMode::Own).await.unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(409), "This machine's inyon can't keep sessions itself yet. Update inyon on it (0.26 or newer), then choose again."));
+        sessions_machine("", 1, "");
+        assert_eq!(set_sessions_mode("h", SessionsMode::Auto).await.unwrap_err().message, "Could not save the choice on the machine: disk full");
+    });
+}
+
 #[test]
 fn the_report_says_which_agents_are_behind_and_how_each_was_installed() {
     run(|| async {

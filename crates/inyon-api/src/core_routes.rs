@@ -579,6 +579,12 @@ pub fn add(routes: &mut Routes) {
                         setup::set_keep_session(&id(&r), *keep)?;
                         return Ok(ok());
                     }
+                    // where the machine keeps its sessions: tmux, auto or own
+                    if let Some(Value::String(word)) = field(&b, "sessions")? {
+                        let mode = setup::SessionsMode::named(word).ok_or_else(|| http(400, "sessions is tmux, auto or own"))?;
+                        setup::set_sessions_mode(&id(&r), mode).await?;
+                        return Ok(ok());
+                    }
                     Ok(json_of(&setup::run_setup(&id(&r), &str_or_empty(field(&b, "action")?)).await?))
                 }),
             ),

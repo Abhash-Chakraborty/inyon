@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { SetupPanel } from './SetupPanel.tsx'
+import { SetupPanel, sessionsLine } from './SetupPanel.tsx'
 import type { SetupAgent, SetupReport, SetupResult } from '../lib/api.ts'
 import { useStore } from '../lib/store.ts'
 import { api } from '../test/fakes.ts'
@@ -119,5 +119,48 @@ describe('the agents in the Setup tab', () => {
     await user.click(screen.getByRole('button', { name: 'Install' }))
     await flush()
     expect(screen.getByText('Install Node.js first')).toBeTruthy()
+  })
+})
+
+describe('where a machine keeps its sessions', () => {
+  test("a machine whose inyon can't keep sessions has no such row", async () => {
+    api.setup.mockResolvedValue(report([]))
+    await panel()
+    expect(screen.queryByRole('radiogroup', { name: 'Where sessions are kept' })).toBeNull()
+  })
+
+  test('the choice shows, says what it means here, and a pick is saved on the machine', async () => {
+    const user = userEvent.setup()
+    api.setup.mockResolvedValue({ ...report([]), sessions: { mode: 'tmux', tmux: false, keeper: false } })
+    api.setSessions.mockResolvedValue({ ok: true })
+    await panel()
+    const group = screen.getByRole('radiogroup', { name: 'Where sessions are kept' })
+    expect(group.querySelector('[aria-checked="true"]')?.textContent).toBe('tmux')
+    expect(screen.getByText(/New sessions need tmux, which isn’t installed\. Automatic lets Inyon keep them itself\./)).toBeTruthy()
+    api.setup.mockResolvedValue({ ...report([]), sessions: { mode: 'auto', tmux: false, keeper: true } })
+    await user.click(screen.getByRole('radio', { name: 'Automatic' }))
+    await flush()
+    expect(api.setSessions.mock.calls).toEqual([['laptop', 'auto']])
+    // the report is read again, and the row follows it
+    expect(screen.getByRole('radiogroup', { name: 'Where sessions are kept' }).querySelector('[aria-checked="true"]')?.textContent).toBe('Automatic')
+    expect(screen.getByText(/tmux isn’t installed, so Inyon keeps new sessions itself\./)).toBeTruthy()
+  })
+
+  test('a machine that refuses says why, and the choice stays', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ toasts: [] })
+    api.setup.mockResolvedValue({ ...report([]), sessions: { mode: 'tmux', tmux: true, keeper: false } })
+    api.setSessions.mockRejectedValue(new Error("This machine's inyon can't keep sessions itself yet."))
+    await panel()
+    await user.click(screen.getByRole('radio', { name: 'Inyon’s own' }))
+    await flush()
+    expect(toasts()).toEqual(['Could not change where sessions are kept'])
+    expect(screen.getByRole('radiogroup', { name: 'Where sessions are kept' }).querySelector('[aria-checked="true"]')?.textContent).toBe('tmux')
+  })
+
+  test('each choice reads true for a machine with tmux and one without', () => {
+    expect(sessionsLine({ mode: 'tmux', tmux: true, keeper: false })).toBe('New sessions go to tmux.')
+    expect(sessionsLine({ mode: 'auto', tmux: true, keeper: false })).toBe('tmux is installed, so new sessions go there. Without it, Inyon would keep them itself.')
+    expect(sessionsLine({ mode: 'own', tmux: true, keeper: true })).toBe('Inyon keeps new sessions itself. Sessions you start in tmux don’t show here.')
   })
 })

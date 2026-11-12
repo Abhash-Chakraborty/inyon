@@ -87,6 +87,54 @@ pub struct SetupReport {
     pub checks: Vec<SetupCheck>,
     pub agents: Vec<SetupAgent>,
     pub keep_session: bool,
+    /// where the machine keeps its sessions, when its inyon can keep them itself (from 0.26)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sessions: Option<SessionsChoice>,
+}
+
+/// What `~/.inyon/sessions` says on a machine: tmux only (no file), Inyon's own keeper where tmux
+/// isn't installed, or the keeper even where it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionsMode {
+    Tmux,
+    Auto,
+    Own,
+}
+
+impl SessionsMode {
+    /// The word in the file; anything else is tmux, as the machine's shell reads it.
+    pub fn parse(word: &str) -> SessionsMode {
+        match word.trim() {
+            "auto" => SessionsMode::Auto,
+            "own" => SessionsMode::Own,
+            _ => SessionsMode::Tmux,
+        }
+    }
+
+    /// The choice as the app sends it: only the three words.
+    pub fn named(word: &str) -> Option<SessionsMode> {
+        matches!(word, "tmux" | "auto" | "own").then(|| SessionsMode::parse(word))
+    }
+
+    /// New sessions go to Inyon's own keeper, given whether tmux is installed.
+    pub fn keeper(self, tmux_installed: bool) -> bool {
+        match self {
+            SessionsMode::Tmux => false,
+            SessionsMode::Auto => !tmux_installed,
+            SessionsMode::Own => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionsChoice {
+    pub mode: SessionsMode,
+    /// tmux itself is installed there
+    pub tmux: bool,
+    /// new sessions are kept by Inyon itself right now
+    pub keeper: bool,
 }
 
 /// What an install or update step came back with.
@@ -196,6 +244,10 @@ echo "OS $(uname -s) $(uname -m)"
 for p in apt dnf yum pacman apk zypper brew; do command -v $p >/dev/null 2>&1 && {{ [ $p = apt ] && command -v apt-get >/dev/null || [ $p != apt ]; }} && {{ echo "PKG $p"; break; }}; done
 sudo -n true >/dev/null 2>&1 && echo "SUDO 1" || echo "SUDO 0"
 echo "TMUX $(tmux -V 2>/dev/null)"
+# tmux itself, whatever `tmux` means here; whether this machine's inyon can keep sessions; its choice
+echo "REALTMUX $(command tmux -V 2>/dev/null)"
+echo "KEEPER $("${{INYON_EXE:-$HOME/.inyon/bin/inyon}}" mux -V 2>/dev/null)"
+echo "SESSMODE $(head -n 1 "$HOME/.inyon/sessions" 2>/dev/null)"
 # the same sessions the list shows: not Inyon's own terminal views and sign-ins
 echo "SESSIONS $(tmux list-sessions -F '#{{session_name}}' 2>/dev/null | grep -c -v {hidden})"
 echo "NODE $(node --version 2>/dev/null)"
@@ -230,6 +282,13 @@ echo "NPMLS $(npm ls -g --depth=0 --parseable 2>/dev/null | tr '\n' ' ')"
         }
     };
     let node = get("NODE");
+    let real_tmux = !get("REALTMUX").is_empty();
+    // only a machine whose own inyon has the keeper is offered the choice
+    let choice = get("KEEPER").starts_with("inyon-mux").then(|| {
+        let mode = SessionsMode::parse(&get("SESSMODE"));
+        SessionsChoice { mode, tmux: real_tmux, keeper: mode.keeper(real_tmux) }
+    });
+    let own = choice.is_some_and(|s| s.keeper);
     let keep_session = load_settings().keep_session().get(host_id).copied().unwrap_or(false);
     let install = |p: &str| pkg.as_deref().and_then(|k| pkg_install(k, p));
     let as_root = |cmd: Option<String>| cmd.map(|c| if pkg.as_deref() != Some("brew") { format!("sudo sh -c {}", shq(&c)) } else { c });
@@ -240,16 +299,30 @@ echo "NPMLS $(npm ls -g --depth=0 --parseable 2>/dev/null | tr '\n' ' ')"
             id: "tmux".into(),
             label: "tmux".into(),
             ok: !tmux.is_empty(),
-            detail: Some(if tmux.is_empty() { "Not installed. Inyon lists and controls agents through tmux.".into() } else { tmux.clone() }),
+            detail: Some(if own {
+                "Not needed: Inyon keeps the sessions itself".into()
+            } else if tmux.is_empty() && choice.is_some() {
+                "Not installed. Install it, or choose Automatic under Sessions below and Inyon keeps the sessions itself.".into()
+            } else if tmux.is_empty() {
+                "Not installed. Inyon lists and controls agents through tmux.".into()
+            } else {
+                tmux.clone()
+            }),
             fix: (tmux.is_empty() && can_fix).then(|| SetupFix { label: "Install tmux".into(), action: "install:tmux".into() }),
             manual: tmux.is_empty().then(|| as_root(install("tmux")).unwrap_or_else(|| "Install tmux with your package manager".into())),
             docs: None,
         },
         SetupCheck {
             id: "session".into(),
-            label: "A tmux session to work in".into(),
+            label: if own { "A session to work in" } else { "A tmux session to work in" }.into(),
             ok: sessions > 0.0,
-            detail: Some(if sessions != 0.0 { format!("{} running", fmt_number(sessions)) } else { "No tmux sessions yet".into() }),
+            detail: Some(if sessions != 0.0 {
+                format!("{} running", fmt_number(sessions))
+            } else if own {
+                "No sessions yet".into()
+            } else {
+                "No tmux sessions yet".into()
+            }),
             fix: (!tmux.is_empty() && sessions == 0.0).then(|| SetupFix { label: "Start a session".into(), action: "session".into() }),
             manual: None,
             docs: None,
@@ -297,7 +370,7 @@ echo "NPMLS $(npm ls -g --depth=0 --parseable 2>/dev/null | tr '\n' ' ')"
             a
         })
         .collect();
-    Ok(SetupReport { os, pkg, sudo, checks, agents, keep_session })
+    Ok(SetupReport { os, pkg, sudo, checks, agents, keep_session, sessions: choice })
 }
 
 /// Node's lenient base64 (`Buffer.from(s, 'base64')`): characters outside the alphabet are skipped,
@@ -527,6 +600,38 @@ pub async fn run_setup(host_id: &str, action: &str) -> HubResult<SetupResult> {
         result.hint = failure_hint(&output, npm_package(def)).or_else(|| version.is_none().then(|| format!("{} still doesn't run after the step", def.name)));
     }
     Ok(result)
+}
+
+/// Where a machine keeps its sessions from now on: writes (or removes) `~/.inyon/sessions` there.
+/// The word goes into a file beside it first and is moved into place, so a write that fails (a full
+/// disk) leaves the old choice standing. Sessions already running stay where they are. Inyon's own is refused on a machine whose inyon
+/// has no keeper, which would leave it with no sessions at all.
+pub async fn set_sessions_mode(host_id: &str, mode: SessionsMode) -> HubResult<()> {
+    let host = registry().host(host_id)?;
+    let script = match mode {
+        SessionsMode::Tmux => r#"rm -f "$HOME/.inyon/sessions""#.to_string(),
+        SessionsMode::Auto | SessionsMode::Own => format!(
+            r#""${{INYON_EXE:-$HOME/.inyon/bin/inyon}}" mux -V >/dev/null 2>&1 || {{ echo NOKEEPER; exit 3; }}
+f="$HOME/.inyon/sessions"; mkdir -p "$HOME/.inyon" && printf '%s\n' {} > "$f.new" && mv -f "$f.new" "$f" || {{ rm -f "$f.new"; exit 1; }}"#,
+            if mode == SessionsMode::Own {
+                {
+                    "own"
+                }
+            } else {
+                {
+                    "auto"
+                }
+            }
+        ),
+    };
+    let r = host.exec(&script, ExecOptions::timeout(15000)).await?;
+    if r.stdout.contains("NOKEEPER") {
+        return Err(HubError::http(409, "This machine's inyon can't keep sessions itself yet. Update inyon on it (0.26 or newer), then choose again."));
+    }
+    if r.code != 0 {
+        return Err(HubError::plain(format!("Could not save the choice on the machine: {}", r.stderr.trim())));
+    }
+    Ok(())
 }
 
 /// "Keep a tmux session running" on a machine, or not.
