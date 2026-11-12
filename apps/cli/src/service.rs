@@ -1217,21 +1217,58 @@ pub fn installed_by_inyon() -> InstalledByInyon {
     fs::read_to_string(node_dir().join("installed.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
+/// The choice in `home`'s `.inyon/sessions`, when this computer keeps its sessions itself
+/// (`auto` or `own`, from 0.26); None is tmux.
+pub fn own_sessions_in(home: &Path) -> Option<String> {
+    let text = fs::read_to_string(home.join(".inyon").join("sessions")).ok()?;
+    Some(text.lines().next()?.trim().to_string()).filter(|w| w == "auto" || w == "own")
+}
+
+/// Lets Inyon keep this computer's sessions itself while tmux isn't installed: writes `auto`,
+/// which hands over to tmux the day it's there. A choice already made is left alone. False when
+/// the word couldn't be saved.
+pub fn keep_own_sessions_in(home: &Path) -> bool {
+    if own_sessions_in(home).is_some() {
+        return true;
+    }
+    let dir = home.join(".inyon");
+    let (new, file) = (dir.join("sessions.new"), dir.join("sessions"));
+    // beside the file first, so a write that fails leaves nothing half-written in its place
+    let saved = fs::create_dir_all(&dir).and_then(|()| fs::write(&new, "auto\n")).and_then(|()| fs::rename(&new, &file));
+    if saved.is_err() {
+        let _ = fs::remove_file(&new);
+    }
+    saved.is_ok()
+}
+
+/// Setup's line when tmux stays out: Inyon keeps the sessions (Linux and macOS, from 0.26), or,
+/// where it can't, what's missing as before. `why` is why tmux wasn't installed, `how` how to.
+fn without_mux(sys: &Sys, missing: &str, why: &str, how: Option<String>) -> String {
+    if sys.platform != Platform::Windows && keep_own_sessions_in(&home()) {
+        let how = how.map(|h| format!(" To use tmux instead: {h}")).unwrap_or_default();
+        return format!("✓ {why}, so Inyon keeps this computer's sessions itself.{how}");
+    }
+    format!("! {missing}")
+}
+
 /// Installs tmux (psmux on Windows) when it's missing: asked first when `ask`, and only with a
-/// terminal when the install needs sudo. The line for setup's summary.
+/// terminal when the install needs sudo. On Linux and macOS a tmux that isn't installed (no
+/// package manager, no terminal for sudo, a no, or an install that failed) no longer leaves the
+/// computer without sessions: Inyon keeps them itself. The line for setup's summary.
 pub fn install_mux(sys: &Sys, ask: bool, interactive: bool) -> String {
     let name = mux_name(sys.platform);
     let Some(missing) = missing_mux(sys.platform) else {
         return format!("✓ {name} is installed");
     };
     let Some(pkg) = mux_package(sys.platform) else {
-        return format!("! {missing}");
+        return without_mux(sys, &missing, "tmux isn't installed", None);
     };
+    let how = || Some(format!("{}{}", if pkg.sudo { "sudo " } else { "" }, pkg.install.join(" ")));
     if pkg.sudo && !interactive {
-        return format!("! {missing}");
+        return without_mux(sys, &missing, "tmux isn't installed", how());
     }
     if ask && !crate::ui::ask_yes_no(&format!("{name} isn't installed. Install it now with {}?", pkg.manager), true) {
-        return format!("! {missing}");
+        return without_mux(sys, &missing, "tmux isn't installed", how());
     }
     println!("Installing {name} with {}…", pkg.manager);
     match run_package_command(pkg.install, pkg.sudo) {
@@ -1242,7 +1279,10 @@ pub fn install_mux(sys: &Sys, ask: bool, interactive: bool) -> String {
             let found = missing_mux(sys.platform).is_none();
             format!("✓ Installed {name} with {}{}", pkg.manager, if found { "" } else { " (new terminals find it)" })
         }
-        Err(e) => format!("! {name} couldn't be installed with {} ({e}). Install it with: {}", pkg.manager, pkg.install.join(" ")),
+        Err(e) => {
+            let failed = format!("{name} couldn't be installed with {} ({e}). Install it with: {}", pkg.manager, pkg.install.join(" "));
+            without_mux(sys, &failed, &format!("tmux couldn't be installed with {} ({e})", pkg.manager), how())
+        }
     }
 }
 
@@ -1503,6 +1543,55 @@ pub fn active_roles(sys: &Sys) -> Vec<Role> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("inyon-own-sessions-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_computer_without_tmux_keeps_its_sessions_itself_until_tmux_is_there() {
+        let home = scratch("fresh");
+        assert_eq!(own_sessions_in(&home), None);
+        assert!(keep_own_sessions_in(&home));
+        // `auto`: tmux takes over the day it's installed
+        assert_eq!(fs::read_to_string(home.join(".inyon/sessions")).unwrap(), "auto\n");
+        assert_eq!(own_sessions_in(&home).as_deref(), Some("auto"));
+        assert!(!home.join(".inyon/sessions.new").exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_choice_already_made_is_left_alone_and_anything_else_reads_as_tmux() {
+        let home = scratch("chosen");
+        fs::create_dir_all(home.join(".inyon")).unwrap();
+        fs::write(home.join(".inyon/sessions"), "own\n").unwrap();
+        assert!(keep_own_sessions_in(&home));
+        assert_eq!(own_sessions_in(&home).as_deref(), Some("own"));
+        for other in ["", "tmux\n", "maybe\n"] {
+            fs::write(home.join(".inyon/sessions"), other).unwrap();
+            assert_eq!(own_sessions_in(&home), None, "{other:?}");
+        }
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_word_that_cannot_be_saved_says_so_and_leaves_nothing_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = scratch("readonly");
+        fs::create_dir_all(home.join(".inyon")).unwrap();
+        fs::set_permissions(home.join(".inyon"), fs::Permissions::from_mode(0o555)).unwrap();
+        // root writes anywhere, so the case can't be made there
+        if fs::write(home.join(".inyon/probe"), "x").is_err() {
+            assert!(!keep_own_sessions_in(&home));
+            assert_eq!(own_sessions_in(&home), None);
+        }
+        fs::set_permissions(home.join(".inyon"), fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = fs::remove_dir_all(&home);
+    }
 
     #[cfg(unix)]
     #[test]
