@@ -1,6 +1,7 @@
 // How sessions are organised (from 0.24): pins, parking, snoozes, tags and notes on sessions,
 // projects that gather sessions by folder, and what the hub does for them on its own: messages sent
-// later, idle agents put to sleep, sessions closed once done, and saved prompts. The hub owns it, so every device (phone, browser,
+// later, idle agents put to sleep, sessions closed once done, saved prompts, and (from version 3)
+// carrying on after a plan limit and compacting before the context fills. The hub owns it, so every device (phone, browser,
 // desktop app) shows the same order. The TypeScript side is in packages/protocol/src/index.ts.
 //
 // A session here is a pane, as the overview lists it, found again by the anchors its mark keeps
@@ -13,7 +14,7 @@ use ts_rs::TS;
 
 /// The version of the `organize` record the hub writes. A hub that finds a later one reads what it
 /// knows and refuses to change it, so going back to an older hub can't lose what a newer one kept.
-pub const ORGANIZE_VERSION: u32 = 2;
+pub const ORGANIZE_VERSION: u32 = 3;
 
 /// Marks kept at most; past it the one seen longest ago goes.
 pub const MAX_MARKS: usize = 1000;
@@ -46,6 +47,15 @@ pub const SLEEP_MIN: u32 = 5;
 pub const SLEEP_MAX: u32 = 24 * 60;
 /// The [`SleepRule::scope`] that covers every session no project rule does.
 pub const SLEEP_ALL: &str = "all";
+/// What a session that stopped on a plan limit is sent once the limit resets.
+pub const CARRY_ON_TEXT: &str = "continue";
+/// How long after the reset it goes, so the new window is surely open.
+pub const CARRY_ON_DELAY_MS: u64 = 60_000;
+/// How full the context gets (percent) before the hub compacts it, unless [`AutoRules::compact_at`]
+/// says otherwise, and the range that can say.
+pub const COMPACT_AT: u32 = 85;
+pub const COMPACT_MIN: u32 = 50;
+pub const COMPACT_MAX: u32 = 95;
 
 /// A project's or a group's colour: the neutral ones, and a few muted ones. The app draws it on the
 /// project's mark and nowhere else.
@@ -117,6 +127,13 @@ pub struct SessionMark {
     pub close_when_done: Option<bool>,
     /// the hub saw it working since `close_when_done` was set, so the next idle ends it
     pub close_saw_work: Option<bool>,
+    /// send "continue" once a plan limit it stopped on resets; unset follows [`AutoRules::carry_on`]
+    pub carry_on: Option<bool>,
+    /// send the agent's compact command when the context passes [`AutoRules::compact_at`]; unset
+    /// follows [`AutoRules::auto_compact`]
+    pub auto_compact: Option<bool>,
+    /// the limit reset (unix seconds) a carry-on was planned for, so one cancelled isn't planned again
+    pub carried_reset: Option<u64>,
 }
 
 impl SessionMark {
@@ -131,6 +148,9 @@ impl SessionMark {
             && self.section.is_none()
             && self.project.is_none()
             && self.close_when_done != Some(true)
+            && self.carry_on.is_none()
+            && self.auto_compact.is_none()
+            && self.carried_reset.is_none()
     }
 }
 
@@ -203,6 +223,36 @@ pub struct DelayedSend {
     pub at: u64,
     /// why it couldn't go; it stays until dismissed
     pub error: Option<String>,
+    /// planned by the hub itself rather than by you (from version 3)
+    pub auto: Option<SendAuto>,
+}
+
+/// Why the hub planned a message on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum SendAuto {
+    /// "continue", a minute after the plan limit the agent stopped on resets; it goes only if the
+    /// agent is still stopped on it then
+    CarryOn,
+}
+
+/// What the hub does for every session that doesn't say otherwise (from version 3). Both are off
+/// unless turned on.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct AutoRules {
+    pub carry_on: Option<bool>,
+    pub auto_compact: Option<bool>,
+    /// percent, [`COMPACT_AT`] when unset
+    pub compact_at: Option<u32>,
+}
+
+impl AutoRules {
+    pub fn is_empty(&self) -> bool {
+        self.carry_on.is_none() && self.auto_compact.is_none() && self.compact_at.is_none()
+    }
 }
 
 /// A prompt kept to send again: for every session, or for one project's.
@@ -252,6 +302,23 @@ pub struct Organize {
     pub sends: Option<Vec<DelayedSend>>,
     pub prompts: Option<Vec<SavedPrompt>>,
     pub sleep: Option<Vec<SleepRule>>,
+    /// from version 3
+    pub auto: Option<AutoRules>,
+}
+
+/// Whether the hub carries a session on after a plan limit: its own switch, else every session's.
+pub fn carries_on(org: &Organize, mark: Option<&SessionMark>) -> bool {
+    mark.and_then(|m| m.carry_on).or_else(|| org.auto.as_ref().and_then(|a| a.carry_on)).unwrap_or(false)
+}
+
+/// Whether the hub compacts a session's context before it fills: its own switch, else every session's.
+pub fn compacts(org: &Organize, mark: Option<&SessionMark>) -> bool {
+    mark.and_then(|m| m.auto_compact).or_else(|| org.auto.as_ref().and_then(|a| a.auto_compact)).unwrap_or(false)
+}
+
+/// How full the context gets (percent) before the hub compacts it.
+pub fn compact_at(org: &Organize) -> u32 {
+    org.auto.as_ref().and_then(|a| a.compact_at).unwrap_or(COMPACT_AT)
 }
 
 /// JavaScript's `s.length`: what the limits count.

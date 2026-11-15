@@ -1039,7 +1039,20 @@ closeWhenDone?: boolean,
 /**
  * the hub saw it working since `close_when_done` was set, so the next idle ends it
  */
-closeSawWork?: boolean, };
+closeSawWork?: boolean, 
+/**
+ * send "continue" once a plan limit it stopped on resets; unset follows [`AutoRules::carry_on`]
+ */
+carryOn?: boolean, 
+/**
+ * send the agent's compact command when the context passes [`AutoRules::compact_at`]; unset
+ * follows [`AutoRules::auto_compact`]
+ */
+autoCompact?: boolean, 
+/**
+ * the limit reset (unix seconds) a carry-on was planned for, so one cancelled isn't planned again
+ */
+carriedReset?: number, };
 
 /**
  * A folder on one machine whose sessions belong to a project.
@@ -1098,7 +1111,26 @@ at: number,
 /**
  * why it couldn't go; it stays until dismissed
  */
-error?: string, };
+error?: string, 
+/**
+ * planned by the hub itself rather than by you (from version 3)
+ */
+auto?: SendAuto, };
+
+/**
+ * Why the hub planned a message on its own.
+ */
+export type SendAuto = "carry-on";
+
+/**
+ * What the hub does for every session that doesn't say otherwise (from version 3). Both are off
+ * unless turned on.
+ */
+export type AutoRules = { carryOn?: boolean, autoCompact?: boolean, 
+/**
+ * percent, [`COMPACT_AT`] when unset
+ */
+compactAt?: number, };
 
 /**
  * A prompt kept to send again: for every session, or for one project's.
@@ -1141,7 +1173,11 @@ v: number, sessions: Array<SessionMark>, projects: Array<Project>, groups: Array
 /**
  * from version 2
  */
-sends?: Array<DelayedSend>, prompts?: Array<SavedPrompt>, sleep?: Array<SleepRule>, };
+sends?: Array<DelayedSend>, prompts?: Array<SavedPrompt>, sleep?: Array<SleepRule>, 
+/**
+ * from version 3
+ */
+auto?: AutoRules, };
 
 export type ServerMsg = { "t": "overview", hosts: Array<HostState>, organize?: Organize, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "page.notify", host: string, slug: string, title: string, body: string, } | { "t": "pong" } | { "t": "companion.reply", id: string, host: string, pane: string, text: string, error?: boolean, at: number, };
 

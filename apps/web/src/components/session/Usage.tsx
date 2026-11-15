@@ -8,6 +8,7 @@ import { duration, liveWindow, money, resetClock, resetsIn, since, tokens } from
 import { Button, Meter } from '../ui/primitives.tsx'
 import { IntegrationNote } from './IntegrationNote.tsx'
 import { CopyButton } from '../chat/copy.tsx'
+import { AutoSwitches } from './AutoSwitches.tsx'
 
 const showsCost = (agent?: AgentKind) => !agent || !['codex', 'gemini', 'antigravity', 'copilot'].includes(agent)
 
@@ -223,6 +224,8 @@ export function UsagePanel({ status, info, onCompact, host, agent, agentInfo, pa
           <RateRow label="Weekly" w={status?.sevenDay} />
         </section>
       )}
+
+      <AutoSwitches host={host} pane={pane} agent={agent} compact={!!onCompact} />
 
       <div className="grid grid-cols-2 gap-2">
         {showsCost(agent) && <Stat icon={<Coins className="size-3.5" />} label="Session cost" value={money(cost)} sub={status?.apiDurationMs ? `API time ${duration(status.apiDurationMs)}` : undefined} />}

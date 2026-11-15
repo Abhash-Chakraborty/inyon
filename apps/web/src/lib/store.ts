@@ -129,8 +129,8 @@ const remembered = loadOverview()
 // each hub's organize by where it came from, as the machines are
 const organizeBy = new Map<string, Organize>(Object.entries((remembered && loadOrganize()) ?? {}))
 let organizeWire = ''
-// sleep rules are each hub's own: the screens show this hub's
-const allOrganize = () => (organizeBy.size ? { ...mergeOrganize([...organizeBy.values()]), sleep: organizeBy.get('main')?.sleep } : NO_ORGANIZE)
+// sleep rules and the rules for every session are each hub's own: the screens show this hub's
+const allOrganize = () => (organizeBy.size ? { ...mergeOrganize([...organizeBy.values()]), sleep: organizeBy.get('main')?.sleep, auto: organizeBy.get('main')?.auto } : NO_ORGANIZE)
 /** Whether this hub (or the phone's own core) can put idle agents to sleep: from version 2 of its record. */
 export const canSleep = () => (organizeBy.get('main')?.v ?? 0) >= 2
 
@@ -140,6 +140,19 @@ export function canSchedule(hostId: string) {
   const hub = splitHostId(hostId).hub
   return (organizeBy.get(hub ? `hub:${hub.id}` : 'main')?.v ?? 0) >= 2
 }
+
+/** The organize record of the hub a machine is on. */
+const organizeOf = (hostId: string) => {
+  const hub = splitHostId(hostId).hub
+  return organizeBy.get(hub ? `hub:${hub.id}` : 'main')
+}
+
+/** Whether the hub a machine is on carries sessions on after a plan limit and compacts them before
+ * their context fills (version 3 of its record, from 0.27). */
+export const canAutomate = (hostId: string) => (organizeOf(hostId)?.v ?? 0) >= 3
+
+/** What that hub does for every session that doesn't say otherwise. */
+export const autoRules = (hostId: string) => organizeOf(hostId)?.auto
 
 /** Whether the hub a machine is on keeps how sessions are organised (an older one doesn't). */
 export function canOrganize(hostId: string) {

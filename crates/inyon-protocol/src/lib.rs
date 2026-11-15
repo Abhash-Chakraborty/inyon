@@ -135,6 +135,8 @@ macro_rules! with_types {
             ProjectGroup,
             Space,
             DelayedSend,
+            SendAuto,
+            AutoRules,
             SavedPrompt,
             SleepRule,
             Organize,

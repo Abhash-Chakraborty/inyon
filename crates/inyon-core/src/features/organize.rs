@@ -13,7 +13,8 @@
 //!
 //! Kept in the `organize` record with a version (see [`ORGANIZE_VERSION`]); a record written by a
 //! later hub is read but never written over. What the hub does on its own with it (messages sent
-//! later, agents put to sleep, sessions closed when done, saved prompts) is in [`auto`].
+//! later, agents put to sleep, sessions closed when done, saved prompts, carrying on after a plan
+//! limit and compacting before the context fills) is in [`auto`].
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -99,11 +100,11 @@ fn load() -> State {
 
 /// Brings a record from an earlier version up to this one. Version 0 is a record from before
 /// versions were written, which never shipped; it reads as version 1. Version 2 added messages
-/// sent later, sleep rules, saved prompts and closing when done, all of them new fields, so a
-/// version 1 record reads as it is.
+/// sent later, sleep rules, saved prompts and closing when done, and version 3 carrying on after a
+/// plan limit and compacting, all of them new fields, so an earlier record reads as it is.
 pub fn migrate(mut org: Organize) -> Organize {
-    if org.v < 2 {
-        org.v = 2;
+    if org.v < ORGANIZE_VERSION {
+        org.v = ORGANIZE_VERSION;
     }
     org
 }
@@ -372,6 +373,16 @@ fn bool_field(b: &Map<String, Value>, k: &str) -> HubResult<Option<bool>> {
     }
 }
 
+/// A switch that can also be unset (`null`), to follow what every session does.
+fn switch_field(b: &Map<String, Value>, k: &str) -> HubResult<Option<Option<bool>>> {
+    match given(b, k) {
+        Given::Absent => Ok(None),
+        Given::Null => Ok(Some(None)),
+        Given::Some(Value::Bool(v)) => Ok(Some(Some(*v))),
+        Given::Some(_) => Err(http(400, format!("{k} must be true, false or null"))),
+    }
+}
+
 /// A short line of text: spaces squashed; empty or null clears it. Too long is refused.
 fn line_field(b: &Map<String, Value>, k: &str, max: usize, what: &str) -> HubResult<Option<Option<String>>> {
     match given(b, k) {
@@ -426,6 +437,11 @@ pub struct SessionPatch {
     pub section: Option<Option<String>>,
     pub project: Option<Option<String>>,
     pub close_when_done: Option<bool>,
+    /// null follows every session's rule
+    pub carry_on: Option<Option<bool>>,
+    pub auto_compact: Option<Option<bool>>,
+    /// the hub's own note of a carry-on it planned; never read from a request
+    pub carried_reset: Option<Option<u64>>,
 }
 
 impl SessionPatch {
@@ -475,6 +491,9 @@ impl SessionPatch {
             section: line_field(b, "section", SECTION_LEN, "A section's name")?,
             project,
             close_when_done: bool_field(b, "closeWhenDone")?,
+            carry_on: switch_field(b, "carryOn")?,
+            auto_compact: switch_field(b, "autoCompact")?,
+            carried_reset: None,
         })
     }
 }
@@ -525,6 +544,18 @@ fn apply(org: &mut Organize, i: usize, p: &SessionPatch) -> HubResult<()> {
         if let Some(v) = from {
             *to = v.clone();
         }
+    }
+    if let Some(v) = p.auto_compact {
+        m.auto_compact = v;
+    }
+    if let Some(v) = p.carried_reset {
+        m.carried_reset = v;
+    }
+    if let Some(v) = p.carry_on {
+        // turned on again, a limit it's stopped on now is planned afresh
+        m.carry_on = v;
+        m.carried_reset = None;
+        auto::drop_unwanted_carry_ons(org);
     }
     renumber_pins(org);
     Ok(())
@@ -593,6 +624,9 @@ pub fn mark_pane(host_id: &str, pane_id: &str, patch: &SessionPatch) -> HubResul
                     project: None,
                     close_when_done: None,
                     close_saw_work: None,
+                    carry_on: None,
+                    auto_compact: None,
+                    carried_reset: None,
                 });
                 org.sessions.len() - 1
             }
@@ -938,11 +972,16 @@ pub fn set_order(b: &Value) -> HubResult<()> {
 
 /// What a session is called in a notice: its title in Inyon, else its pane's.
 fn name_for(m: &SessionMark, hosts: &[HostState]) -> String {
-    if let Some(t) = &m.title {
-        return t.clone();
+    pane_name(m.title.as_deref(), &m.host, &m.pane, hosts)
+}
+
+/// The same for a pane that may have no mark: `title` is the mark's.
+fn pane_name(title: Option<&str>, host: &str, pane: &str, hosts: &[HostState]) -> String {
+    if let Some(t) = title {
+        return t.to_owned();
     }
-    let pane = hosts.iter().filter(|h| h.config.id == m.host).flat_map(|h| h.sessions.iter().flat_map(|s| s.windows.iter().flat_map(|w| w.panes.iter()))).find(|p| p.id == m.pane);
-    pane.map(|p| p.label.clone().unwrap_or_else(|| crate::hosts::registry::pane_title(p))).filter(|t| !t.is_empty()).unwrap_or_else(|| "A session".to_owned())
+    let p = hosts.iter().filter(|h| h.config.id == host).flat_map(|h| h.sessions.iter().flat_map(|s| s.windows.iter().flat_map(|w| w.panes.iter()))).find(|p| p.id == pane);
+    p.map(|p| p.label.clone().unwrap_or_else(|| crate::hosts::registry::pane_title(p))).filter(|t| !t.is_empty()).unwrap_or_else(|| "A session".to_owned())
 }
 
 /// Ends the snoozes that are over, raising the notices they asked for. Whether any ended.
@@ -989,8 +1028,10 @@ pub fn tick(now: u64) {
         emit(Event::Changed);
     }
     auto::follow_sends(&hosts);
+    auto::plan_carry_on(&hosts);
     auto::send_due(now, &hosts);
     auto::check_agents(now, &hosts);
+    auto::compact_full(now, &hosts);
 }
 
 /// Starts the hub's clock for all that (once).

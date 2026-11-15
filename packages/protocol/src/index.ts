@@ -778,6 +778,12 @@ export interface SessionMark {
   closeWhenDone?: boolean
   /** the hub saw it working since closeWhenDone was set, so the next idle ends it */
   closeSawWork?: boolean
+  /** send "continue" once a plan limit it stopped on resets; unset follows `Organize.auto.carryOn` (from version 3) */
+  carryOn?: boolean
+  /** send the agent's compact command when the context passes `Organize.auto.compactAt`; unset follows `Organize.auto.autoCompact` */
+  autoCompact?: boolean
+  /** the limit reset (unix seconds) a carry-on was planned for, so one cancelled isn't planned again */
+  carriedReset?: number
 }
 
 /** A folder on one machine whose sessions belong to a project. */
@@ -829,6 +835,19 @@ export interface DelayedSend {
   at: number
   /** why it couldn't go; it stays until dismissed */
   error?: string
+  /** planned by the hub itself rather than by you (from version 3) */
+  auto?: SendAuto
+}
+
+/** Why the hub planned a message on its own: carry-on is "continue" a minute after the plan limit the agent stopped on resets, sent only if it's still stopped on it then. */
+export type SendAuto = 'carry-on'
+
+/** What the hub does for every session that doesn't say otherwise (from version 3); both off unless turned on. */
+export interface AutoRules {
+  carryOn?: boolean
+  autoCompact?: boolean
+  /** percent, 85 when unset */
+  compactAt?: number
 }
 
 /** A prompt kept to send again: for every session, or for one project's. */
@@ -862,6 +881,8 @@ export interface Organize {
   sends?: DelayedSend[]
   prompts?: SavedPrompt[]
   sleep?: SleepRule[]
+  /** from version 3 */
+  auto?: AutoRules
 }
 
 // ---------- WebSocket protocol ----------

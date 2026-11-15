@@ -113,6 +113,8 @@ From 0.24 the hub can keep a message and send it at a time you pick. Right-click
 
 A message sent later follows its conversation if you resume it in another pane, and shows in that pane's chat. If its machine is offline when the time comes, it waits until the machine is back. If the conversation is gone by then, it stays with *The session isn't there any more* until you dismiss it; it never goes to another conversation that took over its pane. **Send now** takes it off the schedule and hands it to the held messages in one step, and **Undo** after **Cancel** puts it back for the same conversation. Times more than six days off show their date. Up to 50 messages can wait at once, each up to 4,000 characters.
 
+From 0.27 the hub plans one of these itself for a session that [carries on after a plan limit](controls.md#carrying-on-and-compacting-by-itself): it reads *Carries on at …*, goes only if the session is still stopped on the limit then, and once cancelled it stays cancelled, without an **Undo**.
+
 Newer Claude Code versions show *← 1 agent* in their footer, a count of the other Claude Code sessions on the machine. Until 0.22.3 Inyon read it as this session's background work, so the session never looked free and held messages waited for good. From 0.22.3 that count is ignored.
 
 ## Renaming

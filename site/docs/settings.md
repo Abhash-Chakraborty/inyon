@@ -33,6 +33,8 @@ From 0.22, on the hub's web app: start the [companion agent](companion-agent.md)
 
 **Put idle agents to sleep** (from 0.24): **Off**, **30 min**, **1 hour** or **2 hours**; a time set through the API shows as one more choice. An agent idle that long exits to its shell, as **Exit to shell** does, keeping its pane, so it stops using memory. Open the session and choose [**Resume conversation**](sessions.md#when-nothing-is-running) when you need it again. Idle means the turn is over, nothing runs in the background and nothing is being asked, and the time counts from when the hub first saw it idle, so a hub restart starts it again. Pinned sessions stay awake, and so do sessions with a held message or a message sent later waiting, ones without a conversation to resume, and the companion. It's off unless you choose a time, and it applies to this hub's sessions; a paired hub has its own.
 
+**Carry on after a plan limit** (from 0.27): when Claude Code stops on a plan limit, Inyon sends "continue" a minute after the limit resets, if the session is still stopped on it then. **Compact before the context fills**: **Off**, **75%**, **85%** or **90%**; past that, Inyon sends the agent's compact command while it's idle, once until the context drops back under it. Both are off by default, and both apply to every session of this hub whose own switch (under its Usage) you haven't changed. See [Carrying on and compacting by itself](controls.md#carrying-on-and-compacting-by-itself).
+
 ## Uploads and clipboard
 
 | Setting | Choices | Default |

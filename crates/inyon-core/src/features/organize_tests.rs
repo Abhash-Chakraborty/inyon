@@ -145,7 +145,7 @@ fn a_record_from_before_versions_is_read_and_one_from_a_newer_hub_is_never_writt
         let org = current();
         assert_eq!((org.v, org.sessions.len(), org.sessions[0].live), (ORGANIZE_VERSION, 1, true));
 
-        // version 1 (pins, parking, snoozes, tags, notes, projects) reads as it is
+        // version 1 (pins, parking, snoozes, tags, notes, projects) reads as it is, as the current version
         fresh();
         kv::set_value(
             KEY,
@@ -153,7 +153,7 @@ fn a_record_from_before_versions_is_read_and_one_from_a_newer_hub_is_never_writt
         )
         .unwrap();
         let org = current();
-        assert_eq!((org.v, org.sessions[0].pinned, org.projects.len(), org.sends.clone()), (2, Some(0), 1, None));
+        assert_eq!((org.v, org.sessions[0].pinned, org.projects.len(), org.sends.clone()), (ORGANIZE_VERSION, Some(0), 1, None));
 
         fresh();
         let later = json!({ "v": ORGANIZE_VERSION + 1, "sessions": [{ "id": "s-1", "host": "box", "pane": "%3", "parked": true, "colourOfTheDay": "red" }], "boards": [1] });

@@ -85,6 +85,8 @@ export type Checks = [
   Check<Same<G.ProjectGroup, H.ProjectGroup>>,
   Check<Same<G.Space, H.Space>>,
   Check<Same<G.DelayedSend, H.DelayedSend>>,
+  Check<Same<G.SendAuto, H.SendAuto>>,
+  Check<Same<G.AutoRules, H.AutoRules>>,
   Check<Same<G.SavedPrompt, H.SavedPrompt>>,
   Check<Same<G.SleepRule, H.SleepRule>>,
   Check<Same<G.Organize, H.Organize>>,
