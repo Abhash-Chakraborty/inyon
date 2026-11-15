@@ -1094,7 +1094,18 @@ fn TreeGroupHead(title: &'static str, n: usize, all: &'static str, busy: bool, o
 
 /// One changed file: pick it for its diff, right-click for its menu, and (with a hub that stages) + or − at its end.
 #[component]
-fn TreeRow(host: String, pane: String, root: Option<String>, file: api::GitFile, on: bool, staged: bool, staging: bool, acting: Option<String>, on_pick: EventHandler<String>, on_act: EventHandler<(&'static str, api::GitFile)>) -> Element {
+fn TreeRow(
+    host: String,
+    pane: String,
+    root: Option<String>,
+    file: api::GitFile,
+    on: bool,
+    staged: bool,
+    staging: bool,
+    acting: Option<String>,
+    on_pick: EventHandler<String>,
+    on_act: EventHandler<(&'static str, api::GitFile)>,
+) -> Element {
     let gf = file;
     let (label, tone) = status_tone(&gf.status);
     let full = root.as_ref().map_or(gf.path.clone(), |r| format!("{r}/{}", gf.path));
@@ -1104,7 +1115,11 @@ fn TreeRow(host: String, pane: String, root: Option<String>, file: api::GitFile,
     }
     items.push(Item::copy("Copy path", &full));
     if staging {
-        items.push(if staged { Item::new("Unstage", Icon::Minus, Action::Panel(PanelOp::Tree("unstage", gf.path.clone()))) } else { Item::new("Stage", Icon::Plus, Action::Panel(PanelOp::Tree("stage", gf.path.clone()))) });
+        items.push(if staged {
+            Item::new("Unstage", Icon::Minus, Action::Panel(PanelOp::Tree("unstage", gf.path.clone())))
+        } else {
+            Item::new("Stage", Icon::Plus, Action::Panel(PanelOp::Tree("stage", gf.path.clone())))
+        });
         items.push(Item::new("Discard changes", Icon::RotateCcw, Action::Panel(PanelOp::Tree("discard", gf.path.clone()))).danger());
     }
     let title = gf.from.as_ref().map_or(gf.path.clone(), |from| format!("{from} → {}", gf.path));

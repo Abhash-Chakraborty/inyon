@@ -111,7 +111,8 @@ fn git_commands_quote_every_path_after_a_double_dash() {
 
     assert!(commit_command("/w", CommitWhat::All).contains("add -A && "));
     assert!(commit_command("/w", CommitWhat::Staged).contains("diff --cached --quiet; then echo 'Nothing is staged' >&2; exit 5"));
-    assert!(commit_command("/w", CommitWhat::Auto).contains("diff --cached --quiet; then GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 git -c core.quotepath=off -c color.ui=false add -A"));
+    assert!(commit_command("/w", CommitWhat::Auto)
+        .contains("diff --cached --quiet; then GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 git -c core.quotepath=off -c color.ui=false add -A"));
     assert_eq!(CommitWhat::from_field(Some(&json!(true))), CommitWhat::Staged);
     assert_eq!(CommitWhat::from_field(Some(&json!(false))), CommitWhat::All);
     assert_eq!(CommitWhat::from_field(None), CommitWhat::Auto);
