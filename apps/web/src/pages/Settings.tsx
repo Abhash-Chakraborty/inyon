@@ -351,10 +351,10 @@ function AutoRows() {
   const save = (b: Parameters<typeof api.setAuto>[0]) => void api.setAuto(b).catch((e) => toast({ title: 'Could not change it', body: (e as Error).message, tone: 'error' }))
   return (
     <>
-      <Row label="Carry on after a plan limit" hint="When Claude Code stops on a plan limit, Inyon sends “continue” a minute after the limit resets, if the session is still stopped on it. It shows in the chat as a message waiting to go, which you can cancel. A session's Usage panel can turn it on or off for that session.">
+      <Row label="Carry on after a plan limit" hint="When Claude Code stops on a plan limit, Inyon sends “continue” a minute after it resets, if the session is still stopped on it. Each session can change this under Usage.">
         <Toggle on={!!rules?.carryOn} onChange={(v) => save({ carryOn: v })} label="Carry on after a plan limit" />
       </Row>
-      <Row label="Compact before the context fills" hint="Once a session's context passes this, Inyon sends its agent's compact command while it's idle, and not again until the context drops back under it. A session's Usage panel can turn it on or off for that session.">
+      <Row label="Compact before the context fills" hint="Past this, Inyon sends the agent's compact command while it's idle, once until the context drops again. Each session can change this under Usage.">
         <Segmented size="sm" label="Compact before the context fills" value={current} onChange={(v) => save(v === '0' ? { autoCompact: false } : { autoCompact: true, compactAt: Number(v) === COMPACT_AT ? null : Number(v) })} options={choices} />
       </Row>
     </>
