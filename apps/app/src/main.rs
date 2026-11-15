@@ -56,6 +56,7 @@ mod socket;
 mod ssh_bridge;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod state;
+mod suggest;
 #[cfg(feature = "phone")]
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod upgrade;

@@ -825,6 +825,26 @@ input:focus-visible { outline: none; }
 .attach-retry { position: absolute; inset: 0; border-radius: 12px; box-shadow: 0 0 0 2px var(--danger); }
 .attach-remove { position: absolute; top: -6px; right: -6px; display: flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 9999px; border: 2px solid var(--panel); background: var(--fg); color: var(--bg); }
 .attach-remove .icon { stroke-width: 3; }
+/* the commands, skills or files over the box (Composer.tsx's suggestions) */
+@keyframes pop-up {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.suggest { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 20; margin-bottom: 8px; overflow: hidden; border-radius: 24px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow-lg); transform-origin: bottom center; animation: pop-up var(--dur-small) var(--ease-out-soft); }
+.suggest-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 8px 12px; font-size: 12px; color: var(--fg-3); }
+.suggest-keys { display: none; margin-left: auto; flex-shrink: 0; font-family: var(--font-mono); }
+@media (min-width: 640px) and (pointer: fine) { .suggest-keys { display: inline; } }
+.suggest-list { max-height: min(320px, 45dvh); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.suggest-row { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 12px; border-radius: 16px; padding: 8px 12px; text-align: left; color: var(--fg); }
+.suggest-row.on { background: var(--hover); }
+.suggest-icon { flex-shrink: 0; color: var(--fg-3); }
+.suggest-name { flex-shrink: 0; font-family: var(--font-mono); font-size: 13px; }
+.suggest-skill { flex-shrink: 1; max-width: 70%; }
+.suggest-path { flex-shrink: 1; }
+.suggest-hint { flex: 1; font-size: 12.5px; color: var(--fg-3); }
+/* the jump-to-latest button would sit over the list's corner */
+.chat-foot:has(.suggest) .jump-on { opacity: 0; transform: translateY(8px); pointer-events: none; }
+.suggest-tag { margin-left: auto; flex-shrink: 0; border-radius: 9999px; border: 1px solid var(--line); padding: 1px 8px; font-family: var(--font-mono); font-size: 12px; color: var(--fg-3); }
 .composer-note { margin-left: auto; min-width: 0; padding-right: 4px; font-size: 12px; color: var(--fg-3); }
 .send-button { display: flex; width: 36px; height: 36px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 9999px; background: var(--raised); color: var(--fg-3); }
 .send-ready { background: var(--fg); color: var(--bg); }

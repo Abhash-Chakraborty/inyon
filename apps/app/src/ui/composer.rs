@@ -1,8 +1,12 @@
 //! The message box under the chat (Composer.tsx): Enter sends (Shift+Enter for a new line), a
 //! message sent while the agent works waits in its queue, Esc in an empty box stops the agent and
 //! Alt+Enter holds the message until it's free. What you type is the pane's draft, kept in step
-//! with the terminal's input line and other devices through the hub's `draft` message. A bare
-//! "/resume" (each agent's own word for it) opens Past conversations instead of the agent's picker.
+//! with the terminal's input line and other devices through the hub's `draft` message.
+//!
+//! Typing `/` at the start lists the agent's commands and skills, `$` Codex's skills and `@` the
+//! files in the session's folder (suggest.rs), picked with the arrows and Enter or Tab. A bare
+//! `/model`, `/effort`, OpenCode's `/agents` and `/connect`, or the agent's `/resume`, opens the
+//! app's own picker instead of the agent's menu in its terminal.
 //!
 //! Files come along too: pasted (from the box or anywhere on the page), dropped on the box, or
 //! picked with Attach files and Take a photo. Each uploads at once with its progress on a chip,
@@ -15,13 +19,14 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 use inyon_chat_core::pending::{PendingMessage, PendingStatus};
-use inyon_protocol::{AgentKind, ClientMsg};
+use inyon_protocol::{AgentKind, ClientMsg, SlashCommand};
 
 use super::icons::{Glyph, Icon};
 use super::{now, outbox};
 use crate::attach::{self, Attachment, Status};
 use crate::files::{self, PageEvent};
 use crate::state::{self, Chats};
+use crate::suggest::{self, Picker, Pop, PopKind, Suggestion};
 use crate::{api, dom, platform, upload};
 
 pub const BOX: &str = "composer-input";
@@ -29,6 +34,8 @@ pub const BOX: &str = "composer-input";
 const ZONE: &str = "composer-zone";
 const PICK_FILES: &str = "composer-files";
 const PICK_PHOTO: &str = "composer-photo";
+/// the list of commands, skills or files over the box
+const SUGGEST: &str = "composer-suggest";
 /// How long typing pauses before the draft goes to the hub.
 const DRAFT_MS: u32 = 450;
 
@@ -224,6 +231,16 @@ fn remove_file(key: &str, id: &str) {
     }
 }
 
+/// The rows of the list open at `pop`: the machine's commands when they've come (the agent's own
+/// list until then), or the folder's files.
+fn rows(pop: Option<&Pop>, commands: Option<&[SlashCommand]>, paths: Option<&[String]>, kind: Option<AgentKind>) -> Vec<Suggestion> {
+    let Some(p) = pop else { return Vec::new() };
+    match p.kind {
+        PopKind::Slash | PopKind::Skill => suggest::commands(p.kind, &p.query, commands.unwrap_or(&kind.unwrap_or(AgentKind::Claude).def().commands)),
+        PopKind::Mention => suggest::paths(&p.query, paths.unwrap_or(&[])),
+    }
+}
+
 /// `draft`: the pane's draft as the hub last sent it (its text, when, and whether the terminal
 /// wrote it). `controls`: the model, effort, mode and goal chips. `disabled` keeps anything
 /// from going out; `offline` also greys the box out (not while the first connection opens).
@@ -251,6 +268,13 @@ pub fn Composer(
     let mut focused = use_signal(|| false);
     let mut stopping = use_signal(|| false);
     let mut dragging = use_signal(|| false);
+    let menu_at = use_context::<Signal<Option<super::menu::Menu>>>();
+    // the list over the box: the token it's for, the row picked, and what it lists
+    let pop = use_signal(|| None::<Pop>);
+    let mut active = use_signal(|| 0usize);
+    let commands = use_signal(|| None::<Vec<SlashCommand>>);
+    let paths = use_signal(|| None::<Vec<String>>);
+    let skills = kind == Some(AgentKind::Codex);
     // what the hub has as the draft, as far as this box knows. Coming back to a chat it starts
     // from what was agreed when the box went away: a draft the terminal sent meanwhile then
     // reads as new and replaces the old copy, instead of looking already seen.
@@ -299,6 +323,50 @@ pub fn Composer(
         let _ = text.read();
         dom::autosize(BOX, 0.4);
     });
+
+    // the commands are read each time their list opens, so a skill installed meanwhile shows up
+    // (the last list stays until the new one comes); the folder's files once
+    let pop_kind = use_memo(move || pop.read().as_ref().map(|p| p.kind));
+    {
+        let (host, pane) = (host.clone(), pane.clone());
+        use_effect(move || {
+            let (host, pane) = (host.clone(), pane.clone());
+            match pop_kind() {
+                Some(PopKind::Slash | PopKind::Skill) => {
+                    spawn(async move {
+                        if let Ok(list) = api::commands(&host, &pane).await {
+                            let mut commands = commands;
+                            commands.set(Some(list));
+                        }
+                    });
+                }
+                Some(PopKind::Mention) if paths.peek().is_none() => {
+                    spawn(async move {
+                        let files = api::files(&host, &pane).await.map(|f| f.files).unwrap_or_default();
+                        let mut paths = paths;
+                        paths.set(Some(files));
+                    });
+                }
+                _ => {}
+            }
+        });
+    }
+    // which list the text around the cursor calls for
+    let set_pop = move |next: Option<Pop>| {
+        let (mut pop, mut active) = (pop, active);
+        let same = |a: &Option<Pop>, b: &Option<Pop>| a.as_ref().map(|p| (p.kind, &p.query)) == b.as_ref().map(|p| (p.kind, &p.query));
+        let now = pop.peek().clone();
+        if now != next {
+            if !same(&now, &next) {
+                active.set(0);
+            }
+            pop.set(next);
+        }
+    };
+    let update_pop = move |value: &str| {
+        let at = dom::caret(BOX).filter(|at| *at <= value.len()).unwrap_or(value.len());
+        set_pop(suggest::token_at(value, at, skills));
+    };
 
     let push_draft = {
         let (synced, out, host, pane) = (synced.clone(), out.clone(), host.clone(), pane.clone());
@@ -351,7 +419,11 @@ pub fn Composer(
     });
     let on_input = {
         let set_text = set_text.clone();
-        move |e: FormEvent| set_text(e.value())
+        move |e: FormEvent| {
+            let v = e.value();
+            update_pop(&v);
+            set_text(v);
+        }
     };
 
     // text from the side panel: a mention or review comments, after what's typed
@@ -463,18 +535,38 @@ pub fn Composer(
     let (uploading, failed, ready) = attach::summary(&list);
     let can_send = (!text.read().trim().is_empty() || !ready.is_empty()) && !uploading && !failed && !disabled;
     let mode = button(working, can_send, uploading || failed);
+    // the app's own picker for a command typed bare; false when there's none to open
+    let open_picker = {
+        let (host, pane, controls) = (host.clone(), pane.clone(), controls.clone());
+        move |p: Picker| -> bool {
+            match (p, kind) {
+                (Picker::Conversations, Some(k)) => {
+                    super::conversations::open(&host, &pane, k);
+                    true
+                }
+                (Picker::Conversations, None) => false,
+                _ => {
+                    let mut menu_at = menu_at;
+                    controls.as_ref().is_some_and(|c| super::controls::open_picker(c, p, &mut menu_at))
+                }
+            }
+        }
+    };
     let do_send = {
-        let (host, pane, key, synced, typed, unsent, set_text) = (host.clone(), pane.clone(), key.clone(), synced.clone(), typed.clone(), unsent.clone(), set_text.clone());
+        let (key, synced, typed, unsent, set_text, open_picker) = (key.clone(), synced.clone(), typed.clone(), unsent.clone(), set_text.clone(), open_picker.clone());
+        let (host, pane) = (host.clone(), pane.clone());
         move || {
             let list = attach::of(&key);
             let (uploading, failed, ready) = attach::summary(&list);
-            // a bare "/resume" would open the agent's picker in its terminal; the app has its own
-            if !uploading && ready.is_empty() && super::conversations::asks_for(&text.peek(), kind) {
-                set_text(String::new());
-                if let Some(k) = kind {
-                    super::conversations::open(&host, &pane, k);
+            // a bare "/model" or "/resume" would open the agent's menu in its terminal; the app
+            // has its own
+            let picker = suggest::picker_for(&text.peek(), kind);
+            if let Some(p) = picker.filter(|_| !uploading && ready.is_empty()) {
+                if open_picker(p) {
+                    set_text(String::new());
+                    set_pop(None);
+                    return;
                 }
-                return;
             }
             // a file that didn't upload holds the message until it's retried or removed: the text
             // often refers to it ("use the attached spec")
@@ -500,8 +592,54 @@ pub fn Composer(
                     files::revoke(&p);
                 }
             }
+            set_pop(None);
             send(chats, host.clone(), pane.clone(), msg);
             on_sent.call(());
+        }
+    };
+    // a row of the list: its name goes into the box, a command that takes nothing runs at once,
+    // and a bare `/model` opens the app's picker
+    let pick = {
+        let (key, set_text, open_picker, mut do_send) = (key.clone(), set_text.clone(), open_picker.clone(), do_send.clone());
+        let (host, pane) = (host.clone(), pane.clone());
+        move |i: usize| {
+            let Some(p) = pop.peek().clone() else { return };
+            let list = rows(Some(&p), commands.peek().as_deref(), paths.peek().as_deref(), kind);
+            let Some(s) = list.get(i).cloned() else { return };
+            let t = text.peek().clone();
+            let rest = t.get(p.end..).unwrap_or("").trim().to_string();
+            if p.kind == PopKind::Slash {
+                if let Some(picker) = suggest::picker_for(&s.label, kind).filter(|_| rest.is_empty()) {
+                    if open_picker(picker) {
+                        set_text(String::new());
+                        set_pop(None);
+                        return;
+                    }
+                }
+                if s.instant && attach::of(&key).is_empty() {
+                    set_pop(None);
+                    if rest.is_empty() {
+                        // it goes as the message, and the box empties as for any other
+                        let mut text = text;
+                        text.set(s.label.clone());
+                        do_send();
+                    } else {
+                        send(chats, host.clone(), pane.clone(), s.label.clone());
+                        set_text(rest);
+                        on_sent.call(());
+                    }
+                    return;
+                }
+            }
+            let (next, at) = suggest::insert(&t, &p, &s);
+            // a folder keeps the list open inside it
+            set_pop(if p.kind == PopKind::Mention && s.folder() { suggest::token_at(&next, at, skills) } else { None });
+            set_text(next);
+            spawn(async move {
+                platform::sleep(0).await;
+                dom::focus(BOX);
+                dom::set_caret(BOX, at);
+            });
         }
     };
     let stop = {
@@ -535,12 +673,43 @@ pub fn Composer(
         }
     };
     let on_key = {
-        let (mut do_send, mut stop, hold) = (do_send.clone(), stop.clone(), hold.clone());
+        let (mut do_send, mut stop, hold, mut pick) = (do_send.clone(), stop.clone(), hold.clone(), pick.clone());
         move |e: KeyboardEvent| {
             if e.is_composing() {
                 return;
             }
             let m = e.modifiers();
+            let n = rows(pop.peek().as_ref(), commands.peek().as_deref(), paths.peek().as_deref(), kind).len();
+            if n > 0 {
+                let a = (*active.peek()).min(n - 1);
+                let moved = match e.key() {
+                    Key::ArrowDown => Some((a + 1) % n),
+                    Key::ArrowUp => Some((a + n - 1) % n),
+                    _ => None,
+                };
+                if let Some(next) = moved {
+                    e.prevent_default();
+                    active.set(next);
+                    dom::scroll_to_near(&format!("{SUGGEST}-{next}"));
+                    return;
+                }
+                match e.key() {
+                    Key::Tab => {
+                        e.prevent_default();
+                        return pick(a);
+                    }
+                    Key::Enter if !m.shift() && !m.alt() => {
+                        e.prevent_default();
+                        return pick(a);
+                    }
+                    Key::Escape => {
+                        e.prevent_default();
+                        e.stop_propagation();
+                        return set_pop(None);
+                    }
+                    _ => {}
+                }
+            }
             match e.key() {
                 Key::Escape if working && text.peek().is_empty() => {
                     e.prevent_default();
@@ -576,8 +745,57 @@ pub fn Composer(
     // Claude Code's ultracode is on: the box carries the label Claude draws on its own
     let ultracode = controls.as_ref().is_some_and(|c| c.ultracode);
     let box_class = if ultracode { format!("{box_class} ultracode-box") } else { box_class.to_string() };
+    let open = pop.read().clone();
+    let list_rows = rows(open.as_ref(), commands.read().as_deref(), paths.read().as_deref(), kind);
+    let shown = (!list_rows.is_empty()).then_some(open).flatten();
+    let lit = (*active.read()).min(list_rows.len().saturating_sub(1));
     rsx! {
         div { id: ZONE, class: "composer fade-in",
+            if let Some(p) = shown {
+                // it sits over the box, so it rises out of it
+                div { class: "suggest",
+                    div { class: "suggest-head",
+                        span { class: "truncate", {suggest::heading(p.kind, kind, paths.read().is_some())} }
+                        span { class: "suggest-keys", "↑↓ · ⏎ · esc" }
+                    }
+                    div { id: SUGGEST, class: "suggest-list", role: "listbox", "aria-label": suggest::heading(p.kind, kind, paths.read().is_some()),
+                        for (i, s) in list_rows.into_iter().enumerate() {
+                            button {
+                                key: "{s.label}",
+                                id: "{SUGGEST}-{i}",
+                                class: if i == lit { "suggest-row on" } else { "suggest-row" },
+                                r#type: "button",
+                                role: "option",
+                                "aria-selected": if i == lit { "true" } else { "false" },
+                                tabindex: "-1",
+                                onmouseenter: move |_| active.set(i),
+                                onmousedown: move |e| e.prevent_default(),
+                                onclick: {
+                                    let mut pick = pick.clone();
+                                    move |_| pick(i)
+                                },
+                                if p.kind == PopKind::Mention {
+                                    Glyph { icon: if s.folder() { Icon::Folder } else { Icon::FileText }, size: 16, class: "suggest-icon" }
+                                }
+                                span {
+                                    class: match p.kind {
+                                        PopKind::Slash => "suggest-name",
+                                        PopKind::Skill => "suggest-name suggest-skill truncate",
+                                        PopKind::Mention => "suggest-name suggest-path truncate",
+                                    },
+                                    "{s.label}"
+                                }
+                                if let Some(h) = s.hint.clone() {
+                                    span { class: "suggest-hint truncate", "{h}" }
+                                }
+                                if let Some(tag) = s.tag.filter(|_| p.kind != PopKind::Mention) {
+                                    span { class: "suggest-tag", "{tag}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             div {
                 class: box_class,
                 // measured again once the page's styles and fonts settle, or the width changes
@@ -602,8 +820,24 @@ pub fn Composer(
                     "aria-label": "Message {agent}",
                     oninput: on_input,
                     onkeydown: on_key,
+                    // the cursor moved without typing: the list follows it
+                    onkeyup: move |e: KeyboardEvent| {
+                        if matches!(e.key(), Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End) {
+                            update_pop(&text.peek());
+                        }
+                    },
+                    onclick: move |_| update_pop(&text.peek()),
                     onfocus: move |_| focused.set(true),
-                    onblur: move |_| focused.set(false),
+                    onblur: move |_| {
+                        focused.set(false);
+                        // after a click on a row has landed
+                        spawn(async move {
+                            platform::sleep(120).await;
+                            if !*focused.peek() {
+                                set_pop(None);
+                            }
+                        });
+                    },
                 }
                 div { class: "composer-bar",
                     ToolButton { label: "Attach files", onpress: move |_| files::pick(PICK_FILES), Glyph { icon: Icon::Paperclip, size: 17 } }

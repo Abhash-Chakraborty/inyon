@@ -179,6 +179,12 @@ pub async fn files(host: &str, pane: &str) -> Result<FileList, ApiError> {
     parse(&request("GET", &format!("{}/files", pane_path(host, pane)), None).await?)
 }
 
+/// The agent's commands, skills and plugins on the session's machine, for the message box's `/`
+/// and `$` lists: read again each time a list opens, so one installed meanwhile shows up.
+pub async fn commands(host: &str, pane: &str) -> Result<Vec<inyon_protocol::SlashCommand>, ApiError> {
+    parse(&request("GET", &format!("{}/commands", pane_path(host, pane)), None).await?)
+}
+
 /// Saves a prompt to send again: `POST /api/organize/prompts`.
 pub async fn add_prompt(name: &str, text: &str) -> Result<inyon_protocol::SavedPrompt, ApiError> {
     parse(&request("POST", "/api/organize/prompts", Some(serde_json::json!({ "name": name, "text": text }).to_string())).await?)
