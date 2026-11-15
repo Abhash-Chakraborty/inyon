@@ -166,6 +166,12 @@ try {
       check(await until(async () => (await box(page).inputValue()) === '@src/checkout/'), `${label}: the folder goes in (${await box(page).inputValue()})`)
       check(await until(async () => (await shown(page)) && (await rows(page).filter({ hasText: 'checkout.test.ts' }).count()) === 1), `${label}: and the list shows what's inside`)
       await layout(page, `${label} with the files list`)
+      // Alt+Enter holds the message: the box empties and the list goes with it
+      await type(page, 'check @tot')
+      await list(page).waitFor()
+      await page.keyboard.press('Alt+Enter')
+      check(await until(async () => (await box(page).inputValue()) === ''), `${label}: a hold empties the box`)
+      check(await until(async () => !(await shown(page))), `${label}: and closes the list`)
       await box(page).fill('')
 
       // Codex: `/` is "Commands" and `$` lists its skills

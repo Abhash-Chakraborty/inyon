@@ -184,6 +184,17 @@ pub fn picker_for(command: &str, agent: Option<AgentKind>) -> Option<Picker> {
 
 /// The message box after picking `s` from the list open at `pop`, and where the cursor goes.
 pub fn insert(text: &str, pop: &Pop, s: &Suggestion) -> (String, usize) {
+    // a list left open over text that changed since (a hold emptied the box) mustn't cut past its
+    // end or through a character
+    let floor = |mut i: usize| {
+        i = i.min(text.len());
+        while !text.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    };
+    let end = floor(pop.end);
+    let pop = &Pop { start: floor(pop.start).min(end), end, ..pop.clone() };
     let rest = &text[pop.end..];
     match pop.kind {
         PopKind::Slash => {
@@ -288,6 +299,18 @@ mod tests {
         let sk = token_at("use $re", 7, true).unwrap();
         let skill = Suggestion { label: "$review".into(), hint: None, tag: None, instant: false };
         assert_eq!(insert("use $re", &sk, &skill), ("use $review ".into(), 12));
+    }
+
+    #[test]
+    fn a_pick_over_changed_text_stays_inside_it() {
+        let file = Suggestion { label: "src/cart.ts".into(), hint: None, tag: None, instant: false };
+        let stale = Pop { kind: PopKind::Mention, query: "ca".into(), start: 8, end: 11 };
+        // the box was emptied under the list
+        assert_eq!(insert("", &stale, &file), ("@src/cart.ts ".into(), 13));
+        // shorter than the list thought, and the end inside a character
+        assert_eq!(insert("look @é", &Pop { start: 5, end: 7, ..stale.clone() }, &file), ("look @src/cart.ts é".into(), 18));
+        let model = Suggestion { label: "/model".into(), hint: None, tag: None, instant: false };
+        assert_eq!(insert("", &Pop { kind: PopKind::Slash, query: "mo".into(), start: 0, end: 3 }, &model), ("/model ".into(), 7));
     }
 
     #[test]

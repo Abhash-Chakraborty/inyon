@@ -341,10 +341,12 @@ pub fn Composer(
                     });
                 }
                 Some(PopKind::Mention) if paths.peek().is_none() => {
+                    // a failed read stays unread, so the next `@` tries again
                     spawn(async move {
-                        let files = api::files(&host, &pane).await.map(|f| f.files).unwrap_or_default();
-                        let mut paths = paths;
-                        paths.set(Some(files));
+                        if let Ok(f) = api::files(&host, &pane).await {
+                            let mut paths = paths;
+                            paths.set(Some(f.files));
+                        }
                     });
                 }
                 _ => {}
@@ -616,7 +618,8 @@ pub fn Composer(
                         return;
                     }
                 }
-                if s.instant && attach::of(&key).is_empty() {
+                // a box that can't send takes the name instead, as for any other command
+                if s.instant && !disabled && attach::of(&key).is_empty() {
                     set_pop(None);
                     if rest.is_empty() {
                         // it goes as the message, and the box empties as for any other
@@ -668,6 +671,8 @@ pub fn Composer(
                     unsent.borrow_mut().take();
                     *synced.borrow_mut() = String::new();
                     text.set(String::new());
+                    // the list was for the text that went
+                    set_pop(None);
                 }
             });
         }
