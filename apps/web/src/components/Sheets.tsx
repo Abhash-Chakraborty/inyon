@@ -6,7 +6,7 @@ import { api, type CustomAgent } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { allPanes, paneHref } from '../lib/overview.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
+import { Button, Field, Segmented, Sheet, Toggle, inputClass } from './ui/primitives.tsx'
 import { Check, Copy, ShieldCheck } from 'lucide-react'
 import { copyText } from '../lib/clipboard.ts'
 import { isPhone } from '../lib/phone.ts'
@@ -16,6 +16,7 @@ import { Logo } from './AppShell.tsx'
 import { tailPath } from '../lib/format.ts'
 import { ServerSheet } from './ServerSheet.tsx'
 import { LaptopSheet } from './LaptopSheet.tsx'
+import { branchProblem, defaultBranch, worktreeFolder } from '../lib/worktrees.ts'
 
 /** Pairing a machine that connects out to the hub: nothing is opened on that machine. */
 export function PairMachine({ onClose, existing }: { onClose?: () => void; existing?: string }) {
@@ -212,6 +213,11 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
   const [mode, setMode] = useState('')
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
+  // in a git worktree of its own: offered when the folder is in a repo; until you type a branch, it follows the suggested one
+  const [repo, setRepo] = useState<{ root?: string; branch?: string }>()
+  const [inWorktree, setInWorktree] = useState(false)
+  const [branch, setBranch] = useState<string>()
+  const [openedAt, setOpenedAt] = useState(() => new Date())
 
   const h = hosts.find((x) => x.config.id === host)
   const installed = h?.agents ?? []
@@ -230,8 +236,27 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
     const inst = hosts.find((x) => x.config.id === first)?.agents ?? []
     setKind(inst.includes('claude') ? 'claude' : inst[0] ?? 'shell')
     setCustom('')
+    setInWorktree(false)
+    setBranch(undefined)
+    setOpenedAt(new Date())
     api.settings().then((s) => setCustoms(s.customAgents ?? []), () => setCustoms([]))
   }, [open])
+
+  // whether the folder is in a git repo, asked once typing pauses; a late answer for another folder is dropped
+  useEffect(() => {
+    if (!open || !host) return
+    let live = true
+    const t = setTimeout(() => {
+      api.repo(host, cwd.trim() || '~').then(
+        (r) => live && setRepo(r?.root ? r : undefined),
+        () => live && setRepo(undefined),
+      )
+    }, 350)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [open, host, cwd])
 
   // opened before the machines arrived (app starting, phone reconnecting): pick one once they do
   const firstHost = hostId ?? hosts[0]?.config.id
@@ -244,6 +269,9 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
 
   const def = kind !== 'shell' ? agentDef(kind) : undefined
   const mine = customs.find((c) => c.id === custom)
+  const worktree = inWorktree && !!repo?.root
+  const shownBranch = branch ?? defaultBranch(def?.chat ? prompt : undefined, mine?.name ?? kind, openedAt)
+  const problem = worktree ? branchProblem(shownBranch) : undefined
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -258,6 +286,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
         model: model || undefined,
         mode: (kind === 'claude' || kind === 'antigravity') && mode ? mode : undefined,
         prompt: (def?.chat && prompt) || undefined,
+        ...(worktree && { worktree: true, branch: shownBranch }),
       })
       onClose()
       nav(paneHref(host, pane, kind === 'shell' ? 'terminal' : undefined))
@@ -280,7 +309,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
         <div className="flex items-center gap-2">
           <span className="hidden truncate text-[12px] text-fg-3 sm:block">Opens in a new tmux {session ? 'window' : 'session'}</span>
           <Button className="ml-auto" variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" form="new-form" loading={busy} disabled={!host}>
+          <Button variant="primary" type="submit" form="new-form" loading={busy} disabled={!host || !!problem}>
             Start {mine?.name ?? def?.name ?? 'terminal'}
           </Button>
         </div>
@@ -338,6 +367,31 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
                 {tailPath(r)}
               </button>
             ))}
+          </div>
+        )}
+
+        {repo?.root && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13.5px] font-medium">In a new worktree</div>
+                <div className="truncate text-[12px] text-fg-3">A branch and folder of its own{repo.branch ? `, from ${repo.branch}` : ''}</div>
+              </div>
+              <Toggle on={inWorktree} onChange={setInWorktree} label="In a new worktree" />
+            </div>
+            {inWorktree && (
+              <Field label="Branch" hint={<span className={clsx(problem && 'text-danger')}>{problem ?? worktreeFolder(repo.root, shownBranch)}</span>}>
+                <input
+                  className={clsx(inputClass, 'font-mono text-[13.5px]', problem && 'border-danger focus:border-danger')}
+                  value={shownBranch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  aria-invalid={!!problem}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </Field>
+            )}
           </div>
         )}
 

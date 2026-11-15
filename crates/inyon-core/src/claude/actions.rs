@@ -30,6 +30,7 @@ use crate::agents::opencode_models::{model_from_footer, opencode_cli_models};
 use crate::clock::now_ms;
 use crate::features::paths::is_task_file;
 use crate::features::setup::PATHS;
+use crate::features::worktrees;
 use crate::hosts::host::{shq, tmux_literal, ExecOptions, Host};
 use crate::hosts::http_error::{http, HubError, HubResult};
 use crate::hosts::names::{bare_title, original_title, owns_title, pending_name, set_session_name};
@@ -2046,6 +2047,11 @@ pub struct LaunchOpts {
     /// a terminal-first agent's sign-in (its `login` command) rather than the agent itself
     #[serde(default)]
     pub sign_in: bool,
+    /// start in a new git worktree of the repo `cwd` is in (features/worktrees)
+    #[serde(default)]
+    pub worktree: bool,
+    /// the worktree's branch; empty or missing takes the suggested one
+    pub branch: Option<String>,
     /// more flags for the agent's command, from the hub itself (the companion's)
     #[serde(skip)]
     pub extra: Vec<String>,
@@ -2111,7 +2117,13 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
     if let Some(a) = agent.filter(|a| !a.chat() && opts.prompt.as_deref().is_some_and(|p| !p.is_blank())) {
         return Err(http(400, format!("{} starts without a first message. Type it in its terminal once it's open.", a.def().name)));
     }
-    let cwd = opts.cwd.as_deref().map(JsStr::jtrim).filter(|c| !c.is_empty()).unwrap_or("~");
+    let asked = opts.cwd.as_deref().map(JsStr::jtrim).filter(|c| !c.is_empty()).unwrap_or("~");
+    // a worktree of its own: made first, and the session starts in it
+    let made = match opts.worktree {
+        true => Some(worktrees::for_launch(&host, asked, opts.branch.as_deref(), opts.prompt.as_deref(), agent_name.unwrap_or("shell")).await?),
+        false => None,
+    };
+    let cwd = made.as_ref().map_or(asked, |m| m.start.as_str());
     let home = cwd == "~" || cwd.starts_with("~/");
     let dir = if home { format!("\"$HOME\"{}", shq(&cwd[1..])) } else { shq(cwd) };
     // the same folder as tmux reads it, where `#` would start a format
@@ -2131,7 +2143,11 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
     let shown = cwd.replace(['"', '$', '`', '\\'], "");
     let r = host.run(&format!(r#"[ -d {dir} ] || {{ echo "No such folder: {shown}" >&2; exit 3; }}; {cmd}"#)).await?;
     let pane_id = r.stdout.jtrim().to_owned();
-    if r.code != 0 || !pane_id.starts_with('%') {
+    let started = r.code == 0 && pane_id.starts_with('%');
+    if let Some(m) = &made {
+        worktrees::settle(host_id, &host, m, started).await;
+    }
+    if !started {
         let err = r.stderr.jtrim();
         return Err(http(400, if err.is_empty() { "Could not create window" } else { err }));
     }

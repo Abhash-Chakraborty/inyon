@@ -535,6 +535,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
             dead: pdead == "1",
             agent: None,
             companion: None,
+            worktree: None,
         });
         if let Some((cp, kind, custom)) = find_agent(num(ppid) as i64) {
             let resume = re!(r"(?:--resume|-r|resume)[ =]([0-9a-f]{8}-[0-9a-f-]{27})").captures(&cp.args).map(|c| c[1].to_owned());

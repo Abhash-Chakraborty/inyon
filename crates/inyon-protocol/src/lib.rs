@@ -12,6 +12,7 @@ mod organize;
 mod types;
 pub mod v2;
 mod versions;
+pub mod worktree;
 
 pub use agents::*;
 pub use js::{Num, True};
@@ -64,6 +65,7 @@ macro_rules! with_types {
             AgentPaneInfo,
             TurnFailure,
             PaneInfo,
+            PaneWorktree,
             WindowInfo,
             SessionInfo,
             IntegrationState,

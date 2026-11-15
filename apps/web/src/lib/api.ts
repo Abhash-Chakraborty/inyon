@@ -129,6 +129,19 @@ export interface ShareCheck {
 }
 
 /** What PATCH …/organize changes on a session; a field left out stays as it is. */
+/** A worktree Inyon made, as ending its session sees it (features/worktrees in the hub). */
+export interface WorktreeState {
+  /** the folder is still there */
+  exists: boolean
+  branch?: string
+  /** files changed, added or not yet tracked; missing when git couldn't say */
+  changes?: number
+  /** commits on no other branch and no remote; missing when git couldn't say */
+  unpushed?: number
+  /** other sessions still working in it */
+  sessions: number
+}
+
 export interface SessionPatch {
   pinned?: boolean
   parked?: boolean | null
@@ -420,8 +433,16 @@ export const api = {
   /** brings the machine's inyon up to date (it restarts and reconnects by itself) */
   nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
   /** `signIn`: a terminal-first agent's sign-in command instead of the agent, in a terminal to sign in from */
-  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string; signIn?: boolean }) =>
+  /** `worktree`: start in a new git worktree of the folder's repo, on `branch` (from 0.27) */
+  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string; signIn?: boolean; worktree?: boolean; branch?: string }) =>
     request<{ pane: string }>('POST', `${h(id)}/launch`, b),
+  /** whether a folder on the machine is in a git repo: its top folder and checked-out branch; `root` is missing when it isn't */
+  repo: (id: string, path: string) => request<{ root?: string; branch?: string }>('GET', `${h(id)}/repo?path=${encodeURIComponent(path)}`),
+  /** a worktree Inyon made, as ending the session `pane` sees it: would removing it lose anything */
+  worktreeState: (id: string, path: string, pane?: string) =>
+    request<WorktreeState>('GET', `${h(id)}/worktree?path=${encodeURIComponent(path)}${pane ? `&pane=${encodeURIComponent(pane)}` : ''}`),
+  /** removes a worktree Inyon made once its session ended, only when it's clean (409 with the reason otherwise) */
+  removeWorktree: (id: string, path: string, pane?: string) => request<{ branchDeleted: boolean }>('POST', `${h(id)}/worktree/remove`, { path, pane }, 70_000),
   /** `steer`: while Codex works, hand it the message now (Enter) instead of queueing it for after the turn (Tab) */
   send: (host: string, pane: string, text: string, requestId?: string, steer?: boolean) => request('POST', `${panePath(host, pane)}/send`, { text, requestId, ...(steer && { steer }) }, 310_000),
   /** a model, effort or goal change from the app's controls: sent like a message, never shown as one */
