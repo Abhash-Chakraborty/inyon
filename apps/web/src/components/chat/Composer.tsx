@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { appendTo, onCompose } from '../../lib/compose.ts'
 import clsx from 'clsx'
-import { ArrowUp, CalendarClock, Camera, Clock3, FileText, Folder, Hourglass, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
+import { ArrowUp, CalendarClock, Camera, Clock3, FileText, Folder, Hourglass, Mic, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
 import { agentDef, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
@@ -13,6 +13,7 @@ import { bytes } from '../../lib/format.ts'
 import { openMenu } from '../ui/primitives.tsx'
 import { contextMenu } from '../ui/ContextMenu.tsx'
 import { keyLabel } from '../../lib/keys.ts'
+import { Dictation, dictationLang, errorToast, useDictationEngine } from '../../lib/dictation.ts'
 
 /** commands that open a picker in the agent's terminal; the composer's own menus (and OpenCode's providers sheet) do the job */
 const MENU_COMMANDS: Record<string, string> = { '/model': 'model', '/models': 'model', '/effort': 'effort', '/variants': 'effort', '/agents': 'mode', '/agent': 'mode', '/connect': 'providers' }
@@ -212,6 +213,54 @@ export function Composer({
   const fileInput = useRef<HTMLInputElement>(null)
   const cameraInput = useRef<HTMLInputElement>(null)
   const agentName = agent ? agentDef(agent).name : 'the agent'
+
+  // ---------- dictation ----------
+
+  // the device's speech recogniser, where there is one (none on plain http or in Firefox)
+  const engine = useDictationEngine()
+  const dictation = useRef<Dictation>(undefined)
+  const [listening, setListening] = useState(false)
+  const dictate = () => {
+    if (dictation.current?.listening) return dictation.current.stop()
+    const el = ta.current
+    const d: Dictation = new Dictation({
+      engine: engine!,
+      lang: dictationLang(),
+      text,
+      start: el?.selectionStart ?? text.length,
+      end: el?.selectionEnd ?? text.length,
+      onText: (next, cursor) => {
+        setText(next)
+        // with the box focused (a computer), the cursor follows the words
+        if (el && document.activeElement === el) requestAnimationFrame(() => el.setSelectionRange(cursor, cursor))
+      },
+      onError: (e) => {
+        const t = errorToast(e)
+        if (t.tone === 'error') haptic('error')
+        toast(t)
+      },
+      onEnd: () => {
+        if (dictation.current !== d) return
+        dictation.current = undefined
+        setListening(false)
+      },
+    })
+    dictation.current = d
+    setListening(true)
+    d.start()
+  }
+  /** stops listening and leaves the box as it is */
+  const stopDictating = () => {
+    const d = dictation.current
+    dictation.current = undefined
+    d?.abort()
+    setListening(false)
+  }
+  // another chat, the box disabled or the page gone: the microphone goes off
+  useEffect(() => () => dictation.current?.abort(), [key])
+  useEffect(() => {
+    if (disabled) stopDictating()
+  }, [disabled])
 
   useEffect(() => {
     DRAFTS.set(key, text)
@@ -453,6 +502,7 @@ export function Composer({
     const id = Math.random().toString(36).slice(2)
     patchChat(key, (c) => ({ pending: [...c.pending, { id, text: msg, status: 'sending', at: Date.now() }] }))
     if (value === text) {
+      stopDictating()
       clearTimeout(pushTimer.current)
       pending.current = undefined
       sent.current = { text: value, at: Date.now() }
@@ -488,6 +538,7 @@ export function Composer({
   // the hub keeps it and types it in once the agent is free; it can still be edited or dropped there
   /** The box empties once the hub has the message (held, or kept to send later). */
   const handedOver = () => {
+    stopDictating()
     clearTimeout(pushTimer.current)
     pending.current = undefined
     sent.current = { text, at: Date.now() }
@@ -660,6 +711,8 @@ export function Composer({
               e.target.value = ''
               return
             }
+            // typing while it listens: your words win, and the microphone goes off
+            if (dictation.current) stopDictating()
             setText(v)
             requestAnimationFrame(updatePop)
           }}
@@ -668,6 +721,10 @@ export function Composer({
           onBlur={() => (setFocused(false), setTimeout(() => setPop(null), 120))}
           onPaste={onPaste}
           onKeyDown={(e) => {
+            if (e.key === 'Escape' && dictation.current) {
+              e.preventDefault()
+              return dictation.current.stop()
+            }
             if (pop && suggestions.length) {
               if (e.key === 'ArrowDown') {
                 e.preventDefault()
@@ -699,7 +756,7 @@ export function Composer({
               send()
             }
           }}
-          placeholder={canSteer && steer ? `Steer ${agentName} now…` : working ? `Queue a message for ${agentName}…` : `Message ${agentName}…`}
+          placeholder={listening ? 'Listening…' : canSteer && steer ? `Steer ${agentName} now…` : working ? `Queue a message for ${agentName}…` : `Message ${agentName}…`}
           aria-label={`Message ${agentName}`}
           className={clsx('block max-h-[40vh] w-full resize-none bg-transparent px-4 pb-1 text-[15.5px] leading-[1.5] text-fg placeholder:text-fg-3', shellMode ? 'pt-1' : 'pt-3')}
         />
@@ -717,6 +774,11 @@ export function Composer({
           <span className={clsx('truncate pr-1 text-[12px] text-fg-3', !controls && 'ml-auto')}>
             {uploading ? 'Uploading…' : failed ? 'Upload failed' : text && origin === 'terminal' ? 'From the terminal' : ''}
           </span>
+          {engine && (
+            <ToolbarButton label={listening ? 'Stop dictating' : 'Dictate'} pressed={listening} disabled={disabled} onClick={dictate}>
+              <Mic className="size-[17px]" />
+            </ToolbarButton>
+          )}
           {canSteer && (
             <button
               type="button"
@@ -778,15 +840,21 @@ function clipboardFiles(data: DataTransfer): File[] {
   return files.map((f, i) => (f.name && f.name !== 'image.png' ? f : new File([f], `pasted-${Date.now()}-${i}.${f.type.split('/')[1] || 'bin'}`, { type: f.type })))
 }
 
-function ToolbarButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function ToolbarButton({ label, onClick, pressed, disabled, children }: { label: string; onClick: () => void; pressed?: boolean; disabled?: boolean; children: React.ReactNode }) {
   return (
     <button
       type="button"
       aria-label={label}
+      aria-pressed={pressed}
       title={label}
+      disabled={disabled}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      className="flex size-8 items-center justify-center rounded-full text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+      className={clsx(
+        'flex size-8 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-hover hover:text-fg',
+        // listening: the ink icon on a quiet ring that breathes (styles.css), nothing moves
+        pressed ? 'listening-ring bg-hover text-fg' : 'text-fg-3',
+      )}
     >
       {children}
     </button>

@@ -1,8 +1,9 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AGENTS } from '@inyon/protocol'
 import { Composer } from './Composer.tsx'
+import { forgetRecogniserCheck } from '../../lib/dictation.ts'
 import { ComposerControls } from '../session/ComposerControls.tsx'
 import type { SessionModel } from '../session/useSession.ts'
 import { useStore } from '../../lib/store.ts'
@@ -423,5 +424,165 @@ describe('after Send', () => {
     } finally {
       restore()
     }
+  })
+})
+
+describe('dictation', () => {
+  /** The browser's recogniser, spoken through by the test. */
+  class FakeRecognition {
+    static last: FakeRecognition | undefined
+    lang = ''
+    continuous = false
+    interimResults = false
+    maxAlternatives = 0
+    onresult: ((e: unknown) => void) | null = null
+    onerror: ((e: unknown) => void) | null = null
+    onend: (() => void) | null = null
+    stopped = 0
+    aborted = 0
+    constructor() {
+      FakeRecognition.last = this
+    }
+    start() {}
+    stop() {
+      this.stopped++
+    }
+    abort() {
+      this.aborted++
+    }
+  }
+  const result = (transcript: string, isFinal: boolean) => Object.assign([{ transcript }], { isFinal })
+  const say = (...results: ReturnType<typeof result>[]) => act(() => FakeRecognition.last!.onresult!({ results }))
+  const secure = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
+  const withSpeech = () => {
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    ;(window as any).webkitSpeechRecognition = FakeRecognition
+  }
+  const mic = () => screen.getByRole('button', { name: /^(Dictate|Stop dictating)$/ })
+  afterEach(() => {
+    delete (window as any).webkitSpeechRecognition
+    FakeRecognition.last = undefined
+    if (secure) Object.defineProperty(window, 'isSecureContext', secure)
+    else delete (window as any).isSecureContext
+  })
+
+  test('no microphone where the browser has no speech recogniser', async () => {
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    expect(screen.queryByRole('button', { name: 'Dictate' })).toBeNull()
+  })
+
+  test('the words go in at the cursor, the guess live, and a tap stops it', async () => {
+    withSpeech()
+    const user = userEvent.setup()
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await user.type(box(), 'Fix bug')
+    box().setSelectionRange(3, 3)
+    await user.click(mic())
+    expect(mic().getAttribute('aria-pressed')).toBe('true')
+    expect(FakeRecognition.last!.lang).toBe(navigator.language)
+    say(result('the log', false))
+    expect(box().value).toBe('Fix the log bug')
+    say(result('the login', true))
+    expect(box().value).toBe('Fix the login bug')
+    await user.click(mic())
+    expect(FakeRecognition.last!.stopped).toBe(1)
+    act(() => FakeRecognition.last!.onend!())
+    expect(box().value).toBe('Fix the login bug')
+    expect(mic().getAttribute('aria-label')).toBe('Dictate')
+    expect(mic().getAttribute('aria-pressed')).toBe('false')
+  })
+
+  test('an empty box says it is listening', async () => {
+    withSpeech()
+    const user = userEvent.setup()
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await user.click(mic())
+    expect(box().placeholder).toBe('Listening…')
+  })
+
+  test('the dictated draft is shared with the hub like typing', async () => {
+    withSpeech()
+    const user = userEvent.setup()
+    const pane = nextPane()
+    await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    await user.click(mic())
+    say(result('run the tests', true))
+    await act(() => new Promise((r) => setTimeout(r, 500)))
+    expect(socket.send).toHaveBeenCalledWith({ t: 'draft', host: 'box', pane, text: 'Run the tests' })
+  })
+
+  test('a blocked microphone shows a toast', async () => {
+    withSpeech()
+    const user = userEvent.setup()
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await user.click(mic())
+    act(() => {
+      FakeRecognition.last!.onerror!({ error: 'not-allowed' })
+      FakeRecognition.last!.onend!()
+    })
+    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['Microphone blocked'])
+    expect(mic().getAttribute('aria-pressed')).toBe('false')
+  })
+
+  test('typing over it stops listening and keeps your words', async () => {
+    withSpeech()
+    const user = userEvent.setup()
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await user.click(mic())
+    say(result('hello', false))
+    await user.type(box(), '!')
+    expect(FakeRecognition.last!.aborted).toBe(1)
+    say(result('hello world', true))
+    expect(box().value).toBe('Hello!')
+    expect(mic().getAttribute('aria-pressed')).toBe('false')
+  })
+
+  test('Esc stops it, and sending stops it without the words coming back', async () => {
+    withSpeech()
+    const user = userEvent.setup()
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await user.click(mic())
+    await user.click(box())
+    await user.keyboard('{Escape}')
+    expect(FakeRecognition.last!.stopped).toBe(1)
+    act(() => FakeRecognition.last!.onend!())
+    await user.click(mic())
+    say(result('ship it', true))
+    await user.click(sendButton())
+    await flush()
+    expect(api.send).toHaveBeenCalledTimes(1)
+    expect(FakeRecognition.last!.aborted).toBe(1)
+    say(result('ship it now', true))
+    expect(box().value).toBe('')
+  })
+})
+
+describe('dictation in the Android app', () => {
+  afterEach(() => {
+    delete (window as any).Capacitor
+    forgetRecogniserCheck()
+  })
+  const phone = (device: Record<string, unknown>) => {
+    ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { InyonDevice: { addListener: () => Promise.resolve({ remove() {} }), ...device } } }
+  }
+
+  test("a microphone when the phone has a recogniser", async () => {
+    phone({ startDictation: async () => ({ ok: true }), dictationAvailable: async () => ({ available: true }) })
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await flush()
+    expect(screen.getByRole('button', { name: 'Dictate' })).toBeTruthy()
+  })
+
+  test('none on a phone without one, or in an app too old to dictate', async () => {
+    phone({ startDictation: async () => ({ ok: true }), dictationAvailable: async () => ({ available: false }) })
+    const first = await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await flush()
+    expect(screen.queryByRole('button', { name: 'Dictate' })).toBeNull()
+    first.unmount()
+    forgetRecogniserCheck()
+    phone({})
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    await flush()
+    expect(screen.queryByRole('button', { name: 'Dictate' })).toBeNull()
   })
 })

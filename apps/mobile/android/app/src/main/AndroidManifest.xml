@@ -105,11 +105,18 @@
     <!-- asked for only when the QR scanner or a photo input opens -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- asked for only when the microphone in the message box is first tapped, for dictation -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- photo inputs hand off to the camera app, which has to be visible to resolve it -->
     <queries>
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <!-- dictation uses the phone's speech recogniser, which has to be visible to be found -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
     </queries>
 

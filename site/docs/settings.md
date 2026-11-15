@@ -120,7 +120,7 @@ The version and build, the Android app's version, how the terminal is drawn, and
 | `Ctrl O` / `⌘ O` | Quick access on **Files** (from 1.1, new app) |
 | `Enter` / `Shift Enter` | Send / new line |
 | `Alt Enter` / `⌥ Enter` | [Hold the message](sessions.md#holding-a-message-until-the-agent-is-free) until the agent is free (from 0.22) |
-| `Esc` | Stop the agent (with an empty message box), close a sheet or menu |
+| `Esc` | Stop the agent (with an empty message box), stop [dictating](sessions.md#dictating-a-message), close a sheet or menu |
 | `↑` `↓`, `Enter`, `Tab` | Move through and pick from menus, `/` and `@` lists |
 | Any key | Focus the message box (on a computer) |
 | `Ctrl V` / `⌘ V` | Paste into the terminal |

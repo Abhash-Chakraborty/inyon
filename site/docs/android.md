@@ -121,6 +121,7 @@ What changes for you:
 - From 0.15, a phone stays upright. A tablet, or a foldable when it's open, turns with the device and gets the wide layout: a sidebar with every session, and on a large tablet in landscape a side panel next to the chat.
 - The back button closes the top sheet first, then goes back a page.
 - Pasting an image from the keyboard attaches it, as on a computer.
+- From 0.27 the microphone in the message box [dictates](sessions.md#dictating-a-message) with the phone's speech recogniser (Google's, on most phones). Android asks for the microphone the first time you tap it; if you refused, allow it under Settings → Apps → Inyon → Permissions. Switching away from the app stops listening and keeps what it heard. A phone with no speech recogniser shows no microphone button.
 - The keyboard goes down after you send a message, so you can read the reply.
 - Keyboard shortcut hints such as `Ctrl K` are hidden on touch screens.
 - Long-press a session card for its menu.
