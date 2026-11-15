@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { ArrowLeft, ArrowDown, ArrowUp, AtSign, ChevronRight, File, FileDiff, Folder, FolderGit2, GitBranch, MessageSquare, RefreshCw, X } from 'lucide-react'
-import { api, type DirEntry, type FileView, type GitState } from '../../lib/api.ts'
+import { ArrowLeft, ArrowDown, ArrowUp, AtSign, ChevronRight, File, FileDiff, Folder, FolderGit2, GitBranch, MessageSquare, Minus, PenLine, Plus, RefreshCw, Undo2, X } from 'lucide-react'
+import { api, type DirEntry, type FileView, type GitFile, type GitState } from '../../lib/api.ts'
 import { bytes } from '../../lib/format.ts'
 import { compose } from '../../lib/compose.ts'
 import { review, reviewMessage, useReview, type ReviewNote } from '../../lib/review.ts'
-import { toast } from '../../lib/store.ts'
+import { toast, useStore } from '../../lib/store.ts'
+import { canStage, commitPlan, discardAsk, discardPaths, groups, SPLIT_MIN } from '../../lib/worktree.ts'
+import { confirmAction } from '../Confirm.tsx'
 import { Diff, type DiffLine } from '../chat/Diff.tsx'
 import { Markdown } from '../chat/Markdown.tsx'
 import { highlight, isLoaded, languageOf, loadLanguage } from '../chat/highlight.ts'
@@ -41,7 +43,7 @@ function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
       alive = false
     }
   }, [...deps, n])
-  return { ...state, reload: () => setN((x) => x + 1) }
+  return { ...state, reload: () => setN((x) => x + 1), set: (data: T) => setState({ data, busy: false }) }
 }
 
 // ---------- review comments ----------
@@ -125,14 +127,41 @@ export function CommentSheet({ p, at, onClose }: { p: PaneKey; at: { file: strin
   )
 }
 
+/** The screen is at least `px` wide, following it as the window changes. */
+function useMinWidth(px: number) {
+  const query = `(min-width: ${px}px)`
+  const [on, setOn] = useState(() => !!window.matchMedia?.(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(query)
+    if (!mq) return
+    const change = () => setOn(mq.matches)
+    change()
+    mq.addEventListener?.('change', change)
+    return () => mq.removeEventListener?.('change', change)
+  }, [query])
+  return on
+}
+
+/**
+ * The Changes tab's diff layout: side by side once picked, on a screen wide enough for it
+ * (`can`). The pick is kept on this device; a narrow screen shows one column whatever it is.
+ */
+export function useDiffLayout() {
+  const can = useMinWidth(SPLIT_MIN)
+  const view = useStore((s) => s.settings.diffView)
+  const setSettings = useStore((s) => s.setSettings)
+  return { can, split: can && view === 'split', view, pick: (v: 'unified' | 'split') => setSettings({ diffView: v }) }
+}
+
 /** A diff whose line numbers take comments for this session. */
 export function CommentableDiff({ p, file, hunks }: { p: PaneKey; file: string; hunks: Parameters<typeof Diff>[0]['hunks'] }) {
   const notes = useReview(keyOf(p))
   const [at, setAt] = useState<{ file: string; line: DiffLine } | null>(null)
   const marked = useMemo(() => new Set(notes.filter((n) => n.file === file).map((n) => `${n.line}:${n.removed}`)), [notes, file])
+  const { split } = useDiffLayout()
   return (
     <>
-      <Diff hunks={hunks} onLine={(line) => setAt({ file, line })} marked={(l) => marked.has(`${l.no}:${l.removed}`)} />
+      <Diff hunks={hunks} split={split} onLine={(line) => setAt({ file, line })} marked={(l) => marked.has(`${l.no}:${l.removed}`)} />
       <CommentSheet key={at ? `${at.file}:${at.line.no}:${at.line.removed}` : 'none'} p={p} at={at} onClose={() => setAt(null)} />
     </>
   )
@@ -148,12 +177,16 @@ const STATUS: Record<string, { label: string; tone: string }> = {
   R: { label: 'R', tone: 'text-accent-text' },
 }
 
+type Acting = { action: 'stage' | 'unstage' | 'discard'; key: string } | null
+
 /** What git sees in the session's folder: every change since the last commit, whoever made it. */
 export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
   const git = useLoad(() => api.git(p.host, p.pane), [p.host, p.pane])
   const [sel, setSel] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
-  const [busy, setBusy] = useState<'commit' | 'push' | null>(null)
+  const [busy, setBusy] = useState<'commit' | 'push' | 'draft' | null>(null)
+  const [acting, setActing] = useState<Acting>(null)
+  const box = useRef<HTMLTextAreaElement>(null)
   // the agent did something: look again, a moment later
   useEffect(() => {
     if (!poke) return
@@ -165,12 +198,16 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
   if (!s && git.busy) return <Waiting shape="rows" label="Reading git status" />
   if (git.error) return <Empty icon={<FolderGit2 className="size-5" />} title="Couldn't read git">{git.error}</Empty>
   if (!s?.repo) return <Empty icon={<FolderGit2 className="size-5" />} title="Not a git repository">The session's folder isn't in a git repository, so there's no working tree to show.</Empty>
+  const staging = canStage(s)
+  const plan = commitPlan(s)
   const run = async (what: 'commit' | 'push') => {
     setBusy(what)
     try {
       if (what === 'commit') {
-        const r = await api.gitCommit(p.host, p.pane, msg)
-        setMsg('')
+        const sent = msg
+        const r = await api.gitCommit(p.host, p.pane, sent, plan.staged)
+        // a message typed while it committed stays
+        setMsg((m) => (m === sent ? '' : m))
         toast({ title: `Committed ${r.commit}`, tone: 'success' })
       } else {
         await api.gitPush(p.host, p.pane)
@@ -183,8 +220,89 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
       setBusy(null)
     }
   }
+  /** stage, unstage or discard one file, or (with no file) stage or unstage every change */
+  const act = async (action: 'stage' | 'unstage' | 'discard', f?: GitFile) => {
+    if (acting) return
+    if (action === 'discard' && (!f || !(await confirmAction({ ...discardAsk(f), yes: 'Discard', danger: true })))) return
+    setActing({ action, key: f?.path ?? '*' })
+    try {
+      git.set(await api.gitFiles(p.host, p.pane, action, f ? (action === 'discard' ? discardPaths(f) : [f.path]) : [], !f))
+      if (action === 'discard') toast({ title: 'Changes discarded', tone: 'success' })
+    } catch (e) {
+      toast({ title: action === 'stage' ? 'Could not stage' : action === 'unstage' ? 'Could not unstage' : 'Could not discard', body: (e as Error).message, tone: 'error' })
+      git.reload()
+    } finally {
+      setActing(null)
+    }
+  }
+  const draft = async () => {
+    setBusy('draft')
+    try {
+      const { message } = await api.gitDraft(p.host, p.pane)
+      const before = msg
+      setMsg(message)
+      box.current?.focus()
+      if (before.trim() && before !== message) toast({ title: 'Your message was replaced with a draft', tone: 'info', action: { label: 'Undo', onSelect: () => setMsg(before) } })
+    } catch (e) {
+      toast({ title: 'Could not draft a message', body: (e as Error).message, tone: 'error' })
+    } finally {
+      setBusy(null)
+    }
+  }
   // something to push, and somewhere to push it
   const canPush = s.remote && (!s.upstream || (s.ahead ?? 0) > 0)
+  const { staged, changes } = groups(s.files)
+  const row = (f: GitFile, inStaged: boolean) => {
+    const on = cur?.path === f.path
+    const mine = acting?.key === f.path && acting.action !== 'discard'
+    const name = f.path.split('/').pop()
+    return (
+      <div key={`${inStaged ? 's' : 'c'}:${f.path}`} className={clsx('flex items-center rounded-xl', on ? 'bg-hover' : 'hover:bg-hover/60')}>
+        <button
+          type="button"
+          onClick={() => setSel(f.path)}
+          {...contextMenu(() => [
+            { key: 'diff', label: 'Show diff', icon: <FileDiff className="size-4" />, onSelect: () => setSel(f.path) },
+            f.status !== 'D' && { key: 'mention', label: 'Mention in message', icon: <AtSign className="size-4" />, onSelect: () => mentionIn(p, f.path) },
+            copyItem('copy', 'Copy path', s.root ? `${s.root}/${f.path}` : f.path, 'Path'),
+            staging &&
+              (inStaged
+                ? { key: 'unstage', label: 'Unstage', icon: <Minus className="size-4" />, onSelect: () => act('unstage', f) }
+                : { key: 'stage', label: 'Stage', icon: <Plus className="size-4" />, onSelect: () => act('stage', f) }),
+            staging && { key: 'discard', label: 'Discard changes', icon: <Undo2 className="size-4" />, danger: true, onSelect: () => act('discard', f) },
+          ])}
+          title={f.from ? `${f.from} → ${f.path}` : f.path}
+          className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left text-[12.5px]"
+        >
+          <span className={clsx('w-3 font-mono text-[12px] font-semibold', STATUS[f.status].tone)}>{STATUS[f.status].label}</span>
+          <span className="min-w-0 flex-1 truncate">
+            <span className="text-fg-3">{f.path.slice(0, f.path.lastIndexOf('/') + 1)}</span>
+            {name}
+          </span>
+          {f.status !== '?' && (
+            <span className="tabular shrink-0 font-mono text-[12px]">
+              <span className="text-ok">+{f.add}</span> <span className="text-danger">−{f.del}</span>
+            </span>
+          )}
+        </button>
+        {staging && (
+          <IconButton label={inStaged ? `Unstage ${name}` : `Stage ${name}`} className="mr-1 size-7" disabled={!!acting} onClick={() => act(inStaged ? 'unstage' : 'stage', f)}>
+            {mine ? <RefreshCw className="size-3.5 animate-spin" /> : inStaged ? <Minus className="size-3.5" /> : <Plus className="size-3.5" />}
+          </IconButton>
+        )}
+      </div>
+    )
+  }
+  const head = (title: string, n: number, action: 'stage' | 'unstage') => (
+    <div className="flex items-center gap-1.5 px-2.5 pt-1.5 pb-0.5 text-[12px] text-fg-3">
+      <span className="font-medium text-fg-2">{title}</span>
+      <span className="tabular">{n}</span>
+      <span className="flex-1" />
+      <button type="button" disabled={!!acting} onClick={() => act(action)} className="rounded-md px-1.5 py-0.5 hover:bg-hover hover:text-fg disabled:opacity-50">
+        {action === 'stage' ? 'Stage all' : 'Unstage all'}
+      </button>
+    </div>
+  )
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5 text-[12.5px]">
@@ -207,38 +325,60 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
       ) : (
         <>
           <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-line p-1.5">
-            {s.files.map((f) => (
-              <button
-                key={f.path}
-                type="button"
-                onClick={() => setSel(f.path)}
-                {...contextMenu(() => [
-                  { key: 'diff', label: 'Show diff', icon: <FileDiff className="size-4" />, onSelect: () => setSel(f.path) },
-                  f.status !== 'D' && { key: 'mention', label: 'Mention in message', icon: <AtSign className="size-4" />, onSelect: () => mentionIn(p, f.path) },
-                  copyItem('copy', 'Copy path', s.root ? `${s.root}/${f.path}` : f.path, 'Path'),
-                ])}
-                title={f.from ? `${f.from} → ${f.path}` : f.path}
-                className={clsx('flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[12.5px]', cur?.path === f.path ? 'bg-hover' : 'hover:bg-hover/60')}
-              >
-                <span className={clsx('w-3 font-mono text-[12px] font-semibold', STATUS[f.status].tone)}>{STATUS[f.status].label}</span>
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="text-fg-3">{f.path.slice(0, f.path.lastIndexOf('/') + 1)}</span>
-                  {f.path.split('/').pop()}
-                </span>
-                {f.status !== '?' && (
-                  <span className="tabular shrink-0 font-mono text-[12px]">
-                    <span className="text-ok">+{f.add}</span> <span className="text-danger">−{f.del}</span>
-                  </span>
+            {staging ? (
+              <>
+                {staged.length > 0 && (
+                  <section aria-label="Staged">
+                    {head('Staged', staged.length, 'unstage')}
+                    {staged.map((f) => row(f, true))}
+                  </section>
                 )}
-              </button>
-            ))}
+                {changes.length > 0 && (
+                  <section aria-label="Changes">
+                    {head('Changes', changes.length, 'stage')}
+                    {changes.map((f) => row(f, false))}
+                  </section>
+                )}
+              </>
+            ) : (
+              s.files.map((f) => row(f, false))
+            )}
           </div>
-          {cur && <TreeDiff key={`${cur.path}:${poke}:${s.files.length}`} p={p} path={cur.path} />}
-          <form className="flex shrink-0 items-center gap-1.5 border-t border-line p-2" onSubmit={(e) => (e.preventDefault(), msg.trim() && run('commit'))}>
-            <input value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Commit message" aria-label="Commit message" className={clsx(inputClass, 'h-8 text-[13px]')} />
-            <Button type="submit" size="sm" loading={busy === 'commit'} disabled={!msg.trim() || !!busy} title="Commit every change shown here">
-              Commit all
-            </Button>
+          {cur && (
+            <>
+              {staging && (
+                <div className="flex shrink-0 items-center gap-2 border-b border-line py-1 pr-1.5 pl-3 text-[12px]">
+                  <span className="min-w-0 flex-1 truncate font-mono text-fg-2" title={cur.path}>{cur.path}</span>
+                  <Button size="xs" variant="ghost" loading={acting?.action === 'discard' && acting.key === cur.path} disabled={!!acting} onClick={() => act('discard', cur)} title="Throw away the changes to this file">
+                    <Undo2 className="size-3.5" />
+                    Discard
+                  </Button>
+                </div>
+              )}
+              <TreeDiff key={`${cur.path}:${poke}:${s.files.length}:${cur.staged}:${cur.unstaged}`} p={p} path={cur.path} />
+            </>
+          )}
+          <form className="shrink-0 space-y-1.5 border-t border-line p-2" onSubmit={(e) => (e.preventDefault(), msg.trim() && !busy && run('commit'))}>
+            <textarea
+              ref={box}
+              value={msg}
+              onChange={(e) => setMsg(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && (e.preventDefault(), msg.trim() && !busy && run('commit'))}
+              rows={Math.min(6, Math.max(1, msg.split('\n').length))}
+              placeholder="Commit message"
+              aria-label="Commit message"
+              className={clsx(inputClass, 'h-auto resize-none py-1.5 text-[13px] leading-relaxed')}
+            />
+            <div className="flex items-center gap-1.5">
+              <Button type="button" size="xs" variant="ghost" loading={busy === 'draft'} disabled={!!busy} onClick={draft} title="Write a message from the files that would be committed">
+                <PenLine className="size-3.5" />
+                Draft
+              </Button>
+              <span className="flex-1" />
+              <Button type="submit" size="sm" loading={busy === 'commit'} disabled={!msg.trim() || !!busy} title={plan.title}>
+                {plan.label}
+              </Button>
+            </div>
           </form>
         </>
       )}

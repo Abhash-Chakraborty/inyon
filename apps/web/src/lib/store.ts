@@ -61,6 +61,8 @@ export interface Settings {
   haptics: boolean
   /** chat: every tool call and background job as its own row ('all'), or long runs folded ('compact') */
   toolDetail: 'all' | 'compact'
+  /** diffs in the Changes tab in one column, or side by side on a wide screen (from 0.27) */
+  diffView: 'unified' | 'split'
 }
 
 const SETTINGS_KEY = 'inyon.settings.v2'
@@ -77,6 +79,7 @@ const defaults: Settings = {
   sidebar: true,
   haptics: true,
   toolDetail: 'all',
+  diffView: 'unified',
 }
 
 function loadSettings(): Settings {

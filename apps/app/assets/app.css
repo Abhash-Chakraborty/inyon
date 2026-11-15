@@ -1970,7 +1970,21 @@ button.nav-item { width: 100%; text-align: left; }
 .pp-branch { display: flex; flex-shrink: 0; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 6px 8px 6px 12px; font-size: 12.5px; }
 .pp-branch-name { font-weight: 500; }
 .pp-ahead { display: flex; align-items: center; }
-.pp-commit { display: flex; flex-shrink: 0; align-items: center; gap: 6px; border-top: 1px solid var(--line); padding: 8px; }
+.pp-commit { display: flex; flex-shrink: 0; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding: 8px; }
+.pp-commit-row { display: flex; align-items: center; gap: 6px; }
+.pp-message { height: auto; resize: none; padding-top: 6px; padding-bottom: 6px; line-height: 1.6; }
+.pp-file-row { display: flex; align-items: center; border-radius: 12px; transition: background-color var(--dur-small) var(--ease-out-soft); }
+.pp-file-row:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
+.pp-file-row .pp-file { min-width: 0; flex: 1; }
+.pp-file-row .pp-file:hover { background: none; }
+.pp-stage { width: 28px; height: 28px; margin-right: 4px; }
+.pp-group-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px 2px; font-size: 12px; color: var(--fg-3); }
+.pp-group-title { font-weight: 500; color: var(--fg-2); }
+.pp-group-all { border-radius: 6px; padding: 2px 6px; }
+.pp-group-all:hover { background: var(--hover); color: var(--fg); }
+.pp-group-all:disabled { opacity: .5; }
+.pp-diff-head { display: flex; flex-shrink: 0; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 4px 6px 4px 12px; font-size: 12px; }
+.pp-diff-path { min-width: 0; flex: 1; color: var(--fg-2); }
 .pp-crumbs { display: flex; flex-shrink: 0; align-items: center; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--line); padding: 6px 8px; font-size: 12.5px; }
 .pp-crumb-step { display: flex; flex-shrink: 0; align-items: center; }
 .pp-crumb { flex-shrink: 0; border-radius: 6px; padding: 2px 6px; }

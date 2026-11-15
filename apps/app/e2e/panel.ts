@@ -20,16 +20,27 @@ const browser = await launch()
 const done = finish(browser)
 
 const ROOT = '/home/sam/code/storefront'
-const seen = { commits: [] as string[], pushes: 0, stops: [] as unknown[], outputs: 0 }
+const seen = { commits: [] as string[], committed: [] as (boolean | undefined)[], discards: [] as string[][], pushes: 0, stops: [] as unknown[], outputs: 0 }
+// what the stand-in repository has staged
+const staged = new Set<string>()
+const TREE = [{ path: 'src/checkout/total.ts', status: 'M', add: 2, del: 2 }, { path: 'notes/race.md', status: '?', add: 0, del: 0 }]
 const json = (v: unknown) => new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json' } })
 const hunk = { oldStart: 12, oldLines: 3, newStart: 12, newLines: 3, lines: [' import { applyDiscount } from "./discount"', '-export function total(cart: Cart) {', '+export async function total(cart: Cart) {', ' '] }
 state.routes.push((req, url) => {
   const p = url.pathname
   const pane = '/api/hosts/local/panes/11'
-  if (p === `${pane}/git`)
-    return json({ repo: true, root: ROOT, remote: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, files: [{ path: 'src/checkout/total.ts', status: 'M', add: 2, del: 2 }, { path: 'notes/race.md', status: '?', add: 0, del: 0 }] })
+  const tree = () => json({ repo: true, root: ROOT, remote: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, files: TREE.map((f) => ({ ...f, staged: staged.has(f.path), unstaged: !staged.has(f.path) })) })
+  if (p === `${pane}/git`) return tree()
+  if (p === `${pane}/git/draft`) return json({ message: 'Update 2 files\n\n- src/checkout/total.ts\n- notes/race.md (new)' })
+  if ((p === `${pane}/git/stage` || p === `${pane}/git/unstage` || p === `${pane}/git/discard`) && req.method === 'POST')
+    return req.json().then((b: { paths?: string[]; all?: boolean }) => {
+      const paths = b.all ? TREE.map((f) => f.path) : (b.paths ?? [])
+      if (p.endsWith('/discard')) seen.discards.push(paths)
+      else for (const f of paths) p.endsWith('/stage') ? staged.add(f) : staged.delete(f)
+      return tree()
+    })
   if (p === `${pane}/git/diff`) return json({ path: url.searchParams.get('path'), binary: false, hunks: url.searchParams.get('path') === 'notes/race.md' ? [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ['+# The race'] }] : [hunk] })
-  if (p === `${pane}/git/commit` && req.method === 'POST') return req.json().then((b: { message: string }) => (seen.commits.push(b.message), json({ commit: 'abc1234' })))
+  if (p === `${pane}/git/commit` && req.method === 'POST') return req.json().then((b: { message: string; staged?: boolean }) => (seen.commits.push(b.message), seen.committed.push(b.staged), json({ commit: 'abc1234' })))
   if (p === `${pane}/git/push` && req.method === 'POST') return (seen.pushes++, json({ ok: true }))
   if (p === `${pane}/dir`) {
     const at = url.searchParams.get('path') ?? ''
@@ -126,6 +137,25 @@ for (const [w, h] of SIZES)
         await panel(page).getByRole('button', { name: 'Commit all' }).click()
         check(await page.getByText('Committed abc1234').waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: Commit all says what it committed`)
         check(seen.commits.at(-1) === 'Wait for the discount in total()', `${tag}: the commit carries its message`)
+        check(seen.committed.at(-1) === false, `${tag}: with nothing staged Commit all commits everything`)
+        // stage one file: it moves to Staged, and the commit takes only it
+        await panel(page).getByRole('button', { name: 'Stage race.md' }).click()
+        check(await panel(page).getByRole('button', { name: 'Unstage race.md' }).waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: a staged file moves to Staged`)
+        check(await panel(page).getByText('Staged', { exact: true }).isVisible(), `${tag}: the Staged list has its heading`)
+        await panel(page).getByRole('button', { name: 'Draft' }).click()
+        check(await until(async () => (await panel(page).getByLabel('Commit message').inputValue()).startsWith('Update 2 files\n\n- src/checkout/total.ts')), `${tag}: Draft fills the message box`)
+        await page.screenshot({ path: path.join(shots, `panel-staged-${tag}.png`) })
+        await panel(page).getByRole('button', { name: 'Commit 1 staged' }).click()
+        check(await until(async () => seen.committed.at(-1) === true), `${tag}: Commit 1 staged commits only the staged file`)
+        await panel(page).getByRole('button', { name: 'Unstage all' }).click()
+        check(await panel(page).getByRole('button', { name: 'Stage race.md' }).waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: Unstage all takes it out again`)
+        // discard asks first
+        const discards = seen.discards.length
+        await panel(page).getByRole('button', { name: 'Discard', exact: true }).click()
+        const ask = page.getByRole('dialog')
+        check(await ask.getByText('Discard your changes to total.ts?').waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: Discard asks first`)
+        await ask.getByRole('button', { name: 'Discard', exact: true }).click()
+        check(await until(async () => seen.discards.length === discards + 1 && seen.discards.at(-1)?.[0] === 'src/checkout/total.ts'), `${tag}: Discard names the file`)
         await panel(page).getByRole('button', { name: 'Push' }).click()
         check(await page.getByText('Pushed', { exact: true }).waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: Push says it pushed`)
         // the choice of view is remembered

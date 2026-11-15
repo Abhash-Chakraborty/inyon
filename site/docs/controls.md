@@ -80,6 +80,16 @@ From 0.17, **Changes → Working tree** reads the git repository the session's f
 - **Commit all** commits every change shown, with your message, as `git add -A` and `git commit` would. Your git hooks and commit signing run as usual; one that needs a password typed in the terminal fails with git's message instead of waiting.
 - **Push** appears when there's a remote and something to push. A branch with no upstream yet goes to `origin` under the same name.
 
+From 0.27 you choose what goes into a commit:
+
+- **Stage and unstage.** The **+** at the end of a file's row stages it, and the file moves to a **Staged** list above **Changes**; **−** takes it out again. Each list shows how many files it has, with **Stage all** or **Unstage all**. A file you staged and then changed again is in both lists. Staging works as `git add` and `git reset` on that one file.
+- **Commit what's staged.** Once anything is staged, the button reads **Commit 2 staged** (with the count) and commits only those files. With nothing staged it's **Commit all**, as before.
+- **Discard.** **Discard** above the diff, or **Discard changes** in a file's right-click menu, throws away your changes to that file after you confirm. A file the last commit has goes back to it, staged changes included (`git restore --staged --worktree`). A new file, tracked or not, is deleted. A renamed file goes back to its old name. It can't be undone.
+- **Draft.** **Draft** under the message box writes a message from the files that would be committed: a summary line such as *Update 3 files in apps/web*, and for more than one file a list of them. The hub makes it from the file list alone; nothing is sent to the agent. It replaces what you typed, and the notice that says so has **Undo**. The message box takes several lines, so `Enter` starts a new one and `Ctrl+Enter` (`⌘+Enter` on a Mac) commits.
+- **Side by side.** On a screen 900 px wide or more, the switch next to **This chat** and **Working tree** shows diffs in one column or side by side, old on the left and new on the right. The app remembers the choice on this device; a narrower screen always shows one column.
+
+File names reach git as names, never as patterns, so a file called `*.md` or `-x` is only that file.
+
 To comment on a line, tap its number in any diff, in either view. Comments collect under the diff; **Add to message** puts them all in your message box as one review, each under the file, line and code it's about, so you can add to it before sending. **Clear** drops them. Comments stay in the app until you add or clear them, and aren't saved anywhere.
 
 ## Usage and limits
