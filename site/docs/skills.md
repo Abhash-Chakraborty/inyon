@@ -44,6 +44,7 @@ From 0.22. The `inyon` skill teaches a coding agent how your setup fits together
 - read the page that covers the task with [`inyon docs <topic>`](cli.md#docs) before acting;
 - show you a site with `inyon pages add` (`inyon blueprints add` from 0.25) and hand over where it sits in the app, not a URL;
 - see the hub's sessions with `inyon sessions`, and message an agent on another machine with [`inyon send`](cli.md#sessions-and-messages) rather than typing into its tmux pane;
+- from 0.27, tell you when a long job finishes, or that it needs you later, with [`inyon notify`](cli.md#notify-yourself) instead of waiting at a prompt;
 - leave tokens to you: a machine is added with the command from the hub's **Machines → Add a machine**, run by you;
 - ask before anything that cuts you off, such as `inyon stop`, `disconnect` or `hub stop`, and never print what's in `~/.inyon`.
 

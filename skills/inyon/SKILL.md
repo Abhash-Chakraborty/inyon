@@ -1,6 +1,6 @@
 ---
 name: inyon
-description: Work on a computer that runs Inyon, the tmux and coding-agent remote (the `inyon` command). Use it whenever the user mentions Inyon, a hub, a joined or paired machine, the Inyon app or Pages, or asks you to set Inyon up, add a machine or phone, show them a site, find out what this computer is in their setup, or say which address to open; and before you guess anything about Inyon from its files or processes.
+description: Work on a computer that runs Inyon, the tmux and coding-agent remote (the `inyon` command). Use it whenever the user mentions Inyon, a hub, a joined or paired machine, the Inyon app or Pages, or asks you to set Inyon up, add a machine or phone, show them a site, find out what this computer is in their setup, or say which address to open; when they want to hear on their phone that a long job finished or that you need them (`inyon notify`); and before you guess anything about Inyon from its files or processes.
 ---
 
 # Inyon
@@ -18,8 +18,8 @@ inyon status --json
 
 | `role` | What this computer is | What you can do here |
 |---|---|---|
-| `hub` | Runs the hub: the web app people sign in to, which reaches every other machine | Add pages, show the setup code, see every machine and session, message any agent |
-| `joined` | Joined to the hub named in `hub`. It connects out, so the hub shows its sessions | Add pages, see the hub's machines, sessions and pages, message an agent on another machine (all from 0.22) |
+| `hub` | Runs the hub: the web app people sign in to, which reaches every other machine | Add pages, show the setup code, see every machine and session, message any agent, notify the user |
+| `joined` | Joined to the hub named in `hub`. It connects out, so the hub shows its sessions | Add pages, see the hub's machines, sessions and pages, message an agent on another machine (all from 0.22), notify the user (from 0.27) |
 | `node` | Paired straight with the Android app over its own link, no hub | Pair another phone with `inyon pair` |
 | `none` | Not set up yet | Tell the user to run `inyon setup`, which asks questions in their terminal |
 
@@ -80,6 +80,22 @@ and the user sees it in the app until then. From a joined machine it works only 
 on **Settings › Machines › Machines can message agents**; if the answer says it's off, tell them that
 and don't look for another way in (no SSH and `tmux send-keys` into their sessions). Say who you are
 and where you are in the message, since it arrives as if typed.
+
+**Tell the user something without waiting for them** (hub or joined, from 0.27): a long job
+finished, a deploy is out, or you need them later but can carry on or stop for now.
+
+```sh
+inyon notify "Deploy finished, check staging"
+inyon notify --title "Nightly build" "3 tests failed in parser_tests"
+```
+
+Their phones and browsers get a notification titled with the session you run in (the machine's name
+outside one), and tapping it opens your session. Use it instead of blocking at a prompt for news
+they don't need to answer at once. Keep it to one or two plain sentences that make sense on a lock
+screen: the hub cuts the text at 500 characters and takes 5 a minute per machine, so send one when
+something is done or needs them, not progress updates. If the answer says nobody heard it, tell the
+user to turn on notifications under Settings › Notifications; if it says the hub doesn't take
+notifications yet, that the hub needs updating.
 
 **Add a computer to a hub.** The hub makes the command: **Machines → Add a machine** in its app gives a
 one-line command with a token for that one machine. Ask the user to run it on the new computer. Never

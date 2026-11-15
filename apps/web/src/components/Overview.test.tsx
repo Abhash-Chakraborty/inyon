@@ -28,6 +28,8 @@ test('recent activity says needs you only while the session is still on that que
   expect(activityLabel(newer, feed, moved)).toBe('answered')
   expect(activityLabel(ev(3, '%7'), feed, waiting)).toBe('asked')
   expect(activityLabel(ev(4, '%1', 'done'), feed, waiting)).toBe('finished')
+  // a message from inyon notify reads as what it said
+  expect(activityLabel({ ...ev(5), kind: 'message', body: 'Deploy finished' }, feed, waiting)).toBe('Deploy finished')
 })
 
 test('an answer reads Sending…, then Sent', async () => {

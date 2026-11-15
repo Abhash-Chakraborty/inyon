@@ -78,7 +78,7 @@ self.addEventListener('push', (e) => {
       await self.registration.showNotification(p.title || 'Inyon', {
         body: p.body || '',
         tag: p.tag || 'inyon',
-        renotify: p.kind === 'waiting',
+        renotify: p.kind === 'waiting' || p.kind === 'message',
         data: { href: p.href || '/' },
         icon: BASE + 'icon-192.png',
         badge: BASE + 'badge-96.png',

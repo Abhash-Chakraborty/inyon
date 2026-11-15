@@ -22,6 +22,7 @@ pub mod index;
 pub mod limits;
 pub mod machines;
 pub mod node_dist;
+pub mod notify;
 #[cfg(test)]
 mod organize_tests;
 pub mod pages;

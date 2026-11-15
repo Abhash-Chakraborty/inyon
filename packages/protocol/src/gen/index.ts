@@ -952,7 +952,7 @@ export type ClientMsg = { "t": "sub.overview" } | { "t": "sub.chat", host: strin
 
 export type DraftSource = "app" | "terminal";
 
-export type NotifyKind = "waiting" | "done" | "offline" | "online";
+export type NotifyKind = "waiting" | "done" | "offline" | "online" | "message";
 
 /**
  * A project's or a group's colour: the neutral ones, and a few muted ones. The app draws it on the

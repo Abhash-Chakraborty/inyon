@@ -404,6 +404,7 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
     crate::node_dist::add(&mut r);
     crate::core_routes::add(&mut r);
     crate::push::add(&mut r);
+    crate::notify::add(&mut r);
     crate::pages::add(&mut r);
     crate::shares::add(&mut r);
     crate::cleanup::add(&mut r);

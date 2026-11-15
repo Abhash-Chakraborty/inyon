@@ -1,5 +1,6 @@
 //! `inyon hub machines`, `inyon sessions`, `inyon pages --hub` and `inyon send`: the hub's machines,
-//! sessions and pages from the command line, and a message an agent gets once it's free. On the
+//! sessions and pages from the command line, and a message an agent gets once it's free.
+//! `inyon notify` (hub 0.27 and on) sends you a notification titled with the session it runs in. On the
 //! hub's machine they use the local token the hub wrote as it started; on a joined machine, the token
 //! that machine keeps for its link to the hub (hub 0.22 and on take either). `inyon read`,
 //! `inyon answer` and `inyon companion` work on the hub's machine only (hub 0.22 and on); the
@@ -47,12 +48,17 @@ pub fn refusal(status: u16, body: &Value, local: bool) -> String {
 }
 
 impl Access {
-    fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
+    /// The hub's status and answer, whatever it said.
+    fn ask(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
         let url = format!("{}{path}", self.url);
         let res = crate::http::hub_call(method, &url, &self.token, body, self.local).map_err(|e| format!("Couldn't reach the hub at {}: {e}", crate::http::host_of(&self.url)))?;
-        let v: Value = serde_json::from_slice(&res.body).unwrap_or(Value::Null);
-        if !res.ok() {
-            return Err(refusal(res.status, &v, self.local));
+        Ok((res.status, serde_json::from_slice(&res.body).unwrap_or(Value::Null)))
+    }
+
+    fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
+        let (status, v) = self.ask(method, path, body)?;
+        if !(200..300).contains(&status) {
+            return Err(refusal(status, &v, self.local));
         }
         Ok(v)
     }
@@ -308,6 +314,76 @@ pub fn companion_stop() -> Outcome {
     let a = access()?;
     a.call("DELETE", "/api/companion", None)?;
     Ok(json!({ "agent": null, "message": "The companion is off." }))
+}
+
+/// The most `inyon notify` sends of a long text; the hub cuts it shorter still.
+const NOTIFY_SENT_MAX: usize = 2000;
+
+/// What `inyon notify` asks the hub for: the text, the title if one was given, and the pane it
+/// runs in (`TMUX_PANE`, which Inyon's own sessions set too) so the hub can name the session.
+pub fn notify_body(text: &str, title: Option<&str>, pane: Option<String>) -> Value {
+    let text: String = text.chars().take(NOTIFY_SENT_MAX).collect();
+    let mut b = json!({ "text": text });
+    if let Some(t) = title.filter(|t| !t.trim().is_empty()) {
+        b["title"] = json!(t);
+    }
+    if let Some(p) = pane {
+        b["pane"] = json!(p);
+    }
+    b
+}
+
+fn digits(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 9 && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The pane this command runs in, as the hub names it: `TMUX_PANE` (`%3`), which tmux, psmux and
+/// Inyon's own sessions set. psmux runs a server per session and numbers panes in each, so there
+/// the hub's name has the session's number in front (`%2.3`), asked of psmux as Inyon's hooks do;
+/// when it can't say, no pane rather than another session's.
+pub fn pane_here(env: impl Fn(&str) -> Option<String>, ask: impl Fn(&[&str]) -> Option<String>) -> Option<String> {
+    let pane = env("TMUX_PANE").filter(|p| p.strip_prefix('%').is_some_and(digits))?;
+    let Some(psmux) = env("PSMUX_SESSION").filter(|s| !s.is_empty()) else { return Some(pane) };
+    let out = if env("TMUX").is_some_and(|t| !t.is_empty()) {
+        ask(&["tmux", "display", "-p", "#{session_id}"])
+    } else if psmux != "__warm__" {
+        ask(&["tmux", "display", "-p", "-t", &psmux, "#{session_id}"])
+    } else {
+        None
+    }?;
+    let s = out.trim().trim_start_matches('$').to_owned();
+    digits(&s).then(|| format!("%{s}.{}", &pane[1..]))
+}
+
+/// What `inyon notify` says once the hub took it.
+pub fn notify_line(v: &Value) -> String {
+    let title = s(v, "title");
+    if v["browsers"].as_u64().unwrap_or(0) == 0 && v["apps"] != json!(true) {
+        return format!("Sent as \"{title}\", but no app is open and no browser has notifications on for this hub, so nobody heard it. Turn them on in the app: Settings > Notifications.");
+    }
+    format!("Sent to your phones and browsers as \"{title}\".")
+}
+
+/// Why the hub didn't take a notification.
+pub fn notify_refusal(status: u16, v: &Value, local: bool) -> String {
+    match (status, v.get("reason").and_then(Value::as_str)) {
+        (403, Some("scope")) => "The hub doesn't take notifications yet. Update it to 0.27 or later (run inyon update on its computer).".into(),
+        _ => refusal(status, v, local),
+    }
+}
+
+pub fn notify_command(text: &str, title: Option<&str>) -> Outcome {
+    if text.trim().is_empty() {
+        return Err("Say what to tell you: inyon notify \"text\" (or - to read it from stdin).".into());
+    }
+    let a = access()?;
+    let env = |k: &str| std::env::var(k).ok();
+    let ask = |cmd: &[&str]| crate::sys::run_for(cmd, std::time::Duration::from_secs(3)).filter(|r| r.ok).map(|r| r.out);
+    let (status, v) = a.ask("POST", "/api/notify", Some(&notify_body(text, title, pane_here(env, ask))))?;
+    if !(200..300).contains(&status) {
+        return Err(notify_refusal(status, &v, a.local));
+    }
+    Ok(json!({ "title": v.get("title"), "body": v.get("body"), "pane": v.get("pane"), "browsers": v.get("browsers"), "apps": v.get("apps"), "message": notify_line(&v) }))
 }
 
 /// The text to send: the words given, or stdin for `-`.
