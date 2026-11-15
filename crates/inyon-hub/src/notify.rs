@@ -134,7 +134,11 @@ pub async fn route(req: &mut Req, who: &Caller) -> HubResult<Resp> {
 /// The route, so a request for it gets as far as the inyon command's checks (machines.rs), which
 /// answer it; a browser or phone signed in to the hub is refused here.
 pub fn add(routes: &mut Routes) {
-    guarded(routes, "/api/notify", vec![(axum::http::Method::POST, h(|_r: Req| async move { Err(http(403, "Only the inyon command sends notifications: run inyon notify on the machine.")) }))]);
+    guarded(
+        routes,
+        "/api/notify",
+        vec![(axum::http::Method::POST, h(|_r: Req| async move { Err(http(403, "Only the inyon command sends notifications: run inyon notify on the machine.")) }))],
+    );
 }
 
 #[cfg(test)]

@@ -961,9 +961,20 @@ mod tests {
         assert_eq!(toasts(&s), [("work".into(), Some("b".into()), Some("/m/box/p/3".into()), Tone::Success)]);
         assert_eq!(u.effects[1], Effect::Haptic(Haptic::Success));
         // from outside a session: the machine's, in the list and as a notification
-        let u = s.apply(&ServerMsg::Notify { host: "box".into(), pane: "".into(), kind: NotifyKind::Message, title: "box".into(), body: "Backup done".into(), agent: None }, None, &PHONE_HIDDEN, NOW);
+        let u = s.apply(
+            &ServerMsg::Notify { host: "box".into(), pane: "".into(), kind: NotifyKind::Message, title: "box".into(), body: "Backup done".into(), agent: None },
+            None,
+            &PHONE_HIDDEN,
+            NOW,
+        );
         assert_eq!((s.activity[0].kind, s.activity[0].pane.as_str()), (ActivityKind::Message, ""));
-        assert!(u.effects.contains(&Effect::NativeNotify { title: "box".into(), body: "Backup done".into(), href: "/machines/box".into(), tag: "machine:box".into(), kind: NoticeKind::Message }));
+        assert!(u.effects.contains(&Effect::NativeNotify {
+            title: "box".into(),
+            body: "Backup done".into(),
+            href: "/machines/box".into(),
+            tag: "machine:box".into(),
+            kind: NoticeKind::Message
+        }));
     }
 
     #[test]

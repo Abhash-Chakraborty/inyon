@@ -359,7 +359,9 @@ pub fn pane_here(env: impl Fn(&str) -> Option<String>, ask: impl Fn(&[&str]) -> 
 pub fn notify_line(v: &Value) -> String {
     let title = s(v, "title");
     if v["browsers"].as_u64().unwrap_or(0) == 0 && v["apps"] != json!(true) {
-        return format!("Sent as \"{title}\", but no app is open and no browser has notifications on for this hub, so nobody heard it. Turn them on in the app: Settings > Notifications.");
+        return format!(
+            "Sent as \"{title}\", but no app is open and no browser has notifications on for this hub, so nobody heard it. Turn them on in the app: Settings > Notifications."
+        );
     }
     format!("Sent to your phones and browsers as \"{title}\".")
 }
