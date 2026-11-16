@@ -239,6 +239,15 @@ pub struct PaneInfo {
     pub agent: Option<AgentPaneInfo>,
     /// runs your companion agent (Settings › Companion); at most one pane across all machines
     pub companion: Option<bool>,
+    /// works in a git worktree Inyon made for it (New session › In a new worktree)
+    pub worktree: Option<PaneWorktree>,
+}
+
+/// The git worktree a session was started in: its branch and folder, as Inyon made them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PaneWorktree {
+    pub branch: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

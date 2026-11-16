@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { screen, within } from '@testing-library/react'
+import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import type { HostState } from '@inyon/protocol'
@@ -100,5 +100,80 @@ describe('ending a session', () => {
     expect(h.sessions.map((s) => [s.name, s.windows.map((w) => w.panes.map((p) => p.id))])).toEqual([['api', [['%1']]]])
     // they come back after a while, in case tmux never closed them
     expect(withoutEnded([box()], Date.now() + 16_000)).toEqual([box()])
+  })
+
+  describe('in a worktree Inyon made', () => {
+    const inWorktree = () => {
+      const h = box()
+      h.sessions[1].windows[0].panes[0].worktree = { branch: 'inyon/docs', path: '/home/me/code/.inyon-worktrees/api-docs' }
+      useStore.setState({ hosts: [h] })
+    }
+    const clean = { exists: true, branch: 'inyon/docs', changes: 0, unpushed: 0, sessions: 0 }
+    const toggle = () => screen.getByRole('switch', { name: 'Remove the worktree too' })
+
+    test('a clean one is removed with the session, once the session has ended', async () => {
+      inWorktree()
+      const order: string[] = []
+      api.worktreeState.mockResolvedValue(clean)
+      api.end.mockImplementation(async () => (order.push('end'), { closed: 'session' }))
+      api.removeWorktree.mockImplementation(async () => (order.push('remove'), { branchDeleted: false }))
+      const user = await endFromCard('Write the docs')
+      const sheet = screen.getByRole('dialog')
+      expect(within(sheet).getByText('inyon/docs')).toBeTruthy()
+      await flush()
+      expect(toggle().getAttribute('aria-checked')).toBe('true')
+      expect(api.worktreeState.mock.calls).toEqual([['box', '/home/me/code/.inyon-worktrees/api-docs', '%3']])
+      await user.click(within(sheet).getByRole('button', { name: 'End session' }))
+      await flush()
+      expect(order).toEqual(['end', 'remove'])
+      expect(api.removeWorktree.mock.calls).toEqual([['box', '/home/me/code/.inyon-worktrees/api-docs', '%3']])
+      expect(useStore.getState().toasts.map((t) => [t.title, t.body])).toContainEqual(['Worktree removed', 'The branch inyon/docs stays.'])
+    })
+
+    test('switched off, it stays', async () => {
+      inWorktree()
+      api.worktreeState.mockResolvedValue(clean)
+      const user = await endFromCard('Write the docs')
+      await flush()
+      await user.click(toggle())
+      await user.click(screen.getByRole('button', { name: 'End session' }))
+      await flush()
+      expect(api.end).toHaveBeenCalled()
+      expect(api.removeWorktree).not.toHaveBeenCalled()
+    })
+
+    test('uncommitted changes keep it, and the sheet says so', async () => {
+      inWorktree()
+      let answer!: () => void
+      api.worktreeState.mockImplementation(() => new Promise((r) => (answer = () => r({ ...clean, changes: 2 }))))
+      const user = await endFromCard('Write the docs')
+      expect(screen.getByText('Checking the worktree…')).toBeTruthy()
+      expect((toggle() as HTMLButtonElement).disabled).toBe(true)
+      await act(async () => answer())
+      await flush()
+      expect(screen.getByText('It has 2 uncommitted changes, so it stays.')).toBeTruthy()
+      expect((toggle() as HTMLButtonElement).disabled).toBe(true)
+      await user.click(screen.getByRole('button', { name: 'End session' }))
+      await flush()
+      expect(api.removeWorktree).not.toHaveBeenCalled()
+    })
+
+    test("when the machine can't be asked, it stays", async () => {
+      inWorktree()
+      api.worktreeState.mockRejectedValue(new Error('offline'))
+      const user = await endFromCard('Write the docs')
+      await flush()
+      expect(screen.getByText("Couldn't check the worktree, so it stays")).toBeTruthy()
+      await user.click(screen.getByRole('button', { name: 'End session' }))
+      await flush()
+      expect(api.removeWorktree).not.toHaveBeenCalled()
+    })
+
+    test('a session in a plain folder has no such switch', async () => {
+      const user = await endFromCard('Write the docs')
+      expect(screen.queryByRole('switch')).toBeNull()
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(api.worktreeState).not.toHaveBeenCalled()
+    })
   })
 })

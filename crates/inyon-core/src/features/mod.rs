@@ -28,3 +28,5 @@ pub mod temp;
 // uploads sent a chunk at a time, resumable (from 0.24)
 pub mod uploads;
 pub mod workspace;
+// sessions in a git worktree of their own (New session › In a new worktree)
+pub mod worktrees;

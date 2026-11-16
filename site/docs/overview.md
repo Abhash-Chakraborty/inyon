@@ -111,6 +111,7 @@ Tap **+** (or press `Alt N`, `⌥ N` on a Mac) for a new session:
 1. Pick the agent from those installed, or **Terminal** for a plain shell.
 2. Pick the machine.
 3. Pick the folder; recent folders are offered as chips, shortened to their last two parts (`…\inyon-demo\checkout-service` on Windows). It starts in `~`.
+   When the folder is in a git repo, **In a new worktree** starts the session on a branch and folder of its own (from 0.27). See [In a worktree of its own](sessions.md#in-a-worktree-of-its-own).
 4. Optionally choose the model, the permission mode (Claude Code and Antigravity) and a first message.
 5. Choose whether to start a new tmux session or a new window in an existing one, and its name.
 

@@ -15,6 +15,7 @@ import { liveWindow, openLink, shortPath, tokens } from '../../lib/format.ts'
 import { paneHref, paneTitle, terminalName } from '../../lib/overview.ts'
 import { IconButton, Menu, Segmented } from '../ui/primitives.tsx'
 import { StateDot, StatePill, shownState } from '../ui/status.tsx'
+import { BranchChip } from '../ui/BranchChip.tsx'
 
 /** Tiny ring showing how full the context window is. */
 function ContextRing({ pct, warn }: { pct?: number; warn?: boolean }) {
@@ -111,7 +112,9 @@ export function SessionHeader({
   const title = (ref?.pane.companion && 'Companion') || ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
   const busy = runningCount(info)
 
-  const subtitle = [def?.name ?? 'Terminal', ref?.host.config.name, ref && `${ref.session.name}:${ref.window.index}`, shortPath(info?.cwd ?? ref?.pane.cwd, 28)]
+  // a session in a worktree shows its branch instead of the folder
+  const wt = ref?.pane.worktree
+  const subtitle = [def?.name ?? 'Terminal', ref?.host.config.name, ref && `${ref.session.name}:${ref.window.index}`, !wt && shortPath(info?.cwd ?? ref?.pane.cwd, 28)]
     .filter(Boolean)
     .join(' · ')
 
@@ -131,7 +134,10 @@ export function SessionHeader({
               <Pencil className="size-3 shrink-0 text-fg-3 opacity-0 transition-opacity group-hover/title:opacity-100 max-md:hidden" />
             </button>
           </h1>
-          <p className="mt-0.5 truncate font-mono text-[12px] text-fg-3">{subtitle}</p>
+          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[12px] text-fg-3">
+            <span className="truncate">{subtitle}</span>
+            {wt && <BranchChip branch={wt.branch} className="max-w-[60%] shrink-0" />}
+          </p>
         </div>
         {ref?.pane.agent && (
           <span className="hidden sm:block">

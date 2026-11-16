@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 use inyon_protocol::{AgentKind, HostConfig, HostKind, HostStatus};
 
 use super::icons::{AgentMark, Glyph, Icon, Logo};
-use super::kit::{Busy, Field, Opt, Segmented, Select, Sheet};
+use super::kit::{Busy, Field, Opt, Segmented, Select, Sheet, Toggle};
 use super::toast::{self, ToastTone};
 use crate::machines as m;
 use crate::route::{self, Route};
@@ -373,6 +373,12 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
     let mut mode = use_signal(String::new);
     let mut prompt = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    // in a git worktree of its own: offered when the folder is in a repo; until a branch is typed,
+    // it follows the suggested one
+    let mut repo = use_signal(|| None::<api::RepoInfo>);
+    let mut in_worktree = use_signal(|| false);
+    let mut branch = use_signal(|| None::<String>);
+    let mut stamp = use_signal(String::new);
     let online: Vec<inyon_protocol::HostState> = hub.read().hosts.iter().filter(|h| h.status == HostStatus::Online).cloned().collect();
     let first = if online.iter().any(|h| h.config.id == host) { Some(host.clone()) } else { online.first().map(|h| h.config.id.clone()) };
     {
@@ -389,6 +395,11 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
             prompt.set(String::new());
             model.set(String::new());
             pick.set(first_pick(&inst));
+            in_worktree.set(false);
+            branch.set(None);
+            let c = crate::platform::clock();
+            let t = inyon_chat_core::js::local_time(c.now, c.tz_minutes);
+            stamp.set(format!("{:02}{:02}-{:02}{:02}", t.month, t.day, t.hour, t.minute));
             spawn(async move {
                 customs.set(api::settings().await.ok().and_then(|s| s.custom_agents).unwrap_or_default());
             });
@@ -407,6 +418,25 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
             }
         }));
     }
+    // whether the folder is in a git repo, asked once typing pauses; a late answer for another folder is dropped
+    let folder = cwd();
+    let machine = on();
+    use_effect(use_reactive!(|open, folder, machine| {
+        if !open || machine.is_empty() {
+            return;
+        }
+        spawn(async move {
+            crate::platform::sleep(350).await;
+            if *cwd.peek() != folder || *on.peek() != machine {
+                return;
+            }
+            let path = if folder.trim().is_empty() { "~".to_string() } else { folder.trim().to_string() };
+            let found = api::repo(&machine, &path).await.ok().filter(|r| r.root.is_some());
+            if *cwd.peek() == folder && *on.peek() == machine {
+                repo.set(found);
+            }
+        });
+    }));
     let h = online.iter().find(|x| x.config.id == on()).cloned();
     let installed = h.as_ref().map(|h| h.agents.clone()).unwrap_or_default();
     let recent = m::recent_folders(&hub.read().hosts, &on());
@@ -421,10 +451,27 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
         Pick::Shell => "shell".into(),
         Pick::Agent(k) => k.as_str().to_string(),
     };
+    let suggested = move || {
+        let chosen = pick();
+        let chat = chosen.kind().is_some_and(|k| k.def().chat);
+        let agent = match &chosen {
+            Pick::Custom(c) => c.name.clone(),
+            Pick::Agent(k) => k.as_str().to_string(),
+            Pick::Shell => "shell".into(),
+        };
+        branch().unwrap_or_else(|| inyon_protocol::worktree::default_branch(chat.then_some(prompt()).as_deref(), &agent, &stamp()))
+    };
+    let worktree = in_worktree() && repo().is_some();
+    let shown_branch = suggested();
+    let problem = if worktree { inyon_protocol::worktree::check_branch(&shown_branch).err() } else { None };
+    let branch_hint = problem.clone().unwrap_or_else(|| inyon_protocol::worktree::worktree_folder(repo().and_then(|r| r.root).as_deref().unwrap_or(""), &shown_branch));
+    let repo_note = format!("A branch and folder of its own{}", repo().and_then(|r| r.branch).map(|b| format!(", from {b}")).unwrap_or_default());
+    let blocked = problem.is_some();
     let submit = move || {
         let chosen = pick();
         let kind = chosen.kind();
         let chat = kind.is_some_and(|k| k.def().chat);
+        let worktree = in_worktree() && repo().is_some();
         let has_mode = matches!(kind, Some(AgentKind::Claude | AgentKind::Antigravity));
         let host = on();
         let body = api::Launch {
@@ -440,6 +487,8 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
             mode: Some(mode()).filter(|s| has_mode && !s.is_empty()),
             prompt: Some(prompt()).filter(|s| chat && !s.is_empty()),
             sign_in: false,
+            worktree,
+            branch: worktree.then(suggested),
         };
         busy.set(true);
         spawn(async move {
@@ -473,7 +522,7 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
                 div { class: "sheet-actions",
                     span { class: "sheet-foot-note truncate", "{where_label}" }
                     button { class: "button button-md button-ghost press", r#type: "button", onclick: move |_| on_close.call(()), "Cancel" }
-                    button { class: "button button-md button-primary press", r#type: "button", disabled: on().is_empty() || busy(), onclick: move |_| submit_button(),
+                    button { class: "button button-md button-primary press", r#type: "button", disabled: on().is_empty() || busy() || blocked, onclick: move |_| submit_button(),
                         Busy { on: busy() }
                         "{start_label}"
                     }
@@ -483,7 +532,7 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
                 class: "stack stack-lg",
                 onsubmit: move |e| {
                     e.prevent_default();
-                    if !on().is_empty() && !busy() {
+                    if !on().is_empty() && !busy() && !blocked {
                         submit_form();
                     }
                 },
@@ -577,6 +626,32 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
                                 title: "{r}",
                                 onclick: { let r = r.clone(); move |_| cwd.set(r.clone()) },
                                 {inyon_chat_core::format::tail_path(&r, 32)}
+                            }
+                        }
+                    }
+                }
+                if repo().is_some() {
+                    div { class: "stack",
+                        div { class: "switch-line",
+                            div { class: "switch-line-words",
+                                span { class: "switch-line-title", "In a new worktree" }
+                                span { class: "switch-line-sub truncate", "{repo_note}" }
+                            }
+                            Toggle { on: in_worktree(), label: "In a new worktree", on_change: move |v: bool| in_worktree.set(v) }
+                        }
+                        if in_worktree() {
+                            label { class: "field-wrap",
+                                span { class: "field-label", "Branch" }
+                                input {
+                                    class: if blocked { "field mono-field field-bad" } else { "field mono-field" },
+                                    value: "{shown_branch}",
+                                    "aria-invalid": "{blocked}",
+                                    autocapitalize: "none",
+                                    autocorrect: "off",
+                                    spellcheck: "false",
+                                    oninput: move |e| branch.set(Some(e.value())),
+                                }
+                                span { class: if blocked { "field-hint field-hint-bad" } else { "field-hint" }, "{branch_hint}" }
                             }
                         }
                     }

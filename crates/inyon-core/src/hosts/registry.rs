@@ -1126,6 +1126,7 @@ impl Registry {
             return Err(e);
         }
         crate::features::companion::mark(&host.id(), &mut pr.borrow_mut().sessions, crate::features::companion::agent().is_some());
+        crate::features::worktrees::mark(&host.id(), &mut pr.borrow_mut().sessions);
         let agent_ids: Vec<String> = {
             let p = pr.borrow();
             panes(&p.sessions).filter(|x| p.agent_procs.contains_key(&x.id)).map(|x| x.id.clone()).collect()

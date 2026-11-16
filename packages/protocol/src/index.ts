@@ -148,6 +148,14 @@ export interface PaneInfo {
   agent?: AgentPaneInfo
   /** runs your companion agent (Settings › Companion); at most one pane across all machines */
   companion?: boolean
+  /** works in a git worktree Inyon made for it (New session › In a new worktree) */
+  worktree?: PaneWorktree
+}
+
+/** The git worktree a session was started in: its branch and folder, as Inyon made them. */
+export interface PaneWorktree {
+  branch: string
+  path: string
 }
 
 export interface WindowInfo {

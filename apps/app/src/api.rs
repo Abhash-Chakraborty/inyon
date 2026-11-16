@@ -393,6 +393,11 @@ pub struct Launch {
     pub prompt: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sign_in: bool,
+    /// in a new git worktree of the folder's repo, on `branch`
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub worktree: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -402,6 +407,18 @@ pub struct Started {
 
 pub async fn launch(id: &str, b: &Launch) -> Result<Started, ApiError> {
     parse(&request("POST", &format!("{}/launch", host_path(id)), json(b)).await?)
+}
+
+/// The git repo a folder on the machine is in: its top folder and checked-out branch. `root` is
+/// None outside a repo.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RepoInfo {
+    pub root: Option<String>,
+    pub branch: Option<String>,
+}
+
+pub async fn repo(id: &str, path: &str) -> Result<RepoInfo, ApiError> {
+    parse(&request("GET", &format!("{}/repo?path={}", host_path(id), inyon_chat_core::js::encode_uri_component(path)), None).await?)
 }
 
 /// One of your own agents (Settings › Agents): any command, read as the agent it works like.

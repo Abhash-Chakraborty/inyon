@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { AlarmClock, ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, Pin, SquareTerminal, StickyNote } from 'lucide-react'
 import { agentDef, AGENTS, isBusy, type HostState, type RateWindow } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
+import { BranchChip } from './ui/BranchChip.tsx'
 import { RESPONSE_TITLE, liveWindow, money, resetsIn, responseTime, shortPath, timeAgo, tokens } from '../lib/format.ts'
 import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
@@ -160,8 +161,11 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
       </div>
       <div className="pointer-events-none min-w-0">
         <div className="truncate text-[17px] font-semibold tracking-[-0.03em]">{title}</div>
-        <div className="mt-1 truncate font-mono text-[12px] text-fg-3">
-          {[showHost && r.host.config.name, tmuxTarget(r), shortPath(r.pane.cwd, 34), mark?.tags?.map((t) => `#${t}`).join(' ')].filter(Boolean).join(' · ')}
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-[12px] text-fg-3">
+          <span className="truncate">
+            {[showHost && r.host.config.name, tmuxTarget(r), !r.pane.worktree && shortPath(r.pane.cwd, 34), mark?.tags?.map((t) => `#${t}`).join(' ')].filter(Boolean).join(' · ')}
+          </span>
+          {r.pane.worktree && <BranchChip branch={r.pane.worktree.branch} className="max-w-[60%] shrink-0" />}
         </div>
       </div>
       <div className="pointer-events-none truncate text-[13.5px] text-fg-2">

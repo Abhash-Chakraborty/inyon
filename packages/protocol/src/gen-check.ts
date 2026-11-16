@@ -33,6 +33,7 @@ export type Checks = [
   Check<Same<G.AgentPaneInfo, H.AgentPaneInfo>>,
   Check<Same<G.TurnFailure, H.TurnFailure>>,
   Check<Same<G.PaneInfo, H.PaneInfo>>,
+  Check<Same<G.PaneWorktree, H.PaneWorktree>>,
   Check<Same<G.WindowInfo, H.WindowInfo>>,
   Check<Same<G.SessionInfo, H.SessionInfo>>,
   Check<Same<G.IntegrationState, H.IntegrationState>>,

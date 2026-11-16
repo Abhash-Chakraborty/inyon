@@ -9,7 +9,7 @@ use inyon_core::claude::integration::{install_integration, uninstall_integration
 use inyon_core::claude::send_receipts::send_once;
 use inyon_core::config::{load_settings, save_settings, HubSettings};
 use inyon_core::features::uploads::{self as chunked, ChunkResult, StartUpload};
-use inyon_core::features::{companion, conversations, features as feat, models, providers, setup, signin, temp, workspace};
+use inyon_core::features::{companion, conversations, features as feat, models, providers, setup, signin, temp, workspace, worktrees};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::hosts::node_link;
 use inyon_core::hosts::node_update::node_updates;
@@ -479,10 +479,38 @@ pub fn add(routes: &mut Routes) {
                     prompt: loose(b.get("prompt")),
                     custom: loose(b.get("custom")),
                     sign_in: truthy(b.get("signIn")),
+                    worktree: truthy(b.get("worktree")),
+                    branch: loose(b.get("branch")),
                     ..Default::default()
                 };
                 let pane = actions::launch(&id(&r), &opts).await?;
                 Ok(ok_json(&json!({ "pane": pane })))
+            }),
+        )],
+    );
+    // git worktrees for sessions (features/worktrees): is a folder in a repo, can a worktree go, remove it
+    guarded(routes, "/api/hosts/:id/repo", vec![(M::GET, h(|r| async move { Ok(json_of(&worktrees::repo_of(&id(&r), &r.q("path")).await?)) }))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/worktree",
+        vec![(
+            M::GET,
+            h(|r| async move {
+                let pane = r.q("pane");
+                Ok(json_of(&worktrees::state(&id(&r), &r.q("path"), Some(pane.as_str()).filter(|p| !p.is_empty())).await?))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/worktree/remove",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = fields(&r.body().await?)?;
+                let path = loose(b.get("path")).ok_or_else(|| http(400, "Which worktree?"))?;
+                let pane = loose(b.get("pane"));
+                Ok(json_of(&worktrees::remove(&id(&r), &path, pane.as_deref()).await?))
             }),
         )],
     );

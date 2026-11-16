@@ -77,15 +77,16 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 export const inputClass =
   'h-10 w-full rounded-xl border border-field bg-elev px-3 text-[14px] text-fg placeholder:text-fg-3 transition-colors focus:border-fg focus:bg-elev'
 
-export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
+export function Toggle({ on, onChange, label, disabled }: { on: boolean; onChange: (v: boolean) => void; label?: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!on)}
-      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-accent' : 'bg-field')}
+      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5 disabled:opacity-45', on ? 'bg-accent' : 'bg-field')}
     >
       <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full shadow-sm transition-transform duration-(--dur-move) ease-spring', on ? 'translate-x-[19px] bg-accent-fg' : 'translate-x-[3px] bg-white')} />
     </button>

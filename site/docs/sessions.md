@@ -149,6 +149,37 @@ A switch stops with a message instead when:
 
 The list works for every machine, whether you reach it through your hub, a paired hub or straight from the phone. A paired hub needs to be up to date. Gemini CLI isn't supported: resume its conversations in the terminal.
 
+## In a worktree of its own
+
+From 0.27 a session can start in a git worktree of its own, so two agents working on the same repo don't edit the same files. In **New session**, once the folder you pick is inside a git repo, switch on **In a new worktree**. The **Branch** field suggests `inyon/` and the first words of your first message (`inyon/fix-the-login-test`), or the agent and the time (`inyon/claude-1115-1432`) when there is none. Type your own name instead if you like; one git wouldn't take, such as one with a space, is marked under the field and **Start** waits until it's fixed.
+
+The machine then runs `git worktree add` and starts the agent in the new folder. Worktrees go next to the repo, never inside it, so they don't show up in its `git status`:
+
+```sh
+~/code/api                                     # the repo
+~/code/.inyon-worktrees/api-fix-the-login-test # the worktree, on inyon/fix-the-login-test
+```
+
+The new branch starts from what the folder you picked has checked out. If a branch of that name already exists and isn't checked out anywhere, the worktree checks it out instead. A second worktree for the same name gets `-2` on its folder. A session started from a subfolder of the repo starts in the same subfolder of the worktree. If the session can't start, the worktree is removed again.
+
+A session in a worktree shows its branch in its header and on its card, in place of the folder.
+
+### When the session ends
+
+**End session…** on a worktree session shows the branch and a switch, **Remove the worktree too**. Inyon asks the machine first, and the switch is on only when nothing would be lost:
+
+| What it finds | What happens |
+|---|---|
+| No uncommitted changes, and no commits that only this branch has | The switch starts on. The worktree's folder is removed after the session ends |
+| Changed or untracked files | *It has 2 uncommitted changes, so it stays.* |
+| Commits that no other branch or remote has | *It has 1 commit that no other branch or remote has, so it stays.* |
+| Another session still working in it | *1 other session is still working in it, so it stays.* |
+| The machine can't be asked | It stays |
+
+Removing the worktree keeps its branch, unless git calls the branch merged (`git branch -d`), so your commits are never lost. A worktree you keep stays where it is; remove it yourself with `git worktree remove <folder>` when you're done. The hub only removes worktrees it made, and checks again before it does.
+
+Git has to be installed on the machine. The [new app at `/next`](hub.md#the-new-app-at-next) has **In a new worktree** and **Branch** in **New session** too, but doesn't show the branch or offer to remove the worktree yet.
+
 ## When nothing is running
 
 If the agent has exited, the session offers **Resume conversation**, **Past conversations** (to pick another one), **Start** for each installed agent, or **Terminal**. A pane that has closed says *This pane is gone*.
