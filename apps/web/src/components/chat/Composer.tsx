@@ -187,6 +187,8 @@ export function Composer({
   useEffect(
     () =>
       onCompose(host, pane, (more) => {
+        // dictation would write over what's added from its own copy of the box
+        stopDictating()
         setText((v) => appendTo(v, more))
         if (!matchMedia('(pointer: coarse)').matches) requestAnimationFrame(() => ta.current?.focus())
       }),
@@ -198,6 +200,7 @@ export function Composer({
     if (serverDraft.text === synced.current) return
     const mine = text !== synced.current && focused
     if (mine) return
+    stopDictating()
     synced.current = serverDraft.text
     setTextState(serverDraft.text)
     setOrigin(serverDraft.source)
@@ -425,6 +428,7 @@ export function Composer({
       return true
     }
     if (insertText && pasted) {
+      stopDictating()
       setText((v) => (v ? `${v}${/\s$/.test(v) ? '' : ' '}${pasted}` : pasted))
       requestAnimationFrame(() => {
         const el = ta.current

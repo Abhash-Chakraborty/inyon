@@ -106,6 +106,7 @@ class InyonDevicePlugin : Plugin() {
         onScreen = false
         notifyListeners("appVisibility", JSObject().put("visible", false))
         // Android takes the microphone away from an app off screen: finish with what was heard
+        dictationRun++
         dictation?.stop()
         // Capacitor only pauses the WebView when KeepRunning is false (it isn't here), but undo any
         // pause anyway while the user asked to stay connected
@@ -118,6 +119,7 @@ class InyonDevicePlugin : Plugin() {
 
     override fun handleOnDestroy() {
         if (DeviceEvents.sink === events) DeviceEvents.sink = null
+        dictationRun++
         dictation?.cancel()
         (bridge.webView as? InyonWebView)?.contentListener = null
         dozeReceiver?.let { runCatching { context.unregisterReceiver(it) } }
@@ -487,6 +489,14 @@ class InyonDevicePlugin : Plugin() {
 
     private var dictation: Dictation? = null
 
+    /**
+     * Counts starts, stops and cancels. A start waiting on the microphone question or the main
+     * thread only begins if nothing came after it, so a run the page already gave up on never
+     * starts listening later.
+     */
+    @Volatile
+    private var dictationRun = 0
+
     /** Whether the phone has a speech recogniser; without one the message box has no microphone. */
     @PluginMethod
     fun dictationAvailable(call: PluginCall) {
@@ -499,6 +509,7 @@ class InyonDevicePlugin : Plugin() {
      */
     @PluginMethod
     fun startDictation(call: PluginCall) {
+        call.data.put(RUN, ++dictationRun)
         if (getPermissionState(MICROPHONE) == PermissionState.GRANTED) return beginDictation(call)
         try {
             requestPermissionForAlias(MICROPHONE, call, "microphonePermissionResult")
@@ -515,7 +526,9 @@ class InyonDevicePlugin : Plugin() {
     private fun beginDictation(call: PluginCall) {
         val id = call.getString("id") ?: ""
         val lang = call.getString("lang")
+        val run = call.data.optInt(RUN, -1)
         bridge.executeOnMainThread {
+            if (run != dictationRun) return@executeOnMainThread call.reject("Stopped before it started", "CANCELLED")
             if (!SpeechRecognizer.isRecognitionAvailable(context)) return@executeOnMainThread call.reject("No speech recogniser on this phone", "UNAVAILABLE")
             val d = dictation ?: Dictation(context) { runId, kind, text, error ->
                 val e = JSObject().put("id", runId).put("kind", kind)
@@ -534,6 +547,7 @@ class InyonDevicePlugin : Plugin() {
 
     @PluginMethod
     fun stopDictation(call: PluginCall) {
+        dictationRun++
         bridge.executeOnMainThread {
             dictation?.stop()
             call.resolve(ok())
@@ -542,6 +556,7 @@ class InyonDevicePlugin : Plugin() {
 
     @PluginMethod
     fun cancelDictation(call: PluginCall) {
+        dictationRun++
         bridge.executeOnMainThread {
             dictation?.cancel()
             call.resolve(ok())
@@ -573,6 +588,8 @@ class InyonDevicePlugin : Plugin() {
     companion object {
         const val NOTIFICATIONS = "notifications"
         const val MICROPHONE = "microphone"
+        /** the call's place in [dictationRun] */
+        private const val RUN = "inyonDictationRun"
         private const val TAG = "InyonDevice"
 
         // kept for the process, so a recreated activity still knows when Doze last began and ended

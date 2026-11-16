@@ -189,6 +189,51 @@ describe('a dictation', () => {
     expect(s.last()).toEqual({ text: 'Hello', cursor: 5, done: true })
   })
 
+  test('words that keep coming after a stop do not move its deadline', () => {
+    const s = start()
+    s.say('hello')
+    s.d.stop()
+    s.say('hello', 'there')
+    expect(s.last()).toEqual({ text: 'Hello there', cursor: 11, done: false })
+    s.fire(1500)
+    expect(s.calls.abort).toBe(1)
+    expect(s.d.listening).toBe(false)
+  })
+
+  test('a silence stop is asked for once, and later words leave its deadline alone', () => {
+    const s = start()
+    s.say('hello')
+    s.fire(2500)
+    expect(s.calls.stop).toBe(1)
+    s.say('hello', 'again')
+    s.fire(1500)
+    expect(s.calls.stop).toBe(1)
+    expect(s.calls.abort).toBe(1)
+    expect(s.d.listening).toBe(false)
+  })
+
+  test('aborting writes nothing, even when the recogniser ends at once', () => {
+    let on: Listeners | undefined
+    const seen: string[] = []
+    const d = new Dictation({
+      engine: (_lang, l) => {
+        on = l
+        return { stop: () => {}, abort: () => on!.end() }
+      },
+      lang: 'en-GB',
+      text: '',
+      onText: (t) => seen.push(t),
+      onError: () => {},
+      onEnd: () => {},
+      timers: fakeTimers().timers,
+    }).start()
+    on!.update({ final: 'hello', interim: '' })
+    seen.length = 0
+    d.abort()
+    expect(seen).toEqual([])
+    expect(d.listening).toBe(false)
+  })
+
   test('tapped off before speaking: no toast', () => {
     const s = start()
     s.d.stop()

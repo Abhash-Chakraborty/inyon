@@ -165,7 +165,8 @@ export function nativeEngine(): Engine | undefined {
       .then(() => (done ? undefined : device.startDictation({ id, lang })))
       .catch((e: { code?: string }) => {
         if (done) return
-        on.error(nativeError(e?.code))
+        // stopped while the phone was still asking for the microphone: nothing went wrong
+        if (e?.code !== 'CANCELLED') on.error(nativeError(e?.code))
         finish()
       })
     return {
@@ -277,6 +278,8 @@ export class Dictation {
   private heard = false
   private failed = false
   private stopped = false
+  /** a stop was asked for: its deadline stays put whatever the recogniser sends after it */
+  private asked = false
   private readonly timers: Timers
   constructor(private readonly o: DictationOptions) {
     this.at = anchorAt(o.text, o.start, o.end)
@@ -321,15 +324,16 @@ export class Dictation {
   abort() {
     if (this.ended) return
     this.stopped = true
-    this.rec?.abort()
+    // ended first: a recogniser whose abort() calls end() at once then writes nothing
     this.finish(false)
+    this.rec?.abort()
   }
 
   private update(s: Spoken) {
     if (this.ended) return
     this.spoken = s
     if (phraseOf(s)) this.heard = true
-    this.arm(this.heard ? (this.o.silenceMs ?? SILENCE_MS) : (this.o.quietMs ?? QUIET_MS))
+    if (!this.asked) this.arm(this.heard ? (this.o.silenceMs ?? SILENCE_MS) : (this.o.quietMs ?? QUIET_MS))
     const { text, cursor } = this.current()
     this.o.onText(text, cursor, false)
   }
@@ -365,6 +369,8 @@ export class Dictation {
 
   /** asks the recogniser to finish; one that doesn't end soon after is let go */
   private ask() {
+    if (this.asked) return
+    this.asked = true
     this.timers.clear(this.timer)
     this.timer = this.timers.set(() => {
       this.rec?.abort()
