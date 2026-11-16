@@ -1,8 +1,9 @@
 // How sessions are organised (from 0.24): pins, parking, snoozes, tags and notes on sessions,
 // projects that gather sessions by folder, and what the hub does for them on its own: messages sent
-// later, idle agents put to sleep, sessions closed once done, saved prompts, and (from version 3)
-// carrying on after a plan limit and compacting before the context fills. The hub owns it, so every device (phone, browser,
-// desktop app) shows the same order. The TypeScript side is in packages/protocol/src/index.ts.
+// later (from version 4 also ones that repeat), idle agents put to sleep, sessions closed once
+// done, saved prompts, and (from version 3) carrying on after a plan limit and compacting before
+// the context fills. The hub owns it, so every device (phone, browser, desktop app) shows the
+// same order. The TypeScript side is in packages/protocol/src/index.ts.
 //
 // A session here is a pane, as the overview lists it, found again by the anchors its mark keeps
 // (see [`SessionMark`]); the hub matches marks to live panes and the apps join them by `host` and
@@ -14,7 +15,7 @@ use ts_rs::TS;
 
 /// The version of the `organize` record the hub writes. A hub that finds a later one reads what it
 /// knows and refuses to change it, so going back to an older hub can't lose what a newer one kept.
-pub const ORGANIZE_VERSION: u32 = 3;
+pub const ORGANIZE_VERSION: u32 = 4;
 
 /// Marks kept at most; past it the one seen longest ago goes.
 pub const MAX_MARKS: usize = 1000;
@@ -39,6 +40,8 @@ pub const MAX_SPACES: usize = 20;
 pub const MAX_SENDS: usize = 50;
 /// A message sent later at most; they travel in every v1 overview, so they're kept short.
 pub const SEND_LEN: usize = 4_000;
+/// A message that goes every few hours goes every this many hours at the most.
+pub const REPEAT_HOURS_MAX: u32 = 24;
 pub const MAX_PROMPTS: usize = 200;
 /// A saved prompt at most.
 pub const PROMPT_LEN: usize = 10_000;
@@ -206,7 +209,8 @@ pub struct Space {
 
 /// A message the hub types into a session at a set time, through the same queue as a held message:
 /// once the time comes it waits for the agent to be free, then goes once. Found again like a mark:
-/// by the conversation, else by the pane in the same tmux session.
+/// by the conversation, else by the pane in the same tmux session. With a [`Repeat`] (from version
+/// 3) it goes again and again, each time only into an idle agent with nothing typed.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -215,16 +219,30 @@ pub struct DelayedSend {
     /// "d-" and 12 hex digits
     pub id: String,
     pub host: String,
+    /// the pane it goes to; for one that starts a new session each time, the last one it started
     pub pane: String,
     pub conv: Option<String>,
     pub tmux_id: Option<String>,
     pub text: String,
-    /// when it goes, unix ms
+    /// when it goes (or, while a repeating one waits for a busy agent, tries again), unix ms
     pub at: u64,
     /// why it couldn't go; it stays until dismissed
     pub error: Option<String>,
     /// planned by the hub itself rather than by you (from version 3)
     pub auto: Option<SendAuto>,
+    /// goes again on this rule, `at` being the next time (from version 4)
+    pub repeat: Option<Repeat>,
+    /// starts a new session each time instead, with this agent in this folder on the same machine
+    pub new_session: Option<NewSession>,
+    /// a notice on every device each time it goes
+    pub notify: Option<bool>,
+    /// a repeating one that doesn't go until it's resumed
+    pub paused: Option<bool>,
+    /// while a repeating one waits for its busy agent: when this time was due, and the tries so far
+    pub due: Option<u64>,
+    pub tries: Option<u32>,
+    /// when the last time was skipped because the agent stayed busy; cleared when one goes
+    pub skipped: Option<u64>,
 }
 
 /// Why the hub planned a message on its own.
@@ -253,6 +271,47 @@ impl AutoRules {
     pub fn is_empty(&self) -> bool {
         self.carry_on.is_none() && self.auto_compact.is_none() && self.compact_at.is_none()
     }
+}
+
+/// How often a message sent later goes again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum RepeatEvery {
+    /// every [`Repeat::hours`] hours from the first time
+    Hours,
+    /// every day at [`Repeat::minute`]
+    Day,
+    /// Monday to Friday at [`Repeat::minute`]
+    Weekdays,
+    /// on [`Repeat::day`] at [`Repeat::minute`]
+    Week,
+}
+
+/// When a repeating message goes. The times of day are wall-clock times in `tz`, so 9:00 stays
+/// 9:00 across a daylight saving change.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct Repeat {
+    pub every: RepeatEvery,
+    /// every this many hours, 1 to [`REPEAT_HOURS_MAX`]
+    pub hours: Option<u32>,
+    /// the time of day, in minutes after midnight
+    pub minute: Option<u32>,
+    /// the day of the week: 0 is Sunday, 6 Saturday
+    pub day: Option<u32>,
+    /// the time zone of the device that set it, as the IANA names it ("Europe/Berlin")
+    pub tz: String,
+    /// that device's minutes east of UTC when it set it: the times go by this where the hub
+    /// doesn't know the zone
+    pub offset: i32,
+}
+
+/// The session a repeating message starts each time: the agent, in the folder, on its machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NewSession {
+    pub agent: crate::AgentKind,
+    pub cwd: String,
 }
 
 /// A prompt kept to send again: for every session, or for one project's.
@@ -298,7 +357,7 @@ pub struct Organize {
     pub groups: Vec<ProjectGroup>,
     #[serde(default)]
     pub spaces: Vec<Space>,
-    /// from version 2
+    /// from version 2; repeating ones from version 4
     pub sends: Option<Vec<DelayedSend>>,
     pub prompts: Option<Vec<SavedPrompt>>,
     pub sleep: Option<Vec<SleepRule>>,

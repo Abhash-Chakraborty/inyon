@@ -2,11 +2,13 @@ import { useState } from 'react'
 import clsx from 'clsx'
 import { AlarmClock, CalendarClock, StickyNote, Tag } from 'lucide-react'
 import { api, type SessionPatch } from '../../lib/api.ts'
-import { toast, useStore } from '../../lib/store.ts'
+import { canRepeat, toast, useStore } from '../../lib/store.ts'
 import { useOpened } from '../../lib/useOpened.ts'
 import { markFor, parseTags, SEND_CHOICES, type SendFor, sendAt, SNOOZE_CHOICES, type SnoozeFor, snoozeUntil, timeText, wakeText } from '../../lib/organize.ts'
 import type { PaneRef } from '../../lib/overview.ts'
-import { Button, Field, Sheet, Toggle, inputClass } from '../ui/primitives.tsx'
+import type { AgentKind } from '@inyon/protocol'
+import { Button, Field, Segmented, Sheet, Toggle, inputClass } from '../ui/primitives.tsx'
+import { FirstRun, NEW_REPEAT, RepeatFields, scheduleRepeat, type RepeatDraft } from './RepeatSheets.tsx'
 
 /** The hub keeps these (inyon-protocol's organize.rs); a sheet stops there instead of failing. */
 const MAX_TAGS = 8
@@ -75,9 +77,14 @@ export function SnoozeSheet({ r, open, onClose }: { r: PaneRef; open: boolean; o
   )
 }
 
-/** Picks when the hub sends a message: it waits then for the agent to be free, like a held one. */
-export function SendLaterSheet({ host, pane, text, open, onClose, onSent }: { host: string; pane: string; text: string; open: boolean; onClose: () => void; onSent: () => void }) {
+/** Picks when the hub sends a message: it waits then for the agent to be free, like a held one.
+ * From 0.27 it can repeat instead (see RepeatSheets). */
+export function SendLaterSheet({ host, pane, text, agent, open, onClose, onSent }: { host: string; pane: string; text: string; agent?: AgentKind; open: boolean; onClose: () => void; onSent: () => void }) {
   const [busy, setBusy] = useState<string>()
+  const [mode, setMode] = useState<'once' | 'repeat'>('once')
+  const [d, setD] = useState<RepeatDraft>(NEW_REPEAT)
+  useOpened(open, host + pane, () => (setMode('once'), setD(NEW_REPEAT)))
+  const repeats = canRepeat(host) && mode === 'repeat'
   const now = new Date()
   // worked out on the tap, like a snooze
   const pick = async (v: SendFor) => {
@@ -94,26 +101,74 @@ export function SendLaterSheet({ host, pane, text, open, onClose, onSent }: { ho
       setBusy(undefined)
     }
   }
+  const repeat = async () => {
+    setBusy('repeat')
+    try {
+      await scheduleRepeat(host, pane, text.trim(), d)
+      onSent()
+      onClose()
+    } catch (e) {
+      toast({ title: 'Could not schedule it', body: (e as Error).message, tone: 'error' })
+    } finally {
+      setBusy(undefined)
+    }
+  }
   return (
-    <Sheet open={open} onClose={onClose} title="Send later" icon={<CalendarClock className="size-4 text-fg-3" />}>
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Send later"
+      icon={<CalendarClock className="size-4 text-fg-3" />}
+      footer={
+        repeats && (
+          <div className="flex items-center gap-2">
+            <FirstRun d={d} />
+            <Button className="ml-auto" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void repeat()} loading={busy === 'repeat'}>
+              Schedule
+            </Button>
+          </div>
+        )
+      }
+    >
       <p className="mb-3 line-clamp-3 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-2">{text.trim()}</p>
-      <div className="-mx-2 flex flex-col">
-        {SEND_CHOICES.map((c) => {
-          const at = sendAt(c.v, now)
-          return (
-            <button
-              key={c.v}
-              type="button"
-              disabled={!!busy}
-              onClick={() => void pick(c.v)}
-              className={clsx('flex h-11 items-center gap-3 rounded-xl px-2 text-left text-[14px] hover:bg-hover disabled:opacity-60', busy === c.v && 'bg-hover')}
-            >
-              <span className="min-w-0 flex-1 truncate">{c.label}</span>
-              <span className="tabular shrink-0 font-mono text-[12px] text-fg-3">{timeText(at, now)}</span>
-            </button>
-          )
-        })}
-      </div>
+      {canRepeat(host) && (
+        <div className="mb-3">
+          <Segmented
+            full
+            label="How often"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { v: 'once', label: 'Once' },
+              { v: 'repeat', label: 'Repeat' },
+            ]}
+          />
+        </div>
+      )}
+      {repeats ? (
+        <RepeatFields value={d} onChange={setD} agent={agent} />
+      ) : (
+        <div className="-mx-2 flex flex-col">
+          {SEND_CHOICES.map((c) => {
+            const at = sendAt(c.v, now)
+            return (
+              <button
+                key={c.v}
+                type="button"
+                disabled={!!busy}
+                onClick={() => void pick(c.v)}
+                className={clsx('flex h-11 items-center gap-3 rounded-xl px-2 text-left text-[14px] hover:bg-hover disabled:opacity-60', busy === c.v && 'bg-hover')}
+              >
+                <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                <span className="tabular shrink-0 font-mono text-[12px] text-fg-3">{timeText(at, now)}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </Sheet>
   )
 }

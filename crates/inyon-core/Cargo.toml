@@ -35,3 +35,7 @@ tokio = { version = "1.47", features = ["rt", "time", "macros", "test-util"] }
 # pattern runs on the slowest engine. The wasm build leaves them out to stay small.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 regex = { version = "1.12", default-features = false, features = ["perf"] }
+# the offsets of the time zone a repeating message keeps its times in (features/repeat): the
+# system's zoneinfo, Android's tzdata, and a copy built in on Windows, which has neither. The
+# phone's wasm core asks the browser instead (inyon-phone's web.rs)
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-zoneinfo", "tzdb-concatenated", "tzdb-bundle-platform"] }

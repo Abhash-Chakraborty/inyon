@@ -827,7 +827,7 @@ export function Composer({
           </button>
         </div>
       </div>
-      <SendLaterSheet host={host} pane={pane} text={text} open={later} onClose={() => setLater(false)} onSent={handedOver} />
+      <SendLaterSheet host={host} pane={pane} text={text} agent={agent} open={later} onClose={() => setLater(false)} onSent={handedOver} />
       <input ref={fileInput} type="file" multiple hidden onChange={(e) => (addFiles([...(e.target.files ?? [])]), (e.target.value = ''))} />
       <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={(e) => (addFiles([...(e.target.files ?? [])]), (e.target.value = ''))} />
     </div>

@@ -342,6 +342,15 @@ thread_local! {
     static STARTED: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Seconds east of UTC in the browser's own time zone, the one a repeating message set on this
+/// phone keeps its times in (inyon-core's features/repeat). The wasm core carries no time zone
+/// data, so a rule set in another zone keeps the offset it was set with.
+fn browser_offset(tz: &str, ms: i64) -> Option<i32> {
+    let options = js_sys::Intl::DateTimeFormat::new(&Array::new(), &Object::new()).resolved_options();
+    let own = Reflect::get(&options, &"timeZone".into()).ok()?.as_string()?;
+    (own == tz).then(|| -(js_sys::Date::new(&JsValue::from_f64(ms as f64)).get_timezone_offset() as i32) * 60)
+}
+
 /// `startPhone({ store, ssh, name })`: the core, started once per page. `name` is what paired
 /// computers list the phone as.
 #[wasm_bindgen(js_name = startPhone)]
@@ -355,6 +364,7 @@ pub async fn start_phone(o: JsValue) -> Result<PhoneRuntime, JsValue> {
         return Err(JsValue::from_str("The phone core is already running in this page"));
     }
     install(Rc::new(BrowserRuntime));
+    inyon_core::features::repeat::set_offsets(Some(Rc::new(browser_offset)));
     inyon_core::platform::console::set_sink(Some(Rc::new(|error, line| if error { console_error(line) } else { console_log(line) })));
     let ssh = Reflect::get(&o, &"ssh".into())?;
     let name = Reflect::get(&o, &"name".into())?.as_string().filter(|n| !n.is_empty()).unwrap_or_else(phone_name);

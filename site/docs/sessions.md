@@ -123,6 +123,19 @@ A message sent later follows its conversation if you resume it in another pane, 
 
 From 0.27 the hub plans one of these itself for a session that [carries on after a plan limit](controls.md#carrying-on-and-compacting-by-itself): it reads *Carries on at …*, goes only if the session is still stopped on the limit then, and once cancelled it stays cancelled, without an **Undo**.
 
+### Repeating a message
+
+From 0.27 a message sent later can repeat. In the **Send later** sheet, switch from **Once** to **Repeat**, then pick **Every day**, **Weekdays**, **Every week** (and the day) or **Every few hours** (every 1, 2, 3, 4, 6, 8 or 12 hours), and the time. **Schedule** keeps it, and the sheet shows when it first goes. Times stay in the time zone of the device you set it on, so 9:00 stays 9:00 when the clocks change. A time the change skips goes an hour later that night, and a time it repeats goes once.
+
+Under **Goes to** you choose where each time goes:
+
+- **This session**: the message goes in only while the agent is idle with nothing typed in its box (in any app or in the terminal) and no held messages. If the agent is busy, Inyon tries again every five minutes, six times in all, then skips that time with a notice and waits for the next one. It follows the session rather than one conversation, so after `/clear` it goes to the new conversation in the same pane.
+- **A new session**: each time starts the same agent in the same folder on the same machine, with the message as its first prompt. The repeating message then shows in the chat of the session it started last. Only agents that take a first message (the ones Inyon shows as a chat) offer this.
+
+Turn on **Tell me each time it goes** for a notice as each time starts; it comes with the [Finished](notifications.md#what-youre-told-about) notices. A repeating message shows under the conversation with its rule, such as *Every day at 9:00*, and *Next Tue 9:00* below it, with **Edit**, **Pause** and **Delete** beside the rule. While a busy agent holds it up it says *Agent busy, trying again at …*, and a skipped time shows *Skipped …: the agent was busy* until the next one goes. Its menu also has **Send now**, which sends it once more and keeps the rule, and **Undo** after **Delete** puts it back. A paused message doesn't go until you resume it, and then goes at its next time after now. If the hub was off when a time came, the message goes once when the hub is back, not once for every time it missed.
+
+A repeating message needs a hub of 0.27 or later. Its record is newer than what 0.26 reads, so if you go back to 0.26 or earlier, the hub shows your pins, tags and the rest but won't change them.
+
 Newer Claude Code versions show *← 1 agent* in their footer, a count of the other Claude Code sessions on the machine. Until 0.22.3 Inyon read it as this session's background work, so the session never looked free and held messages waited for good. From 0.22.3 that count is ignored.
 
 ## Renaming
