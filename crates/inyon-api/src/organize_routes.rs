@@ -92,6 +92,8 @@ pub fn add(routes: &mut Routes) {
         )],
     );
     guarded(routes, "/api/organize/sleep", vec![(M::PUT, h(|mut r| async move { Ok(json_of(&auto::set_sleep(&body(&mut r).await?)?)) }))]);
+    // carrying on after a plan limit and compacting before the context fills, for every session (from 0.27)
+    guarded(routes, "/api/organize/auto", vec![(M::PUT, h(|mut r| async move { Ok(json_of(&auto::set_auto(&body(&mut r).await?)?)) }))]);
     guarded(routes, "/api/organize/prompts", vec![(M::POST, h(|mut r| async move { Ok(json_of(&auto::add_prompt(&body(&mut r).await?)?)) }))]);
     guarded(
         routes,

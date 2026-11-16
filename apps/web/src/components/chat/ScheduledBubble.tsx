@@ -13,7 +13,8 @@ function failed(title: string, e: unknown) {
   toast({ title, body: (e as Error).message, tone: 'error' })
 }
 
-/** A message the hub sends at a set time (from 0.24): it can still go now or be cancelled. */
+/** A message the hub sends at a set time (from 0.24): it can still go now or be cancelled. One the
+ * hub planned to carry on after a plan limit (from 0.27) says so. */
 export function ScheduledBubble({ host, pane, s }: { host: string; pane: string; s: DelayedSend }) {
   const [busy, setBusy] = useState(false)
   // now: off the schedule and into the held queue, in one step on the hub
@@ -30,7 +31,9 @@ export function ScheduledBubble({ host, pane, s }: { host: string; pane: string;
   const cancel = async () => {
     try {
       await api.cancelSend(host, s.id)
-      if (!s.error)
+      // a carry-on the hub planned stays cancelled for this limit: putting it back would make a plain message
+      if (s.auto === 'carry-on') toast({ title: 'Won’t carry on', body: 'Inyon plans it again the next time the session stops on a limit.', tone: 'info' })
+      else if (!s.error)
         toast({ title: 'Message cancelled', tone: 'success', action: { label: 'Undo', onSelect: () => void api.sendLater(host, pane, s.text, s.at, s.conv ?? undefined).catch((e) => failed("Couldn't put it back", e)) } })
     } catch (e) {
       failed("Couldn't cancel it", e)
@@ -55,7 +58,7 @@ export function ScheduledBubble({ host, pane, s }: { host: string; pane: string;
           </span>
         ) : (
           <span className="flex items-center gap-1">
-            <CalendarClock className="size-3" /> Sends at {timeText(s.at)}
+            <CalendarClock className="size-3" /> {s.auto === 'carry-on' ? 'Carries on at' : 'Sends at'} {timeText(s.at)}
           </span>
         )}
         <button type="button" onClick={() => void sendNow()} disabled={busy} title="Send now" aria-label="Send now" className="flex size-6 items-center justify-center rounded-md hover:bg-hover hover:text-fg disabled:opacity-50">

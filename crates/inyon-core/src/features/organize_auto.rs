@@ -1,6 +1,7 @@
 //! What the hub does for organised sessions on its own (from 0.24): messages sent at a set time,
 //! idle agents put to sleep, sessions ended once their work is done, and the prompts kept to send
-//! again. All of it lives in the `organize` record next to the marks, so it survives a restart.
+//! again; from 0.27, carrying on once a plan limit resets and compacting before the context fills.
+//! All of it lives in the `organize` record next to the marks, so it survives a restart.
 //!
 //! Each automatic step fires once. A message sent later leaves the record (written down) before it
 //! is handed to the held queue, and a session closed when done loses its flag before it's ended,
@@ -12,12 +13,13 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use inyon_protocol::{
-    is_busy, js_len, project_of, sleep_minutes, AgentState, DelayedSend, HostState, HostStatus, Organize, PaneInfo, SavedPrompt, SessionInfo, SleepRule, MAX_PROMPTS, MAX_SENDS,
-    PROMPT_LEN, SEND_LEN, SLEEP_ALL, SLEEP_MAX, SLEEP_MIN,
+    carries_on, compact_at, compacts, is_busy, js_len, project_of, sleep_minutes, AgentState, AutoRules, DelayedSend, HostState, HostStatus, Organize, PaneInfo, SavedPrompt,
+    SendAuto, SessionInfo, SessionMark, SleepRule, TurnFailure, CARRY_ON_DELAY_MS, CARRY_ON_TEXT, COMPACT_MAX, COMPACT_MIN, MAX_PROMPTS, MAX_SENDS, PROMPT_LEN, SEND_LEN,
+    SLEEP_ALL, SLEEP_MAX, SLEEP_MIN,
 };
 use serde_json::{Map, Value};
 
-use super::{bool_field, change, change_or_keep, conv_of, given, new_id, object, ref_field, with, Given, MAX_SNOOZE_MS};
+use super::{bool_field, change, change_or_keep, conv_of, emit, given, new_id, object, pane_name, ref_field, switch_field, with, Event, Given, SessionPatch, MAX_SNOOZE_MS};
 use crate::clock::now_ms;
 use crate::hosts::http_error::{http, HubResult};
 use crate::hosts::registry::registry;
@@ -48,6 +50,8 @@ thread_local! {
     static SLEPT: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
     /// sessions that couldn't be ended, by mark id: not tried again before this time
     static CLOSE_AFTER: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
+    /// agents compacted since their context last read under the threshold
+    static COMPACTED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 /// Replaces the hand-offs (tests); None goes back to the real ones.
@@ -56,6 +60,7 @@ pub fn set_actions(f: Option<Actions>) {
     IDLE_SINCE.with(|m| m.borrow_mut().clear());
     SLEPT.with(|s| s.borrow_mut().clear());
     CLOSE_AFTER.with(|m| m.borrow_mut().clear());
+    COMPACTED.with(|s| s.borrow_mut().clear());
 }
 
 fn act(a: Act) -> HubResult<()> {
@@ -166,6 +171,7 @@ pub fn add_send(host_id: &str, pane_id: &str, b: &Value, now: u64) -> HubResult<
             text,
             at,
             error: None,
+            auto: None,
         };
         sends.push(s.clone());
         Ok(s)
@@ -224,10 +230,27 @@ pub fn send_due(now: u64, hosts: &[HostState]) -> bool {
         return false;
     }
     for s in due {
-        let _ = deliver(&s.id, hosts);
+        if s.auto != Some(SendAuto::CarryOn) {
+            let _ = deliver(&s.id, hosts);
+            continue;
+        }
+        // a carry-on goes only to an agent still stopped on the limit, with nothing typed
+        let pane = target(&s, hosts).and_then(|id| panes(hosts).find(|(h, _, p)| h.config.id == s.host && p.id == id).map(|(_, _, p)| p.clone()));
+        if !pane.as_ref().is_some_and(|p| on_limit(p) && !typed(&s.host, &p.id)) {
+            let _ = drop_sends(|x| x.id == s.id);
+            continue;
+        }
+        if deliver(&s.id, hosts).is_ok() {
+            let title = with(|st| st.org.sessions.iter().find(|m| m.live && m.host == s.host && Some(&m.pane) == pane.as_ref().map(|p| &p.id)).and_then(|m| m.title.clone()));
+            let pane = pane.map(|p| p.id).unwrap_or_default();
+            emit(Event::Notice { title: pane_name(title.as_deref(), &s.host, &pane, hosts), body: CARRIED_ON.into(), host: s.host.clone(), pane });
+        }
     }
     true
 }
+
+/// The notice when a session carries on.
+pub const CARRIED_ON: &str = "Carrying on: the plan limit has reset";
 
 /// `POST /api/hosts/:id/sends/:did/now`: a waiting message (or one that failed) goes now, in one
 /// step, so it can't be both held and still waiting.
@@ -429,6 +452,206 @@ fn rearm_close(host: &str, pane: &str, now: u64) {
             None
         }
     };
+}
+
+// ---------- plan limits and full contexts ----------
+
+/// Claude Code's word for a turn that stopped on a plan limit.
+const RATE_LIMIT: &str = "rate_limit";
+
+/// When a carry-on goes for a turn that stopped on a plan limit: a minute after the limit resets,
+/// unix ms. None for another error, or when the reset isn't known.
+pub fn carry_on_at(f: &TurnFailure) -> Option<u64> {
+    (f.error == RATE_LIMIT).then_some(f.resets_at?).map(|r| r.saturating_mul(1000).saturating_add(CARRY_ON_DELAY_MS))
+}
+
+/// Idle on a turn that stopped on a plan limit, and nothing started since.
+fn on_limit(p: &PaneInfo) -> bool {
+    idle(p) && p.agent.as_ref().and_then(|a| a.failure.as_ref()).is_some_and(|f| f.error == RATE_LIMIT)
+}
+
+/// Something is typed in the agent's input box (on the machine, or from an app, which shares it).
+fn typed(host: &str, pane: &str) -> bool {
+    crate::claude::watcher::watchers().peek(host, pane).is_some_and(|w| w.screen().draft.is_some_and(|d| !d.trim().is_empty()))
+}
+
+fn mark_of<'a>(org: &'a Organize, host: &str, pane: &str) -> Option<&'a SessionMark> {
+    org.sessions.iter().find(|m| m.live && m.host == host && m.pane == pane)
+}
+
+/// Removes the waiting messages `f` picks. Whether any went.
+fn drop_sends(f: impl Fn(&DelayedSend) -> bool) -> HubResult<bool> {
+    change(|org| {
+        let sends = org.sends.get_or_insert_with(Vec::new);
+        let n = sends.len();
+        sends.retain(|s| !f(s));
+        let gone = sends.len() != n;
+        tidy(org);
+        Ok(gone)
+    })
+}
+
+/// Carry-ons for sessions that no longer carry on go (a switch turned off).
+pub(super) fn drop_unwanted_carry_ons(org: &mut Organize) {
+    let keep: Vec<bool> = org.sends.iter().flatten().map(|s| s.auto != Some(SendAuto::CarryOn) || carries_on(org, mark_of(org, &s.host, &s.pane))).collect();
+    if let Some(sends) = &mut org.sends {
+        let mut k = keep.into_iter();
+        sends.retain(|_| k.next().unwrap_or(true));
+    }
+    tidy(org);
+}
+
+/// `PUT /api/organize/auto`: what every session does unless it says otherwise,
+/// `{ carryOn, autoCompact: true | false | null, compactAt: percent | null }`.
+pub fn set_auto(b: &Value) -> HubResult<AutoRules> {
+    let b = object(b)?;
+    let (carry, compact) = (switch_field(b, "carryOn")?, switch_field(b, "autoCompact")?);
+    let at = match given(b, "compactAt") {
+        Given::Absent => None,
+        Given::Null => Some(None),
+        Given::Some(v) => {
+            let n = v.as_f64().filter(|n| n.fract() == 0.0 && (COMPACT_MIN as f64..=COMPACT_MAX as f64).contains(n));
+            Some(Some(n.ok_or_else(|| http(400, format!("Pick between {COMPACT_MIN} and {COMPACT_MAX} percent")))? as u32))
+        }
+    };
+    change(|org| {
+        let mut r = org.auto.clone().unwrap_or_default();
+        // off is the default, so it's kept as nothing
+        if let Some(v) = carry {
+            r.carry_on = v.filter(|v| *v);
+        }
+        if let Some(v) = compact {
+            r.auto_compact = v.filter(|v| *v);
+        }
+        if let Some(v) = at {
+            r.compact_at = v;
+        }
+        org.auto = (!r.is_empty()).then(|| r.clone());
+        drop_unwanted_carry_ons(org);
+        Ok(r)
+    })
+}
+
+/// One look for agents that stopped on a plan limit: each one that carries on gets a "continue"
+/// waiting for a minute after the reset, once per reset, so one you cancel stays cancelled. A
+/// carry-on for an agent that started working meanwhile goes: you carried on yourself.
+pub fn plan_carry_on(hosts: &[HostState]) -> bool {
+    let Some(org) = with(|st| (!st.newer).then(|| st.org.clone())) else { return false };
+    let mut plans: Vec<(String, String, u64)> = vec![];
+    let mut stale: Vec<String> = vec![];
+    let mut over: Vec<String> = vec![];
+    for (h, _, p) in panes(hosts) {
+        let Some(a) = &p.agent else { continue };
+        let host = &h.config.id;
+        let mark = mark_of(&org, host, &p.id);
+        let waiting: Vec<&DelayedSend> = org.sends.iter().flatten().filter(|s| s.auto == Some(SendAuto::CarryOn) && &s.host == host && s.pane == p.id).collect();
+        if a.state == AgentState::Working {
+            stale.extend(waiting.iter().map(|s| s.id.clone()));
+            over.extend(mark.filter(|m| m.carried_reset.is_some()).map(|m| m.id.clone()));
+            continue;
+        }
+        if !carries_on(&org, mark) || !on_limit(p) {
+            continue;
+        }
+        let Some(reset) = a.failure.as_ref().filter(|f| carry_on_at(f).is_some()).and_then(|f| f.resets_at) else { continue };
+        if mark.is_some_and(|m| m.carried_reset == Some(reset)) || !waiting.is_empty() {
+            continue;
+        }
+        plans.push((host.clone(), p.id.clone(), reset));
+    }
+    let mut changed = false;
+    if !stale.is_empty() {
+        changed |= drop_sends(|s| stale.contains(&s.id)).unwrap_or(false);
+    }
+    for id in over {
+        changed |= super::mark_by_id(&id, &SessionPatch { carried_reset: Some(None), ..Default::default() }).is_ok();
+    }
+    for (host, pane, reset) in plans {
+        let at = reset.saturating_mul(1000).saturating_add(CARRY_ON_DELAY_MS);
+        // noted on the session first, so a carry-on cancelled (or one that can't be kept) isn't planned again
+        if let Err(e) = super::mark_pane(&host, &pane, &SessionPatch { carried_reset: Some(Some(reset)), ..Default::default() }) {
+            crate::platform::console::error(&format!("couldn't plan to carry on {host} {pane}: {}", e.message));
+            continue;
+        }
+        let Some(f) = registry().find_pane(&host, &pane) else { continue };
+        let planned = change(|org| {
+            let sends = org.sends.get_or_insert_with(Vec::new);
+            if sends.len() >= MAX_SENDS {
+                return Err(http(409, format!("{MAX_SENDS} messages are waiting to be sent already")));
+            }
+            sends.push(DelayedSend {
+                id: new_id("d"),
+                host: host.clone(),
+                pane: pane.clone(),
+                conv: conv_of(&f.pane).map(str::to_owned),
+                tmux_id: Some(f.session.id.clone()),
+                text: CARRY_ON_TEXT.to_owned(),
+                at,
+                error: None,
+                auto: Some(SendAuto::CarryOn),
+            });
+            Ok(())
+        });
+        match planned {
+            Ok(()) => changed = true,
+            Err(e) => crate::platform::console::error(&format!("couldn't plan to carry on {host} {pane}: {}", e.message)),
+        }
+    }
+    changed
+}
+
+/// The full-context switch for one agent: whether to compact now, and whether it's done for this
+/// fill. It's done until the context reads under the threshold again, so a compaction that didn't
+/// bring it down isn't tried over and over; an unknown size (just compacted) changes nothing.
+pub fn compact_step(done: bool, pct: Option<f64>, at: f64, ready: bool) -> (bool, bool) {
+    match pct {
+        Some(p) if p < at => (false, false),
+        Some(_) if !done && ready => (true, true),
+        _ => (false, done),
+    }
+}
+
+/// One look at every agent's context: one that compacts, past the threshold and idle with nothing
+/// typed or waiting for it, is sent its compact command, once until the context drops again.
+pub fn compact_full(now: u64, hosts: &[HostState]) {
+    let Some(org) = with(|st| (!st.newer).then(|| st.org.clone())) else { return };
+    let at = f64::from(compact_at(&org));
+    let mut seen: HashSet<String> = HashSet::new();
+    for (h, _, p) in panes(hosts) {
+        let Some(a) = &p.agent else { continue };
+        let Some(cmd) = a.kind.def().set.compact.as_deref() else { continue };
+        let host = &h.config.id;
+        let k = key(host, p);
+        seen.insert(k.clone());
+        let status = a.status.as_ref().filter(|s| s.stale.as_ref().is_none_or(|x| x.context.is_none()));
+        let pct = status.and_then(|s| s.context_pct.as_ref()).map(|n| **n).filter(|n| n.is_finite());
+        let done = COMPACTED.with(|c| c.borrow().contains(&k));
+        let ready = || {
+            compacts(&org, mark_of(&org, host, &p.id))
+                && idle(p)
+                && a.failure.is_none()
+                && crate::claude::held::list(host, &p.id).is_empty()
+                && !org.sends.iter().flatten().any(|s| &s.host == host && s.pane == p.id && s.at <= now)
+                && !typed(host, &p.id)
+        };
+        // the cheap checks first: most agents are under the threshold
+        let ready = pct.is_some_and(|x| x >= at) && !done && ready();
+        let (send, next) = compact_step(done, pct, at, ready);
+        COMPACTED.with(|c| {
+            let mut c = c.borrow_mut();
+            if next {
+                c.insert(k.clone());
+            } else {
+                c.remove(&k);
+            }
+        });
+        if send {
+            if let Err(e) = act(Act::Hold { host: host.clone(), pane: p.id.clone(), text: cmd.to_owned() }) {
+                crate::platform::console::error(&format!("couldn't compact {host} {}: {}", p.id, e.message));
+            }
+        }
+    }
+    COMPACTED.with(|c| c.borrow_mut().retain(|k| seen.contains(k)));
 }
 
 // ---------- saved prompts ----------

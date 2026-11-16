@@ -7,12 +7,13 @@ use std::rc::Rc;
 
 use serde_json::{json, Value};
 
-use super::auto::{self, Act, CLOSE_SETTLE_MS};
+use super::auto::{self, Act, CARRIED_ON, CLOSE_SETTLE_MS};
 use super::*;
 use crate::clock::set_now;
 use crate::hosts::host::Host;
 use crate::hosts::registry::HostRuntime;
 use crate::test_support::rt::run;
+use inyon_protocol::SendAuto;
 
 const T: u64 = 1_790_000_000_000;
 const MIN: u64 = 60_000;
@@ -46,7 +47,23 @@ fn machine(panes: &[Pane]) -> HostState {
 
 /// The machine as the registry has it now; returns it for the checks that take the machines.
 fn put(panes: &[Pane]) -> Vec<HostState> {
-    let state = machine(panes);
+    put_state(machine(panes))
+}
+
+/// The same, with more on one pane's agent (`extra`: a failure, live numbers, another kind).
+fn put_agent(panes: &[Pane], pane: &str, extra: Value) -> Vec<HostState> {
+    let mut v = serde_json::to_value(machine(panes)).unwrap();
+    for p in v["sessions"][0]["windows"][0]["panes"].as_array_mut().unwrap() {
+        if p["id"] == pane {
+            for (k, x) in extra.as_object().unwrap() {
+                p["agent"][k] = x.clone();
+            }
+        }
+    }
+    put_state(serde_json::from_value(v).unwrap())
+}
+
+fn put_state(state: HostState) -> Vec<HostState> {
     let rt = Rc::new(RefCell::new(HostRuntime::new(Host::new(state.config.clone()), state.clone())));
     rt.borrow_mut().hold_polls();
     registry().insert_runtime("box", rt);
@@ -430,5 +447,218 @@ fn a_session_that_could_not_be_ended_is_tried_again_after_a_while() {
         assert_eq!(acts.borrow().len(), 1, "not again at once");
         auto::check_agents(T + 2 * MIN + CLOSE_SETTLE_MS, &idle);
         assert_eq!(*acts.borrow(), vec![end.clone(), end]);
+    });
+}
+
+// ---------- plan limits and full contexts ----------
+
+/// The notices the apps hear, as (pane, body).
+fn notices() -> Rc<RefCell<Vec<(String, String)>>> {
+    let heard = Rc::new(RefCell::new(vec![]));
+    let h = heard.clone();
+    on_event(move |e| {
+        if let Event::Notice { pane, body, .. } = e {
+            h.borrow_mut().push((pane.clone(), body.clone()));
+        }
+    });
+    heard
+}
+
+/// The plan limit resets two hours after T, unix seconds.
+const RESET: u64 = T / 1000 + 2 * 3600;
+const ONE: [Pane; 1] = [("%3", "/w/inyon", Some("conv-a"), "idle")];
+
+/// %3 stopped on the plan limit: `resets` known or not, its agent in `state`.
+fn limited(state: &str, resets: bool) -> Vec<HostState> {
+    let failure = if resets { json!({ "error": "rate_limit", "resetsAt": RESET }) } else { json!({ "error": "rate_limit" }) };
+    put_agent(&ONE, "%3", json!({ "state": state, "failure": failure }))
+}
+
+fn carry_ons() -> Vec<inyon_protocol::DelayedSend> {
+    get().sends.unwrap_or_default().into_iter().filter(|s| s.auto == Some(SendAuto::CarryOn)).collect()
+}
+
+#[test]
+fn a_carry_on_goes_a_minute_after_the_limit_resets() {
+    let f = |error: &str, resets_at: Option<u64>| inyon_protocol::TurnFailure { error: error.into(), resets_at };
+    assert_eq!(auto::carry_on_at(&f("rate_limit", Some(RESET))), Some(RESET * 1000 + MIN));
+    assert_eq!(auto::carry_on_at(&f("rate_limit", None)), None, "not when the reset isn't known");
+    assert_eq!(auto::carry_on_at(&f("overloaded", Some(RESET))), None, "only a plan limit");
+}
+
+#[test]
+fn a_session_stopped_on_a_plan_limit_carries_on_once_after_the_reset() {
+    run(|| async {
+        let acts = fresh(None);
+        let heard = notices();
+        let hosts = limited("idle", true);
+        assert!(!auto::plan_carry_on(&hosts), "off unless asked for");
+        assert_eq!(get().sends, None);
+
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "carryOn": true }), T).unwrap()).unwrap();
+        assert!(auto::plan_carry_on(&hosts));
+        let s = carry_ons();
+        assert_eq!(s.len(), 1);
+        assert_eq!((s[0].text.as_str(), s[0].at, s[0].conv.as_deref(), s[0].pane.as_str()), ("continue", RESET * 1000 + MIN, Some("conv-a"), "%3"));
+        assert!(!auto::plan_carry_on(&hosts), "planned once");
+
+        auto::send_due(RESET * 1000, &hosts);
+        assert!(acts.borrow().is_empty(), "not before its time");
+        // past the reset the limit no longer says when it resets, but the turn still stopped on it
+        let after = limited("idle", false);
+        assert!(!auto::plan_carry_on(&after));
+        assert!(auto::send_due(RESET * 1000 + MIN, &after));
+        assert_eq!(*acts.borrow(), vec![hold("%3", "continue")]);
+        assert_eq!(*heard.borrow(), vec![("%3".to_owned(), CARRIED_ON.to_owned())], "a notice when it carries on");
+        assert!(carry_ons().is_empty());
+
+        // it works again: the next stop on a limit is planned afresh, and the switch stays
+        auto::plan_carry_on(&put(&[("%3", "/w/inyon", Some("conv-a"), "working")]));
+        let m = get().sessions.into_iter().find(|m| m.pane == "%3").unwrap();
+        assert_eq!((m.carry_on, m.carried_reset), (Some(true), None));
+    });
+}
+
+#[test]
+fn a_carry_on_you_cancel_stays_cancelled_even_across_a_restart() {
+    run(|| async {
+        fresh(None);
+        let hosts = limited("idle", true);
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "carryOn": true }), T).unwrap()).unwrap();
+        auto::plan_carry_on(&hosts);
+        auto::remove_send(&carry_ons()[0].id).unwrap();
+        assert!(!auto::plan_carry_on(&hosts));
+        reset();
+        assert!(!auto::plan_carry_on(&limited("idle", true)));
+        assert!(carry_ons().is_empty());
+        assert_eq!(get().sessions[0].carried_reset, Some(RESET), "written down with the session");
+    });
+}
+
+#[test]
+fn no_carry_on_once_you_typed_or_the_session_is_busy() {
+    run(|| async {
+        let acts = fresh(None);
+        let heard = notices();
+        put(&ONE);
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "carryOn": true }), T).unwrap()).unwrap();
+        let working = || put(&[("%3", "/w/inyon", Some("conv-a"), "working")]);
+
+        // you sent something before the reset: the agent works, and the carry-on goes
+        auto::plan_carry_on(&limited("idle", true));
+        assert_eq!(carry_ons().len(), 1);
+        auto::plan_carry_on(&working());
+        assert!(carry_ons().is_empty(), "you carried on yourself");
+
+        // stopped again: at the time it's idle but on no limit any more (a turn of yours finished)
+        auto::plan_carry_on(&limited("idle", true));
+        assert_eq!(carry_ons().len(), 1);
+        assert!(auto::send_due(RESET * 1000 + MIN, &put(&ONE)));
+        assert!(carry_ons().is_empty() && get().sends.is_none(), "dropped, not kept with an error");
+
+        // or asking you something then
+        auto::plan_carry_on(&working());
+        auto::plan_carry_on(&limited("idle", true));
+        assert_eq!(carry_ons().len(), 1);
+        auto::send_due(RESET * 1000 + MIN, &limited("waiting", false));
+        assert!(carry_ons().is_empty());
+
+        assert!(acts.borrow().is_empty(), "nothing was typed in");
+        assert!(heard.borrow().is_empty());
+    });
+}
+
+#[test]
+fn every_session_carries_on_by_the_hubs_rule_unless_its_own_switch_says_otherwise() {
+    run(|| async {
+        fresh(None);
+        let two: [Pane; 2] = [ONE[0], ("%4", "/w", Some("conv-b"), "idle")];
+        let failure = json!({ "error": "rate_limit", "resetsAt": RESET });
+        let mut v = serde_json::to_value(machine(&two)).unwrap();
+        for p in v["sessions"][0]["windows"][0]["panes"].as_array_mut().unwrap() {
+            p["agent"]["failure"] = failure.clone();
+        }
+        let hosts = put_state(serde_json::from_value(v).unwrap());
+
+        assert_eq!(auto::set_auto(&json!({ "carryOn": true })).unwrap().carry_on, Some(true));
+        auto::plan_carry_on(&hosts);
+        assert_eq!(carry_ons().iter().map(|s| s.pane.as_str()).collect::<Vec<_>>(), ["%3", "%4"]);
+        // a session turned off loses its carry-on at once; the other keeps its own
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "carryOn": false }), T).unwrap()).unwrap();
+        assert_eq!(carry_ons().iter().map(|s| s.pane.as_str()).collect::<Vec<_>>(), ["%4"]);
+        // the rule turned off takes the rest
+        auto::set_auto(&json!({ "carryOn": false })).unwrap();
+        assert!(carry_ons().is_empty());
+        assert_eq!(get().auto, None, "off is kept as nothing");
+        // a session switched on carries on whatever the rule
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "carryOn": true }), T).unwrap()).unwrap();
+        auto::plan_carry_on(&hosts);
+        assert_eq!(carry_ons().iter().map(|s| s.pane.as_str()).collect::<Vec<_>>(), ["%3"]);
+        // null goes back to the rule
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "carryOn": null }), T).unwrap()).unwrap();
+        assert!(carry_ons().is_empty());
+
+        assert_eq!(auto::set_auto(&json!({ "compactAt": 40 })).unwrap_err().message, "Pick between 50 and 95 percent");
+        assert_eq!(auto::set_auto(&json!({ "carryOn": "yes" })).unwrap_err().status, Some(400));
+    });
+}
+
+#[test]
+fn the_context_switch_compacts_once_per_fill() {
+    let at = 85.0;
+    // under the threshold: nothing, and armed again
+    assert_eq!(auto::compact_step(true, Some(40.0), at, true), (false, false));
+    // over it and ready: once
+    assert_eq!(auto::compact_step(false, Some(86.0), at, true), (true, true));
+    assert_eq!(auto::compact_step(true, Some(90.0), at, true), (false, true));
+    // over it but busy: waits, still armed
+    assert_eq!(auto::compact_step(false, Some(90.0), at, false), (false, false));
+    // the size unknown (just compacted): nothing changes
+    assert_eq!(auto::compact_step(true, None, at, true), (false, true));
+    assert_eq!(auto::compact_step(false, None, at, true), (false, false));
+}
+
+#[test]
+fn a_session_compacts_before_its_context_fills_and_not_again_until_it_drops() {
+    run(|| async {
+        let acts = fresh(None);
+        let at = |pct: f64, state: &str| put_agent(&ONE, "%3", json!({ "state": state, "status": { "contextPct": pct, "updatedAt": 0 } }));
+        auto::compact_full(T, &at(90.0, "idle"));
+        assert!(acts.borrow().is_empty(), "off unless asked for");
+
+        auto::set_auto(&json!({ "autoCompact": true })).unwrap();
+        auto::compact_full(T, &at(80.0, "idle"));
+        assert!(acts.borrow().is_empty(), "under 85%");
+        auto::compact_full(T, &at(88.0, "working"));
+        assert!(acts.borrow().is_empty(), "not while it works");
+        auto::compact_full(T, &at(88.0, "idle"));
+        assert_eq!(*acts.borrow(), vec![hold("%3", "/compact")]);
+        auto::compact_full(T, &at(89.0, "idle"));
+        let stale = put_agent(&ONE, "%3", json!({ "status": { "contextPct": 89, "stale": { "context": "compacted" }, "updatedAt": 0 } }));
+        auto::compact_full(T, &stale);
+        assert_eq!(acts.borrow().len(), 1, "once until it drops");
+
+        auto::compact_full(T, &at(22.0, "idle"));
+        auto::compact_full(T, &at(91.0, "idle"));
+        assert_eq!(acts.borrow().len(), 2, "again after it dropped");
+
+        // its own switch wins over the rule, and the threshold is the hub's
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "autoCompact": false }), T).unwrap()).unwrap();
+        auto::compact_full(T, &at(10.0, "idle"));
+        auto::compact_full(T, &at(95.0, "idle"));
+        assert_eq!(acts.borrow().len(), 2);
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "autoCompact": null }), T).unwrap()).unwrap();
+        auto::set_auto(&json!({ "compactAt": 70 })).unwrap();
+        auto::compact_full(T, &at(72.0, "idle"));
+        assert_eq!(acts.borrow().len(), 3, "at the hub's 70%");
+
+        // stopped on a plan limit, a compaction can't run either
+        auto::compact_full(T, &at(10.0, "idle"));
+        auto::compact_full(T, &put_agent(&ONE, "%3", json!({ "status": { "contextPct": 90, "updatedAt": 0 }, "failure": { "error": "rate_limit" } })));
+        assert_eq!(acts.borrow().len(), 3);
+
+        // each agent's own command
+        auto::compact_full(T, &put_agent(&ONE, "%3", json!({ "kind": "gemini", "pid": 2, "status": { "contextPct": 90, "updatedAt": 0 } })));
+        assert_eq!(acts.borrow().last(), Some(&hold("%3", "/compress")));
     });
 }

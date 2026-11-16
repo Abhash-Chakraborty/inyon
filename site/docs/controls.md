@@ -51,6 +51,14 @@ Claude Code has a switch next to its effort levels: with **ultracode** on, it ru
 
 In Codex, every one of your messages also has **Rewind to here** while the agent is idle.
 
+## Carrying on and compacting by itself
+
+From 0.27 the hub can do two things for a session while you're away. Both are switches under the session's [Usage](#usage-and-limits) (on a phone, in the **⋯** sheet). Until you switch one for a session, it follows the rule for every session in [Settings → Live numbers](settings.md#live-numbers), which is off.
+
+**Carry on after a limit** (Claude Code). When a turn stops on a plan limit and Inyon knows when the limit resets, the hub plans "continue" for a minute after the reset. It waits under the conversation like a [message sent later](sessions.md#sending-a-message-later), marked *Carries on at 15:01*, so you can **Send now** or **Cancel** it, and a cancelled one isn't planned again for that limit, even after a hub restart. When the time comes, it goes only if the session is still stopped on the limit, idle, with nothing typed in its message box. If you sent something yourself in the meantime, it's dropped. A notification says when the session carries on. It needs the integration (Claude Code 2.1.78 or later, as for the [Stopped](notifications.md#what-youre-told-about) alert) and the account's plan limits, which give the reset time.
+
+**Compact before it fills**. When the context passes the threshold (85%, or the one picked in Settings) and the agent is idle, with nothing typed, held or due to be sent, the hub sends the agent's compact command once. It sends it again only after the context has dropped back under the threshold, so a compaction that didn't free enough isn't repeated. It works with the agents that report their context and have a compact command: Claude Code, Codex, OpenCode and Copilot.
+
 ## Stopping and ending
 
 - **Stop** (or `Esc` in an empty message box) interrupts the agent, like pressing `Esc` in the terminal. From 0.22 a stop pressed on two devices at once, or twice within a second, sends `Esc` once: a second `Esc` after the agent stopped would open Claude Code's rewind menu.
@@ -98,6 +106,7 @@ The ring in the header shows how full the context window is; it turns amber past
 
 - the context window, with **Compact now**;
 - the plan and its limits: the 5-hour window and the week, with when each resets, plus Codex credits;
+- from 0.27, the switches **Carry on after a limit** and **Compact before it fills** (see [Carrying on and compacting by itself](#carrying-on-and-compacting-by-itself));
 - the session's cost (Claude Code and OpenCode), run time and turns, and lines changed;
 - the model, effort, fast mode, output style, the agent's version, the git branch, the folder, the session ID, and OpenCode's shared link while there is one;
 - how Inyon matched the pane to its conversation, from an exact hook to a best guess by folder.

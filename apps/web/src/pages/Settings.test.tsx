@@ -394,6 +394,30 @@ describe('Put idle agents to sleep', () => {
   })
 })
 
+describe('Carry on and compact for every session', () => {
+  test('turn up on a hub that keeps them, and go to the hub as its rules', async () => {
+    const org = { v: 2, sessions: [], projects: [], groups: [], spaces: [] }
+    act(() => emit({ t: 'overview', hosts: fresh(hosts), organize: org }))
+    const user = userEvent.setup()
+    await render(page())
+    expect(screen.queryByText('Carry on after a plan limit')).toBeNull()
+    await act(async () => emit({ t: 'overview', hosts: useStore.getState().hosts, organize: { ...org, v: 3, auto: { autoCompact: true, compactAt: 90 } } }))
+    expect(screen.getByRole('switch', { name: 'Carry on after a plan limit' }).getAttribute('aria-checked')).toBe('false')
+    const at = () => within(screen.getByRole('radiogroup', { name: 'Compact before the context fills' }))
+    expect(at().getByRole('radio', { name: '90%' }).getAttribute('aria-checked')).toBe('true')
+    await user.click(screen.getByRole('switch', { name: 'Carry on after a plan limit' }))
+    expect(api.setAuto).toHaveBeenLastCalledWith({ carryOn: true })
+    // 85% is the hub's own default, so it's kept as nothing
+    await user.click(at().getByRole('radio', { name: '85%' }))
+    expect(api.setAuto).toHaveBeenLastCalledWith({ autoCompact: true, compactAt: null })
+    await user.click(at().getByRole('radio', { name: '75%' }))
+    expect(api.setAuto).toHaveBeenLastCalledWith({ autoCompact: true, compactAt: 75 })
+    await user.click(at().getByRole('radio', { name: 'Off' }))
+    expect(api.setAuto).toHaveBeenLastCalledWith({ autoCompact: false })
+    act(() => emit({ t: 'overview', hosts: [] }))
+  })
+})
+
 describe('Settings › Blueprints › shared links', () => {
   const link = { id: 'a1', host: 'box', slug: 'plan', public: true, created: Date.now() - 86_400_000, expires: Date.now() + 6 * 86_400_000 + 3_600_000, opens: 4 }
   const passed = { address: 'https://share.example.com', dns: { ok: true, addresses: ['203.0.113.4'] }, reach: { ok: true }, wall: { ok: true, open: [] } }

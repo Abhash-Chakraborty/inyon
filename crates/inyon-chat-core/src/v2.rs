@@ -308,6 +308,8 @@ impl Organize2 {
                     sends: r.sends.clone().filter(|l| !l.is_empty()),
                     prompts: r.prompts.clone().filter(|l| !l.is_empty()),
                     sleep: r.sleep.clone().filter(|l| !l.is_empty()),
+                    // the hub's rules for every session aren't on this stream; the sessions' own switches are
+                    auto: None,
                 };
                 changed = true;
             }

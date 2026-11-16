@@ -4,7 +4,8 @@ import clsx from 'clsx'
 import { Bell, BookOpen, Check, ChevronRight, Copy, Download, Heart, KeyRound, LogOut, Mic, Minus, Monitor, Moon, MoreHorizontal, QrCode, ShieldCheck, Smartphone, Sun, Trash2, Vibrate } from 'lucide-react'
 import { AGENTS, INSTALL_URL, type CompanionScope, type PairedCompanion } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
-import { canSleep, toast, useStore } from '../lib/store.ts'
+import { canAutomate, canSleep, toast, useStore } from '../lib/store.ts'
+import { COMPACT_AT } from '../components/session/AutoSwitches.tsx'
 import { loadPages } from '../lib/pages.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
@@ -333,6 +334,33 @@ function SleepRow() {
   )
 }
 
+const COMPACT_CHOICES = [
+  { v: '0', label: 'Off' },
+  { v: '75', label: '75%' },
+  { v: '85', label: '85%' },
+  { v: '90', label: '90%' },
+]
+
+/** From 0.27: what this hub does for every session that doesn't say otherwise in its Usage panel. */
+function AutoRows() {
+  const rules = useStore((s) => s.organize.auto)
+  if (!canAutomate('main')) return null
+  const at = rules?.compactAt ?? COMPACT_AT
+  const current = rules?.autoCompact ? String(at) : '0'
+  const choices = current === '0' || COMPACT_CHOICES.some((c) => c.v === current) ? COMPACT_CHOICES : [...COMPACT_CHOICES, { v: current, label: `${current}%` }].sort((a, b) => Number(a.v) - Number(b.v))
+  const save = (b: Parameters<typeof api.setAuto>[0]) => void api.setAuto(b).catch((e) => toast({ title: 'Could not change it', body: (e as Error).message, tone: 'error' }))
+  return (
+    <>
+      <Row label="Carry on after a plan limit" hint="When Claude Code stops on a plan limit, Inyon sends “continue” a minute after it resets, if the session is still stopped on it. Each session can change this under Usage.">
+        <Toggle on={!!rules?.carryOn} onChange={(v) => save({ carryOn: v })} label="Carry on after a plan limit" />
+      </Row>
+      <Row label="Compact before the context fills" hint="Past this, Inyon sends the agent's compact command while it's idle, once until the context drops again. Each session can change this under Usage.">
+        <Segmented size="sm" label="Compact before the context fills" value={current} onChange={(v) => save(v === '0' ? { autoCompact: false } : { autoCompact: true, compactAt: Number(v) === COMPACT_AT ? null : Number(v) })} options={choices} />
+      </Row>
+    </>
+  )
+}
+
 /** "Clean up now", by the days set above (14 while it's set to Never). */
 function CleanupRow({ days }: { days: number }) {
   const [busy, setBusy] = useState(false)
@@ -534,6 +562,7 @@ export function Settings() {
                 </Row>
               )}
               <SleepRow />
+              <AutoRows />
             </div>
           </section>
 
