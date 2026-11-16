@@ -64,6 +64,8 @@ const server = Bun.serve({
       state.calls.push({ method: req.method, path: p, body })
     }
     if (p === '/api/settings') return json({})
+    // the New session sheet asks whether the folder is a git repo; none is here
+    if (/^\/api\/hosts\/[^/]+\/repo$/.test(p)) return json({})
     if (p === '/api/organize/prompts' && req.method === 'POST') {
       const q = { id: `q-${String(state.org.prompts.length + 1).padStart(12, '0')}`, name: body.name, text: body.text }
       state.org.prompts.push(q)

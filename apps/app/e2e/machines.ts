@@ -144,6 +144,8 @@ const server = Bun.serve({
         return json({ ok: true })
       }
       if (rest === '/launch') return json({ pane: '%31' })
+      // the New session sheet asks whether the folder is a git repo; home isn't one here
+      if (rest === '/repo') return json({})
       if (rest === '/setup' && req.method === 'GET') return json(setup)
       if (rest === '/setup') {
         // where the machine keeps its sessions: saved, and in the next report
