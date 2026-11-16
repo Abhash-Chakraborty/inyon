@@ -14,6 +14,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.speech.SpeechRecognizer
 import android.util.Log
 import android.webkit.WebView
 import androidx.activity.result.ActivityResult
@@ -35,10 +36,13 @@ import java.net.InetAddress
 import java.util.concurrent.Executors
 import org.json.JSONObject
 
-/** Phone-only features: keyboard/clipboard files, background keep-alive, notifications, haptics and QR scanning. */
+/** Phone-only features: keyboard/clipboard files, background keep-alive, notifications, haptics, QR scanning and dictation. */
 @CapacitorPlugin(
     name = "InyonDevice",
-    permissions = [Permission(alias = InyonDevicePlugin.NOTIFICATIONS, strings = [Manifest.permission.POST_NOTIFICATIONS])],
+    permissions = [
+        Permission(alias = InyonDevicePlugin.NOTIFICATIONS, strings = [Manifest.permission.POST_NOTIFICATIONS]),
+        Permission(alias = InyonDevicePlugin.MICROPHONE, strings = [Manifest.permission.RECORD_AUDIO]),
+    ],
 )
 class InyonDevicePlugin : Plugin() {
 
@@ -101,6 +105,9 @@ class InyonDevicePlugin : Plugin() {
         // the page always thinks it's on screen (InyonWebView), so say when Inyon isn't
         onScreen = false
         notifyListeners("appVisibility", JSObject().put("visible", false))
+        // Android takes the microphone away from an app off screen: finish with what was heard
+        dictationRun++
+        dictation?.stop()
         // Capacitor only pauses the WebView when KeepRunning is false (it isn't here), but undo any
         // pause anyway while the user asked to stay connected
         if (KeepAliveService.running) {
@@ -112,6 +119,8 @@ class InyonDevicePlugin : Plugin() {
 
     override fun handleOnDestroy() {
         if (DeviceEvents.sink === events) DeviceEvents.sink = null
+        dictationRun++
+        dictation?.cancel()
         (bridge.webView as? InyonWebView)?.contentListener = null
         dozeReceiver?.let { runCatching { context.unregisterReceiver(it) } }
         dozeReceiver = null
@@ -476,6 +485,84 @@ class InyonDevicePlugin : Plugin() {
         call.resolve(JSObject().put("played", haptics.play(kind, bridge.webView)))
     }
 
+    // ---- dictation -------------------------------------------------------------------------
+
+    private var dictation: Dictation? = null
+
+    /**
+     * Counts starts, stops and cancels. A start waiting on the microphone question or the main
+     * thread only begins if nothing came after it, so a run the page already gave up on never
+     * starts listening later.
+     */
+    @Volatile
+    private var dictationRun = 0
+
+    /** Whether the phone has a speech recogniser; without one the message box has no microphone. */
+    @PluginMethod
+    fun dictationAvailable(call: PluginCall) {
+        call.resolve(JSObject().put("available", SpeechRecognizer.isRecognitionAvailable(context)))
+    }
+
+    /**
+     * Listens for the message box, asking for the microphone the first time. Resolves once it
+     * listens; the words come as "dictation" events carrying the run's id (Dictation).
+     */
+    @PluginMethod
+    fun startDictation(call: PluginCall) {
+        call.data.put(RUN, ++dictationRun)
+        if (getPermissionState(MICROPHONE) == PermissionState.GRANTED) return beginDictation(call)
+        try {
+            requestPermissionForAlias(MICROPHONE, call, "microphonePermissionResult")
+        } catch (e: IllegalStateException) {
+            call.reject("Couldn't ask for the microphone right now", "UNAVAILABLE")
+        }
+    }
+
+    @PermissionCallback
+    private fun microphonePermissionResult(call: PluginCall) {
+        if (getPermissionState(MICROPHONE) == PermissionState.GRANTED) beginDictation(call) else call.reject("Microphone blocked", "NOT_ALLOWED")
+    }
+
+    private fun beginDictation(call: PluginCall) {
+        val id = call.getString("id") ?: ""
+        val lang = call.getString("lang")
+        val run = call.data.optInt(RUN, -1)
+        bridge.executeOnMainThread {
+            if (run != dictationRun) return@executeOnMainThread call.reject("Stopped before it started", "CANCELLED")
+            if (!SpeechRecognizer.isRecognitionAvailable(context)) return@executeOnMainThread call.reject("No speech recogniser on this phone", "UNAVAILABLE")
+            val d = dictation ?: Dictation(context) { runId, kind, text, error ->
+                val e = JSObject().put("id", runId).put("kind", kind)
+                if (text != null) e.put("text", text)
+                if (error != null) e.put("error", error)
+                notifyListeners("dictation", e)
+            }.also { dictation = it }
+            try {
+                d.start(id, lang)
+            } catch (e: Exception) {
+                return@executeOnMainThread call.reject("Couldn't start listening: ${e.message}", "UNAVAILABLE")
+            }
+            call.resolve(ok())
+        }
+    }
+
+    @PluginMethod
+    fun stopDictation(call: PluginCall) {
+        dictationRun++
+        bridge.executeOnMainThread {
+            dictation?.stop()
+            call.resolve(ok())
+        }
+    }
+
+    @PluginMethod
+    fun cancelDictation(call: PluginCall) {
+        dictationRun++
+        bridge.executeOnMainThread {
+            dictation?.cancel()
+            call.resolve(ok())
+        }
+    }
+
     // ---- QR codes --------------------------------------------------------------------------
 
     /** Opens the scanner; resolves { text }, { type: true }, { denied: true } or { cancelled: true }. */
@@ -500,6 +587,9 @@ class InyonDevicePlugin : Plugin() {
 
     companion object {
         const val NOTIFICATIONS = "notifications"
+        const val MICROPHONE = "microphone"
+        /** the call's place in [dictationRun] */
+        private const val RUN = "inyonDictationRun"
         private const val TAG = "InyonDevice"
 
         // kept for the process, so a recreated activity still knows when Doze last began and ended

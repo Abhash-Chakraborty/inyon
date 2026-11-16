@@ -87,6 +87,14 @@ Pasting more than 40 lines of text attaches it as a file instead (*Pasted text Â
 
 Settings â†’ **Uploads and clipboard** sets how long uploads are kept (1, 7 or 30 days, or forever), the largest file allowed and, from 0.17, how much space they may take on each machine. See [Settings](settings.md#uploads-and-clipboard).
 
+### Dictating a message
+
+From 0.27 the microphone next to the send button dictates into the box with your device's own speech recogniser, in the device's language. Tap it and speak: the words go in where the cursor is, show up as you talk and settle as the recogniser makes them out. Tap it again or press `Esc` to stop. It also stops by itself a couple of seconds after you stop talking, and when you type in the box. What's in the box stays, and you can change it before sending.
+
+The first time, the browser or the phone asks to use the microphone. If you refused, *Microphone blocked* says where to allow it. *Didn't catch that* means nothing was heard.
+
+The microphone shows only where there's a recogniser to use. Chrome, Edge and Safari have one; Firefox doesn't. A browser lets only a page on https or `localhost` use the microphone, so a hub at a plain `http://` address has no button. In the [Android app](android.md#phone-conveniences) it's the phone's own recogniser. Inyon gets the words, never the audio. Where the audio goes is up to the recogniser: Chrome's, for one, sends it to Google to turn into text.
+
 ### Drafts follow you
 
 What you type is saved as you go, and mirrored into the agent's own input box in the terminal. Start a message on your phone and finish it at the keyboard, or the other way round. A draft picked up from elsewhere is marked *From the terminal*.
