@@ -284,6 +284,105 @@ pub fn discard_ask(f: &crate::api::GitFile) -> (String, String) {
     (format!("Discard your changes to {name}?"), format!("{what}This can't be undone."))
 }
 
+// ---------- pull requests (lib/pullRequest.ts) ----------
+
+/// What the Working tree shows about pull requests: the branch's pull request, an offer to open
+/// one, a note on what gh needs first (with the command to run), or nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrView {
+    None,
+    Pr(crate::api::PullRequest),
+    Open { base: Option<String> },
+    Notice { text: String, command: Option<&'static str> },
+}
+
+/// Names a default branch usually has, for when git and gh can't say which it is.
+const USUAL_DEFAULTS: [&str; 3] = ["main", "master", "trunk"];
+
+pub fn pr_view(s: &crate::api::GitState, st: Option<&crate::api::PrState>) -> PrView {
+    let Some(st) = st.filter(|_| s.repo) else { return PrView::None };
+    // an answer about another branch (the one checked out before) says nothing about this one
+    if st.branch.is_some() && st.branch != s.branch {
+        return PrView::None;
+    }
+    if let Some(pr) = &st.pr {
+        return PrView::Pr(pr.clone());
+    }
+    if st.gh == "not-github" {
+        return PrView::None;
+    }
+    let branch = s.branch.as_deref().unwrap_or("");
+    let is_default = match st.base.as_deref() {
+        Some(b) => branch == b,
+        None => USUAL_DEFAULTS.contains(&branch),
+    };
+    // pushed: the branch has an upstream and nothing left to push
+    let pushed = s.upstream.is_some() && s.ahead.unwrap_or(0.0) == 0.0;
+    if branch.is_empty() || branch == "detached" || is_default || s.remote != Some(true) || !pushed {
+        return PrView::None;
+    }
+    match st.gh.as_str() {
+        "missing" => {
+            PrView::Notice { text: "To open a pull request from here, install the GitHub CLI on this machine (cli.github.com), then run".into(), command: Some("gh auth login") }
+        }
+        "signed-out" => PrView::Notice { text: "To open a pull request from here, sign gh in to GitHub on this machine:".into(), command: Some("gh auth login") },
+        "error" => PrView::Notice { text: st.message.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| "gh couldn't read the pull request.".into()), command: None },
+        _ => PrView::Open { base: st.base.clone() },
+    }
+}
+
+/// The checks in one line, and its tone: failing, running, passing or none.
+pub fn checks_summary(pr: &crate::api::PullRequest) -> (&'static str, String) {
+    let c = &pr.checks;
+    let (failed, running) = (c.failed.len(), c.running.len());
+    if c.passed == 0 && c.skipped == 0 && failed == 0 && running == 0 {
+        return ("none", "No checks".into());
+    }
+    let tone = if failed > 0 {
+        "failing"
+    } else if running > 0 {
+        "running"
+    } else {
+        "passing"
+    };
+    let mut parts = vec![];
+    if failed > 0 {
+        parts.push(format!("{failed} failing"));
+    }
+    if running > 0 {
+        parts.push(format!("{running} running"));
+    }
+    if c.passed > 0 {
+        parts.push(format!("{} passing", c.passed));
+    } else if tone == "passing" {
+        // skipped checks only count when nothing else ran
+        parts.push(format!("{} skipped", c.skipped));
+    }
+    (tone, parts.join(" · "))
+}
+
+/// How the pull request's state reads on its chip.
+pub fn pr_state_label(pr: &crate::api::PullRequest) -> &'static str {
+    match pr.state.as_str() {
+        "merged" => "Merged",
+        "closed" => "Closed",
+        _ if pr.draft => "Draft",
+        _ => "Open",
+    }
+}
+
+/// What "Send to agent" puts in the message box (not sent).
+pub fn failing_prompt(pr: &crate::api::PullRequest) -> String {
+    let names: Vec<&str> = pr.checks.failed.iter().map(|c| c.name.as_str()).collect();
+    let n = pr.number;
+    let at = format!("pull request #{n} ({})", pr.url);
+    if let [one] = names.as_slice() {
+        return format!("The check \"{one}\" failed on {at}. Find out why with gh pr checks {n} and fix it.");
+    }
+    let list: Vec<String> = names.iter().map(|x| format!("- {x}")).collect();
+    format!("These checks failed on {at}:\n{}\n\nFind out why with gh pr checks {n} and fix them.", list.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,5 +562,65 @@ mod tests {
         r.from = Some("old.ts".into());
         assert_eq!(discard_ask(&r).1, "It goes back to old.ts. This can't be undone.");
         assert_eq!(discard_paths(&r), ["new.ts", "old.ts"]);
+    }
+
+    fn pr(failed: &[&str], running: &[&str], passed: u64, skipped: u64) -> crate::api::PullRequest {
+        let c = |v: &[&str]| v.iter().map(|n| crate::api::PrCheck { name: (*n).into(), url: None }).collect();
+        crate::api::PullRequest {
+            number: 42,
+            title: "Fix the cart".into(),
+            state: "open".into(),
+            url: "https://github.com/o/r/pull/42".into(),
+            checks: crate::api::PrChecks { passed, skipped, failed: c(failed), running: c(running) },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pull_requests_read_as_the_web_app_does() {
+        let pushed = crate::api::GitState {
+            repo: true,
+            root: None,
+            branch: Some("fix/cart".into()),
+            remote: Some(true),
+            upstream: Some("origin/fix/cart".into()),
+            ahead: Some(0.0),
+            behind: Some(0.0),
+            files: vec![],
+        };
+        let ready = crate::api::PrState { gh: "ready".into(), branch: Some("fix/cart".into()), base: Some("main".into()), ..Default::default() };
+        assert_eq!(pr_view(&pushed, Some(&ready)), PrView::Open { base: Some("main".into()) });
+        assert_eq!(pr_view(&crate::api::GitState { ahead: Some(1.0), ..pushed.clone() }, Some(&ready)), PrView::None);
+        assert_eq!(pr_view(&crate::api::GitState { branch: Some("main".into()), ..pushed.clone() }, Some(&ready)), PrView::None);
+        assert_eq!(
+            pr_view(&crate::api::GitState { branch: Some("master".into()), ..pushed.clone() }, Some(&crate::api::PrState { gh: "missing".into(), ..Default::default() })),
+            PrView::None
+        );
+        assert_eq!(pr_view(&pushed, None), PrView::None);
+        // an answer about the branch checked out before shows nothing, its pull request included
+        let other = crate::api::GitState { branch: Some("other".into()), ..pushed.clone() };
+        assert_eq!(pr_view(&other, Some(&crate::api::PrState { pr: Some(pr(&[], &[], 1, 0)), ..ready.clone() })), PrView::None);
+        assert_eq!(pr_view(&other, Some(&ready)), PrView::None);
+        let with = crate::api::PrState { pr: Some(pr(&[], &[], 1, 0)), ..ready.clone() };
+        assert_eq!(pr_view(&crate::api::GitState { ahead: Some(1.0), ..pushed.clone() }, Some(&with)), PrView::Pr(pr(&[], &[], 1, 0)));
+        let signed_out = crate::api::PrState { gh: "signed-out".into(), ..Default::default() };
+        assert!(matches!(pr_view(&pushed, Some(&signed_out)), PrView::Notice { command: Some("gh auth login"), .. }));
+        assert_eq!(pr_view(&pushed, Some(&crate::api::PrState { gh: "not-github".into(), ..Default::default() })), PrView::None);
+
+        assert_eq!(checks_summary(&pr(&["CI / check"], &["docs", "apk"], 3, 0)), ("failing", "1 failing · 2 running · 3 passing".into()));
+        assert_eq!(checks_summary(&pr(&[], &["docs"], 3, 0)), ("running", "1 running · 3 passing".into()));
+        assert_eq!(checks_summary(&pr(&[], &[], 3, 2)), ("passing", "3 passing".into()));
+        assert_eq!(checks_summary(&pr(&[], &[], 0, 2)), ("passing", "2 skipped".into()));
+        assert_eq!(checks_summary(&pr(&[], &[], 0, 0)), ("none", "No checks".into()));
+        assert_eq!(pr_state_label(&crate::api::PullRequest { draft: true, ..pr(&[], &[], 0, 0) }), "Draft");
+        assert_eq!(pr_state_label(&crate::api::PullRequest { state: "merged".into(), ..pr(&[], &[], 0, 0) }), "Merged");
+        assert_eq!(
+            failing_prompt(&pr(&["Android / apk"], &[], 0, 0)),
+            "The check \"Android / apk\" failed on pull request #42 (https://github.com/o/r/pull/42). Find out why with gh pr checks 42 and fix it."
+        );
+        assert_eq!(
+            failing_prompt(&pr(&["a", "b"], &[], 0, 0)),
+            "These checks failed on pull request #42 (https://github.com/o/r/pull/42):\n- a\n- b\n\nFind out why with gh pr checks 42 and fix them."
+        );
     }
 }

@@ -218,6 +218,127 @@ describe('Working tree actions', () => {
   })
 })
 
+describe('Pull requests', () => {
+  const pushed: GitState = { repo: true, remote: true, branch: 'fix/cart', upstream: 'origin/fix/cart', ahead: 0, behind: 0, files: [] }
+  const open = {
+    number: 42,
+    title: 'Fix the cart total',
+    state: 'open' as const,
+    draft: false,
+    url: 'https://github.com/o/r/pull/42',
+    conflicts: false,
+    checks: { passed: 3, skipped: 1, failed: [{ name: 'CI / check', url: 'https://github.com/o/r/actions/runs/1' }], running: [{ name: 'docs' }] },
+  }
+  beforeEach(() => api.git.mockImplementation(async () => pushed))
+
+  test('after a push, Open pull request starts from the commits and sends what you wrote', async () => {
+    let made = false
+    api.gitPr.mockImplementation(async () => (made ? { gh: 'ready', branch: 'fix/cart', base: 'main', pr: open } : { gh: 'ready', branch: 'fix/cart', base: 'main', draft: { title: 'Fix the cart total', body: 'It added tax twice.' } }))
+    api.gitPrCreate.mockImplementation(async () => ((made = true), { url: 'https://github.com/o/r/pull/42', number: 42 }))
+    await render(<WorkingTree p={p} poke={0} />)
+    expect(screen.queryByRole('button', { name: 'Push' })).toBeNull()
+    await userEvent.click(await screen.findByRole('button', { name: /Open pull request/ }))
+    expect(screen.getByText('fix/cart → main')).toBeTruthy()
+    const title = screen.getByLabelText('Title') as HTMLInputElement
+    const body = screen.getByLabelText('Description') as HTMLTextAreaElement
+    expect([title.value, body.value]).toEqual(['Fix the cart total', 'It added tax twice.'])
+    await userEvent.type(title, ' "twice"')
+    await userEvent.type(body, '{enter}$(not run)')
+    const sheet = screen.getByRole('dialog')
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Open pull request' }))
+    expect(api.gitPrCreate.mock.calls.at(-1)).toEqual(['box', '%4', 'Fix the cart total "twice"', 'It added tax twice.\n$(not run)'])
+    expect(useStore.getState().toasts.map((t) => t.title)).toContain('Opened pull request #42')
+    expect(await screen.findByRole('region', { name: 'Pull request' })).toBeTruthy()
+  })
+
+  test('a pull request shows its state, checks and failing ones, and sends them to the message box', async () => {
+    api.gitPr.mockImplementation(async () => ({ gh: 'ready', branch: 'fix/cart', base: 'main', pr: { ...open, conflicts: true } }))
+    await render(<WorkingTree p={p} poke={0} />)
+    const row = await screen.findByRole('region', { name: 'Pull request' })
+    expect(within(row).getByText('#42')).toBeTruthy()
+    expect(within(row).getByRole('link', { name: /Fix the cart total/ }).getAttribute('href')).toBe('https://github.com/o/r/pull/42')
+    expect(within(row).getByText('Open')).toBeTruthy()
+    expect(within(row).getByText('1 failing · 1 running · 3 passing')).toBeTruthy()
+    expect(within(row).getByRole('link', { name: /CI \/ check/ }).getAttribute('href')).toBe('https://github.com/o/r/actions/runs/1')
+    expect(within(row).getByText(/Conflicts with main/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Open pull request/ })).toBeNull()
+    await userEvent.click(within(row).getByRole('button', { name: /Send to agent/ }))
+    expect(composed).toEqual(['The check "CI / check" failed on pull request #42 (https://github.com/o/r/pull/42). Find out why with gh pr checks 42 and fix it.'])
+  })
+
+  test('refresh asks gh again; agent activity does not', async () => {
+    api.gitPr.mockImplementation(async () => ({ gh: 'ready', branch: 'fix/cart', base: 'main', pr: open }))
+    const { rerender } = await render(<WorkingTree p={p} poke={0} />)
+    await screen.findByRole('region', { name: 'Pull request' })
+    const n = api.gitPr.mock.calls.length
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(api.gitPr.mock.calls.length).toBe(n + 1)
+    rerender(<WorkingTree p={p} poke={1} />)
+    expect(api.gitPr.mock.calls.length).toBe(n + 1)
+  })
+
+  test("after a branch switch the last branch's pull request and open sheet go while the new one loads", async () => {
+    let branch = 'fix/cart'
+    let answer: (v: any) => void = () => {}
+    api.git.mockImplementation(async () => ({ ...pushed, branch }))
+    api.gitPr.mockImplementation(() =>
+      branch === 'fix/cart' ? Promise.resolve({ gh: 'ready', branch: 'fix/cart', base: 'main', draft: { title: 'Fix the cart total', body: '' } }) : new Promise((r) => (answer = r)),
+    )
+    await render(<WorkingTree p={p} poke={0} />)
+    await userEvent.click(await screen.findByRole('button', { name: /Open pull request/ }))
+    expect(screen.getByLabelText('Title')).toBeTruthy()
+    branch = 'fix/tax'
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await screen.findByText('fix/tax')
+    // fix/tax's answer hasn't come: nothing about fix/cart is left to act on (the sheet closes)
+    await act(async () => new Promise((r) => setTimeout(r, 250)))
+    expect(screen.queryByLabelText('Title')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Open pull request/ })).toBeNull()
+    await act(async () => answer({ gh: 'ready', branch: 'fix/tax', base: 'main', pr: { ...open, number: 43, title: 'Fix the tax' } }))
+    expect(await screen.findByText('#43')).toBeTruthy()
+    expect(screen.queryByText('#42')).toBeNull()
+  })
+
+  test('a pull request shows only under its own branch', async () => {
+    let branch = 'fix/cart'
+    api.git.mockImplementation(async () => ({ ...pushed, branch }))
+    api.gitPr.mockImplementation(() => (branch === 'fix/cart' ? Promise.resolve({ gh: 'ready', branch: 'fix/cart', base: 'main', pr: open }) : new Promise(() => {})))
+    await render(<WorkingTree p={p} poke={0} />)
+    await screen.findByRole('region', { name: 'Pull request' })
+    branch = 'fix/tax'
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await screen.findByText('fix/tax')
+    expect(screen.queryByRole('region', { name: 'Pull request' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Send to agent/ })).toBeNull()
+  })
+
+  test('without gh, or signed out, it says what to run there', async () => {
+    api.gitPr.mockImplementation(async () => ({ gh: 'signed-out', branch: 'fix/cart', base: 'main' }))
+    await render(<WorkingTree p={p} poke={0} />)
+    const note = await screen.findByRole('note')
+    expect(note.textContent).toContain('sign gh in to GitHub on this machine')
+    expect(within(note).getByRole('button', { name: /gh auth login/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Open pull request/ })).toBeNull()
+  })
+
+  test('an older hub without the route shows the working tree as before', async () => {
+    api.gitPr.mockImplementation(async () => {
+      throw new Error('Not found')
+    })
+    await render(<WorkingTree p={p} poke={0} />)
+    expect(await screen.findByText('No changes')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Pull request' })).toBeNull()
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
+  test('with no remote gh is never asked', async () => {
+    api.git.mockImplementation(async () => ({ ...pushed, remote: false }))
+    await render(<WorkingTree p={p} poke={0} />)
+    await screen.findByText('No changes')
+    expect(api.gitPr).not.toHaveBeenCalled()
+  })
+})
+
 describe('Diff layout', () => {
   const wide = (on: boolean) => {
     const was = window.matchMedia

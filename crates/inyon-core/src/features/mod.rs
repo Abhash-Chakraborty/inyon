@@ -23,6 +23,8 @@ pub mod pages_core;
 pub mod pages_remote;
 pub mod paths;
 pub mod providers;
+// the branch's pull request and its checks, through the machine's own gh
+pub mod pull_request;
 pub mod setup;
 pub mod signin;
 // agent temp files, through the machine's own `inyon temp`

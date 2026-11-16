@@ -825,6 +825,22 @@ fn status_tone(s: &str) -> (&'static str, &'static str) {
 #[component]
 fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
     let (git, mut rev) = use_load((host.clone(), pane.clone()), |(h, p): (String, String)| async move { api::git(&h, &p).await });
+    // the branch's pull request, through gh on the machine: asked when the panel opens, on refresh
+    // and after a push, not on every agent step (it goes to GitHub)
+    let (has_remote, branch_now) = git.read().data.as_ref().map_or((false, None), |s| (s.repo && s.remote == Some(true), s.branch.clone()));
+    // each answer carries the session and branch it was asked for: while the next one loads, the
+    // last one stays, and must not show under another branch
+    let pr_key = format!("{host}\n{pane}\n{}", branch_now.clone().unwrap_or_default());
+    let (prs, mut pr_rev) = use_load((host.clone(), pane.clone(), has_remote, branch_now), |(h, p, remote, b): (String, String, bool, Option<String>)| async move {
+        if remote {
+            let key = format!("{h}\n{p}\n{}", b.unwrap_or_default());
+            api::git_pr(&h, &p).await.map(|st| Some((key, st)))
+        } else {
+            Ok(None)
+        }
+    });
+    // the sheet is for the branch it was opened on; it closes if the branch or session changes
+    let mut opening = use_signal(|| None::<String>);
     let mut sel = use_signal(|| None::<String>);
     let mut msg = use_signal(String::new);
     let mut busy = use_signal(|| None::<&'static str>);
@@ -951,7 +967,9 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                         Err(e) => Err(e),
                     }
                 } else {
-                    api::git_push(&host, &pane).await.map(|_| "Pushed".to_string())
+                    let r = api::git_push(&host, &pane).await.map(|_| "Pushed".to_string());
+                    pr_rev += 1;
+                    r
                 };
                 match r {
                     Ok(t) => toast::toast(t, None, ToastTone::Success),
@@ -977,6 +995,12 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
     let push_title = s.upstream.as_ref().map_or_else(|| "Push to origin".to_string(), |u| format!("Push to {u}"));
     let root = s.root.clone();
     let files_len = s.files.len();
+    let pr_state = prs.read().data.clone().flatten().filter(|(k, _)| *k == pr_key).map(|(_, st)| st);
+    let view = changes::pr_view(&s, pr_state.as_ref());
+    let pr_base = pr_state.as_ref().and_then(|p| p.base.clone());
+    let pr_draft = pr_state.as_ref().and_then(|p| p.draft.clone()).unwrap_or_default();
+    let open_base = if let changes::PrView::Open { base } = &view { Some(base.clone()) } else { None };
+    let reading = reading || prs.read().busy;
     let msg_rows = msg().split('\n').count().clamp(1, 6);
     rsx! {
         div { class: "pp-col",
@@ -994,10 +1018,30 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                     button { class: "button button-xs button-ghost press", r#type: "button", title: "{push_title}", disabled: busy().is_some(), onclick: move |_| push("push"),
                         if busy() == Some("push") { "Pushing…" } else { "Push" }
                     }
+                } else if let Some(base) = open_base.clone() {
+                    button { class: "button button-xs button-ghost press", r#type: "button", title: base.map_or_else(|| "Open a pull request".to_string(), |b| format!("Open a pull request into {b}")), onclick: { let k = pr_key.clone(); move |_| opening.set(Some(k.clone())) },
+                        Glyph { icon: Icon::GitPullRequest, size: 14 }
+                        "Open pull request"
+                    }
                 }
-                button { class: "icon-button press", r#type: "button", "aria-label": "Refresh", title: "Refresh", onclick: move |_| rev += 1,
+                button { class: "icon-button press", r#type: "button", "aria-label": "Refresh", title: "Refresh", onclick: move |_| { rev += 1; pr_rev += 1; },
                     Glyph { icon: Icon::RefreshCw, size: 14, class: if reading { "spin" } else { "" } }
                 }
+            }
+            match view.clone() {
+                changes::PrView::Pr(pr) => rsx! { PrRow { host: host.clone(), pane: pane.clone(), pr, base: pr_base.clone() } },
+                changes::PrView::Notice { text, command } => rsx! { PrNotice { text, command: command.map(str::to_string) } },
+                _ => rsx! {},
+            }
+            OpenPrSheet {
+                host: host.clone(),
+                pane: pane.clone(),
+                open: opening().as_deref() == Some(pr_key.as_str()) && open_base.is_some(),
+                branch: s.branch.clone().unwrap_or_default(),
+                base: open_base.clone().flatten(),
+                draft: pr_draft,
+                on_close: move |_| opening.set(None),
+                on_opened: move |_| { opening.set(None); pr_rev += 1; },
             }
             if s.files.is_empty() {
                 Empty { icon: Icon::FileDiff, title: "No changes", "Nothing has changed since the last commit." }
@@ -1074,6 +1118,172 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// ---------- pull requests ----------
+
+/// The branch's pull request: number, title, state and a link, then its checks.
+#[component]
+fn PrRow(host: String, pane: String, pr: api::PullRequest, base: Option<String>) -> Element {
+    let (tone, text) = changes::checks_summary(&pr);
+    let (icon, icon_class) = match tone {
+        "failing" => (Icon::CircleX, "danger"),
+        "passing" => (Icon::CircleCheck, "ok"),
+        _ => (Icon::CircleDashed, "fg-3"),
+    };
+    let failed = pr.checks.failed.clone();
+    let more = failed.len().saturating_sub(5);
+    let send = {
+        let pr = pr.clone();
+        move |_| {
+            if !super::composer::compose(&host, &pane, &changes::failing_prompt(&pr)) {
+                toast::toast("Open the chat to add it", None, ToastTone::Info);
+            }
+        }
+    };
+    rsx! {
+        section { class: "pp-pr", "aria-label": "Pull request",
+            div { class: "pp-pr-head",
+                Glyph { icon: Icon::GitPullRequest, size: 14, class: "fg-3" }
+                a { class: "pp-pr-link", href: "{pr.url}", target: "_blank", rel: "noreferrer", title: "Open #{pr.number} on GitHub",
+                    span { class: "mono tabular fg-3", "#{pr.number}" }
+                    span { class: "pp-pr-title truncate", "{pr.title}" }
+                    span { class: "fg-3", "aria-hidden": "true", "↗" }
+                }
+                span { class: "pp-pr-state mono", {changes::pr_state_label(&pr)} }
+            }
+            if pr.state == "open" {
+                div { class: "pp-pr-checks",
+                    Glyph { icon, size: 14, class: icon_class }
+                    span { class: "truncate pp-grow", "{text}" }
+                    if !failed.is_empty() {
+                        button { class: "button button-xs button-ghost press", r#type: "button", title: "Put the failing checks and the link in your message, to send when you're ready", onclick: send,
+                            Glyph { icon: Icon::Send, size: 14 }
+                            "Send to agent"
+                        }
+                    }
+                }
+                if !failed.is_empty() {
+                    ul { class: "pp-pr-failed", "aria-label": "Failing checks",
+                        for c in failed.iter().take(5).cloned() {
+                            li { key: "{c.name}", class: "truncate",
+                                if let Some(u) = c.url.clone() {
+                                    a { href: "{u}", target: "_blank", rel: "noreferrer", "{c.name} ↗" }
+                                } else {
+                                    span { "{c.name}" }
+                                }
+                            }
+                        }
+                        if more > 0 {
+                            li { class: "fg-3", "and {more} more" }
+                        }
+                    }
+                }
+                if pr.conflicts {
+                    div { class: "pp-pr-conflict", {format!("Conflicts with {}; it can't be merged as it is.", base.unwrap_or_else(|| "its base branch".into()))} }
+                }
+            }
+        }
+    }
+}
+
+/// What gh needs before a pull request can be opened from here, with the command to run.
+#[component]
+fn PrNotice(text: String, command: Option<String>) -> Element {
+    rsx! {
+        div { class: "pp-pr-note", role: "note",
+            Glyph { icon: Icon::GitPullRequest, size: 14, class: "fg-3" }
+            span { "{text}" }
+            if let Some(c) = command {
+                button { class: "pp-pr-command mono press", r#type: "button", title: "Copy the command",
+                    onclick: { let c = c.clone(); move |_| { let c = c.clone(); spawn(async move { toast::copy(&c, "Command").await }); } },
+                    "{c}"
+                    Glyph { icon: Icon::Copy, size: 12, class: "fg-3" }
+                }
+            }
+        }
+    }
+}
+
+/// Opens a pull request from the pushed branch, its title and description drafted from the commits.
+#[component]
+fn OpenPrSheet(
+    host: String,
+    pane: String,
+    open: bool,
+    branch: String,
+    base: Option<String>,
+    draft: api::PrDraft,
+    on_close: EventHandler<()>,
+    on_opened: EventHandler<()>,
+) -> Element {
+    let mut title = use_signal(String::new);
+    let mut body = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    // each time it opens it starts from the draft
+    {
+        let draft = draft.clone();
+        use_effect(use_reactive!(|open| {
+            if open {
+                title.set(draft.title.clone());
+                body.set(draft.body.clone());
+            }
+        }));
+    }
+    let submit = use_callback(move |_: ()| {
+        if title.peek().trim().is_empty() || *busy.peek() {
+            return;
+        }
+        busy.set(true);
+        let (host, pane) = (host.clone(), pane.clone());
+        spawn(async move {
+            let (t, b) = (title.peek().clone(), body.peek().clone());
+            match api::git_pr_create(&host, &pane, &t, &b).await {
+                Ok(r) => {
+                    toast::toast(r.number.map_or_else(|| "Opened the pull request".to_string(), |n| format!("Opened pull request #{n}")), None, ToastTone::Success);
+                    on_opened.call(());
+                }
+                Err(e) => toast::toast("Could not open the pull request", Some(e.message), ToastTone::Error),
+            }
+            busy.set(false);
+        });
+    });
+    let into = base.unwrap_or_else(|| "default branch".into());
+    rsx! {
+        Sheet {
+            open,
+            on_close: move |_| on_close.call(()),
+            title: "Open a pull request".to_string(),
+            icon: rsx! { Glyph { icon: Icon::GitPullRequest, size: 16, class: "fg-3" } },
+            footer: rsx! {
+                div { class: "sheet-actions",
+                    button { class: "button button-md button-ghost press", r#type: "button", onclick: move |_| on_close.call(()), "Cancel" }
+                    button { class: "button button-md button-primary press", r#type: "button", disabled: title().trim().is_empty() || busy(), onclick: move |_| submit.call(()),
+                        if busy() { "Opening…" } else { "Open pull request" }
+                    }
+                }
+            },
+            div { class: "pp-pr-form",
+            p { class: "pp-pr-branches mono truncate", "{branch} → {into}" }
+            input { class: "field", "aria-label": "Title", placeholder: "Title", maxlength: "256", value: "{title}", oninput: move |e| title.set(e.value()) }
+            textarea {
+                class: "field pp-comment-box",
+                rows: "8",
+                placeholder: "Description",
+                "aria-label": "Description",
+                value: "{body}",
+                oninput: move |e| body.set(e.value()),
+                onkeydown: move |e: KeyboardEvent| {
+                    if e.key() == Key::Enter && (e.modifiers().meta() || e.modifiers().ctrl()) {
+                        e.prevent_default();
+                        submit.call(());
+                    }
+                },
+            }
+            p { class: "pp-hint", "gh opens it on the session's machine, as the GitHub account signed in there." }
             }
         }
     }

@@ -20,7 +20,11 @@ const browser = await launch()
 const done = finish(browser)
 
 const ROOT = '/home/sam/code/storefront'
-const seen = { commits: [] as string[], committed: [] as (boolean | undefined)[], discards: [] as string[][], pushes: 0, stops: [] as unknown[], outputs: 0 }
+const seen = { commits: [] as string[], committed: [] as (boolean | undefined)[], discards: [] as string[][], pushes: 0, prs: [] as { title: string; body: string }[], stops: [] as unknown[], outputs: 0 }
+// the stand-in branch: pushed yet, and its pull request opened yet (reset for each screen size)
+const repo = { pushed: false, opened: false }
+const BRANCH = 'fix/total-race'
+const PR = { number: 42, title: 'Wait for the discount in total()', state: 'open', draft: false, url: 'https://github.com/sam/storefront/pull/42', conflicts: false, checks: { passed: 3, skipped: 1, failed: [{ name: 'CI / test', url: 'https://github.com/sam/storefront/actions/runs/1' }], running: [{ name: 'Deploy preview' }] } }
 // what the stand-in repository has staged
 const staged = new Set<string>()
 const TREE = [{ path: 'src/checkout/total.ts', status: 'M', add: 2, del: 2 }, { path: 'notes/race.md', status: '?', add: 0, del: 0 }]
@@ -29,7 +33,7 @@ const hunk = { oldStart: 12, oldLines: 3, newStart: 12, newLines: 3, lines: [' i
 state.routes.push((req, url) => {
   const p = url.pathname
   const pane = '/api/hosts/local/panes/11'
-  const tree = () => json({ repo: true, root: ROOT, remote: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, files: TREE.map((f) => ({ ...f, staged: staged.has(f.path), unstaged: !staged.has(f.path) })) })
+  const tree = () => json({ repo: true, root: ROOT, remote: true, branch: BRANCH, upstream: `origin/${BRANCH}`, ahead: repo.pushed ? 0 : 1, behind: 0, files: TREE.map((f) => ({ ...f, staged: staged.has(f.path), unstaged: !staged.has(f.path) })) })
   if (p === `${pane}/git`) return tree()
   if (p === `${pane}/git/draft`) return json({ message: 'Update 2 files\n\n- src/checkout/total.ts\n- notes/race.md (new)' })
   if ((p === `${pane}/git/stage` || p === `${pane}/git/unstage` || p === `${pane}/git/discard`) && req.method === 'POST')
@@ -41,7 +45,9 @@ state.routes.push((req, url) => {
     })
   if (p === `${pane}/git/diff`) return json({ path: url.searchParams.get('path'), binary: false, hunks: url.searchParams.get('path') === 'notes/race.md' ? [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ['+# The race'] }] : [hunk] })
   if (p === `${pane}/git/commit` && req.method === 'POST') return req.json().then((b: { message: string; staged?: boolean }) => (seen.commits.push(b.message), seen.committed.push(b.staged), json({ commit: 'abc1234' })))
-  if (p === `${pane}/git/push` && req.method === 'POST') return (seen.pushes++, json({ ok: true }))
+  if (p === `${pane}/git/push` && req.method === 'POST') return (seen.pushes++, (repo.pushed = true), json({ ok: true }))
+  if (p === `${pane}/git/pr` && req.method === 'POST') return req.json().then((b: { title: string; body: string }) => (seen.prs.push(b), (repo.opened = true), json({ url: PR.url, number: PR.number })))
+  if (p === `${pane}/git/pr`) return json(repo.opened ? { gh: 'ready', branch: BRANCH, base: 'main', pr: PR } : { gh: 'ready', branch: BRANCH, base: 'main', draft: { title: 'Wait for the discount in total()', body: 'total() read the cart before the discount applied.' } })
   if (p === `${pane}/dir`) {
     const at = url.searchParams.get('path') ?? ''
     const entries = at === 'src' ? [{ name: 'checkout', dir: true, size: 0, mtime: 0 }, { name: 'index.ts', dir: false, size: 812, mtime: 0 }] : [{ name: 'src', dir: true, size: 0, mtime: 0 }, { name: '.gitignore', dir: false, size: 40, mtime: 0 }, { name: 'README.md', dir: false, size: 2048, mtime: 0 }, { name: 'package.json', dir: false, size: 1300, mtime: 0 }]
@@ -66,6 +72,7 @@ state.routes.push((req, url) => {
 /** The storefront chat with running work, an artifact, a written file and a dev server mentioned. */
 function seed() {
   resetChats()
+  repo.pushed = repo.opened = false
   const s = streams.get('local:%11')!
   const ts = new Date(Date.now() - 120_000).toISOString()
   s.items.push(
@@ -128,7 +135,8 @@ for (const [w, h] of SIZES)
 
         // ---- the working tree ----
         await panel(page).getByRole('radio', { name: 'Working tree' }).click()
-        await panel(page).getByText('main', { exact: true }).waitFor()
+        await panel(page).getByText(BRANCH, { exact: true }).waitFor()
+        check(!(await panel(page).getByRole('button', { name: 'Open pull request' }).count()), `${tag}: no pull request to open before the push`)
         check(await panel(page).getByTitle('1 commits not pushed').isVisible(), `${tag}: the tree shows the commit not pushed`)
         check(await panel(page).getByRole('button', { name: 'Comment on removed line 13' }).waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: the tree's diff numbers a removed line in the old file`)
         check(await panel(page).getByText('U', { exact: true }).isVisible(), `${tag}: a file git doesn't track reads U`)
@@ -158,6 +166,24 @@ for (const [w, h] of SIZES)
         check(await until(async () => seen.discards.length === discards + 1 && seen.discards.at(-1)?.[0] === 'src/checkout/total.ts'), `${tag}: Discard names the file`)
         await panel(page).getByRole('button', { name: 'Push' }).click()
         check(await page.getByText('Pushed', { exact: true }).waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: Push says it pushed`)
+        // pushed: open a pull request, drafted from the commits
+        await panel(page).getByRole('button', { name: 'Open pull request' }).click()
+        const prSheet = page.getByRole('dialog')
+        check(await prSheet.getByText(`${BRANCH} → main`).waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: the sheet says which branch goes where`)
+        check((await prSheet.getByLabel('Title').inputValue()) === 'Wait for the discount in total()', `${tag}: the title starts from the last commit`)
+        check((await prSheet.getByLabel('Description').inputValue()) === 'total() read the cart before the discount applied.', `${tag}: the description starts from the commit bodies`)
+        await page.screenshot({ path: path.join(shots, `panel-open-pr-${tag}.png`) })
+        await prSheet.getByLabel('Title').fill('Wait for the "discount" in total()')
+        await prSheet.getByRole('button', { name: 'Open pull request' }).click()
+        check(await until(async () => seen.prs.at(-1)?.title === 'Wait for the "discount" in total()'), `${tag}: Open pull request sends the title as written`)
+        const prRow = panel(page).getByRole('region', { name: 'Pull request' })
+        check(await prRow.getByText('#42').waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: the new pull request shows in the tree`)
+        check(await prRow.getByText('1 failing · 1 running · 3 passing').isVisible(), `${tag}: its checks are summed up`)
+        check((await prRow.getByRole('link', { name: /CI \/ test/ }).getAttribute('href')) === PR.checks.failed[0]!.url, `${tag}: a failing check links to its log`)
+        await page.screenshot({ path: path.join(shots, `panel-pr-${tag}.png`) })
+        await prRow.getByRole('button', { name: 'Send to agent' }).click()
+        check(await until(async () => (await box(page).inputValue()).includes('failed on pull request #42 (https://github.com/sam/storefront/pull/42)')), `${tag}: Send to agent puts the failing checks in the message box`)
+        await box(page).fill('')
         // the choice of view is remembered
         check((await page.evaluate(() => localStorage.getItem('inyon.changes'))) === 'tree', `${tag}: the tree is remembered as the Changes view`)
         await panel(page).getByRole('radio', { name: 'This chat' }).click()
@@ -365,6 +391,18 @@ for (const [w, h] of SIZES)
         await sheet.getByRole('radio', { name: 'Changes' }).click()
         check(await sheet.getByText('total.ts').first().waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: Changes lists the edits`)
         await page.screenshot({ path: path.join(shots, `panel-sheet-changes-${tag}.png`) })
+        // the working tree's pull request, and the sheet that opens one
+        repo.pushed = repo.opened = true
+        await sheet.getByRole('radio', { name: 'Working tree' }).click()
+        check(await sheet.getByRole('region', { name: 'Pull request' }).getByText('1 failing · 1 running · 3 passing').waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: the pull request and its checks show on a phone`)
+        await page.screenshot({ path: path.join(shots, `panel-sheet-pr-${tag}.png`) })
+        repo.opened = false
+        await sheet.getByRole('button', { name: 'Refresh' }).click()
+        await sheet.getByRole('button', { name: 'Open pull request' }).click()
+        check(await page.getByRole('dialog', { name: 'Open a pull request' }).getByLabel('Title').waitFor({ timeout: 3000 }).then(() => true, () => false), `${tag}: Open pull request opens its sheet on a phone`)
+        await page.screenshot({ path: path.join(shots, `panel-sheet-open-pr-${tag}.png`) })
+        await page.getByRole('dialog', { name: 'Open a pull request' }).getByRole('button', { name: 'Cancel' }).click()
+        await sheet.getByRole('radio', { name: 'This chat' }).click()
         await sheet.getByRole('radio', { name: 'Files' }).click()
         await sheet.getByText('package.json').click()
         await sheet.getByRole('button', { name: 'Mention' }).click()
@@ -394,17 +432,40 @@ if (hasReact)
         // the stand-in hub's build differs from the page's, so the web app offers a reload
         const later = page.getByRole('button', { name: 'Not now' })
         if (await later.isVisible()) await later.click()
+        // the working tree with its pull request, and the sheet that opens one
+        const prShots = async (scope: ReturnType<Page['locator']>) => {
+          repo.pushed = true
+          repo.opened = false
+          await scope.getByRole('radio', { name: 'Working tree' }).click()
+          await scope.getByRole('button', { name: /Open pull request/ }).click()
+          await page.getByRole('dialog', { name: 'Open a pull request' }).getByLabel('Title').waitFor({ timeout: 3000 })
+          await page.waitForTimeout(500)
+          await page.screenshot({ path: path.join(shots, `react-open-pr-${tag}.png`) })
+          await page.getByRole('dialog', { name: 'Open a pull request' }).getByRole('button', { name: 'Cancel' }).click()
+          await page.waitForTimeout(400)
+          repo.opened = true
+          await scope.getByRole('button', { name: 'Refresh' }).first().click()
+          await scope.getByRole('region', { name: 'Pull request' }).waitFor({ timeout: 3000 })
+          await page.waitForTimeout(300)
+          await page.screenshot({ path: path.join(shots, `react-pr-${tag}.png`) })
+          await scope.getByRole('radio', { name: 'This chat' }).click()
+        }
         if (w >= 1180) {
           await page.screenshot({ path: path.join(shots, `react-panel-changes-${tag}.png`) })
+          await prShots(page.locator('body'))
           for (const t of ['Activity', 'Usage']) {
             await page.getByRole('tab', { name: t }).click()
             await page.waitForTimeout(400)
             await page.screenshot({ path: path.join(shots, `react-panel-${t.toLowerCase()}-${tag}.png`) })
           }
         } else {
-          await page.getByRole('button', { name: 'Running tasks, subagents and changes' }).click()
+          // a phone's header has no Activity button: it's the first thing in the ⋯ sheet
+          await page.getByRole('button', { name: /^More/ }).first().click()
+          await page.getByRole('dialog').getByRole('button', { name: /Activity/ }).click()
           await page.waitForTimeout(600)
           await page.screenshot({ path: path.join(shots, `react-panel-sheet-${tag}.png`) })
+          await page.getByRole('dialog').getByRole('radio', { name: 'Changes' }).click()
+          await prShots(page.getByRole('dialog').first())
         }
       } catch (e) {
         console.error(`react ${tag}: ${(e as Error).message.split('\n')[0]}`)

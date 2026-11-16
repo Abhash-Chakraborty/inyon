@@ -393,6 +393,36 @@ export interface GitState {
   files: GitFile[]
 }
 
+/** One check on a pull request; `url` is its log, when GitHub has one. */
+export interface PrCheck {
+  name: string
+  url?: string
+}
+
+export interface PullRequest {
+  number: number
+  title: string
+  state: 'open' | 'closed' | 'merged'
+  draft: boolean
+  url: string
+  /** GitHub found conflicts with the base branch */
+  conflicts: boolean
+  checks: { passed: number; skipped: number; failed: PrCheck[]; running: PrCheck[] }
+}
+
+/** The branch's pull request, as gh on the session's machine sees it (hubs from 0.27). */
+export interface PrState {
+  /** missing: gh isn't installed; not-github: no GitHub remote, nothing to show */
+  gh: 'ready' | 'missing' | 'signed-out' | 'not-github' | 'error'
+  message?: string
+  branch?: string
+  /** the default branch, where a new pull request goes */
+  base?: string
+  pr?: PullRequest
+  /** a title and body to start from, when the branch has none yet */
+  draft?: { title: string; body: string }
+}
+
 type Hunk = NonNullable<ToolResultMeta['patch']>[number]
 
 /**
@@ -519,6 +549,10 @@ export const api = {
   /** a commit message to start from, made from the changed files */
   gitDraft: (host: string, pane: string) => request<{ message: string }>('GET', `${panePath(host, pane)}/git/draft`, undefined, 25_000),
   gitPush: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/git/push`, undefined, 100_000),
+  /** the branch's pull request and its checks, through gh on the machine */
+  gitPr: (host: string, pane: string) => request<PrState>('GET', `${panePath(host, pane)}/git/pr`, undefined, 35_000),
+  /** opens a pull request from the pushed branch into the default branch */
+  gitPrCreate: (host: string, pane: string, title: string, body: string) => request<{ url: string; number?: number }>('POST', `${panePath(host, pane)}/git/pr`, { title, body }, 70_000),
   /** a copy of the conversation in a new window next to this one */
   fork: (host: string, pane: string) => request<{ pane: string }>('POST', `${panePath(host, pane)}/fork`, undefined, 30_000),
   signIn: (id: string, agent: AgentKind) => request<{ pane: string }>('POST', `${h(id)}/signin`, { agent }),

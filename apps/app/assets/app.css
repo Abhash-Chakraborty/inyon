@@ -1996,6 +1996,23 @@ button.nav-item { width: 100%; text-align: left; }
 .pp-comment-box { height: auto; resize: none; padding: 8px 12px; line-height: 1.6; }
 .pp-branch { display: flex; flex-shrink: 0; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 6px 8px 6px 12px; font-size: 12.5px; }
 .pp-branch-name { font-weight: 500; }
+.pp-pr { display: flex; flex-shrink: 0; flex-direction: column; gap: 4px; border-bottom: 1px solid var(--line); padding: 8px 12px; font-size: 12.5px; }
+.pp-pr-head, .pp-pr-checks { display: flex; align-items: center; gap: 8px; }
+.pp-pr-link { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 6px; }
+.pp-pr-link:hover { text-decoration: underline; }
+.pp-pr-link .mono { font-size: 12px; }
+.pp-pr-title { min-width: 0; font-weight: 500; }
+.pp-pr-state { flex-shrink: 0; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 12px; line-height: 20px; color: var(--fg-2); }
+.pp-pr-checks { min-height: 28px; font-size: 12px; color: var(--fg-2); }
+.pp-pr-failed { display: flex; flex-direction: column; gap: 2px; padding-left: 22px; font-size: 12px; color: var(--fg-2); }
+.pp-pr-failed a:hover { color: var(--fg); text-decoration: underline; }
+.pp-pr-conflict { padding-left: 22px; font-size: 12px; color: var(--danger); }
+.pp-pr-note { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 4px 8px; border-bottom: 1px solid var(--line); padding: 8px 12px; font-size: 12px; color: var(--fg-2); }
+.pp-pr-command { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--code); padding: 0 8px; font-size: 12px; line-height: 24px; }
+.pp-pr-command:hover { border-color: var(--line-strong); }
+.pp-pr-form { display: flex; flex-direction: column; gap: 8px; }
+.pp-pr-form .pp-hint { margin-top: 0; }
+.pp-pr-branches { font-size: 12px; color: var(--fg-3); }
 .pp-ahead { display: flex; align-items: center; }
 .pp-commit { display: flex; flex-shrink: 0; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding: 8px; }
 .pp-commit-row { display: flex; align-items: center; gap: 6px; }

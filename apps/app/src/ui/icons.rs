@@ -126,6 +126,7 @@ pub enum Icon {
     PanelRight,
     FileDiff,
     GitBranch,
+    GitPullRequest,
     FolderGit2,
     AtSign,
     Coins,
@@ -720,6 +721,12 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     path { d: "M15 6a9 9 0 0 0-9 9V3" }
                     circle { cx: "18", cy: "6", r: "3" }
                     circle { cx: "6", cy: "18", r: "3" }
+                },
+                Icon::GitPullRequest => rsx! {
+                    circle { cx: "18", cy: "18", r: "3" }
+                    circle { cx: "6", cy: "6", r: "3" }
+                    path { d: "M13 6h3a2 2 0 0 1 2 2v7" }
+                    line { x1: "6", x2: "6", y1: "9", y2: "21" }
                 },
                 Icon::FolderGit2 => rsx! {
                     path { d: "M18 19a5 5 0 0 1-5-5v8" }
