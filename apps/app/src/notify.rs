@@ -89,6 +89,7 @@ fn kind_name(k: NotifyKind) -> &'static str {
         NotifyKind::Done => "done",
         NotifyKind::Offline => "offline",
         NotifyKind::Online => "online",
+        NotifyKind::Message => "message",
     }
 }
 
@@ -217,7 +218,8 @@ impl Notifier {
     pub fn heard(&self, msg: &ServerMsg, visible: bool, wants: Wants) -> Option<Later> {
         match msg {
             ServerMsg::Notify { host, pane, kind, title, body, .. } => {
-                let machine = matches!(kind, NotifyKind::Offline | NotifyKind::Online);
+                // a message from outside any session belongs to its machine
+                let machine = matches!(kind, NotifyKind::Offline | NotifyKind::Online) || (*kind == NotifyKind::Message && pane.is_empty());
                 let pane = (!machine).then_some(pane.as_str());
                 let tag = tag_of(host, pane);
                 // any notice from the session ends the question it had, posted or not (a new question

@@ -86,3 +86,56 @@ fn the_companion_says_whether_it_runs() {
     assert_eq!(companion_line(&json!({ "agent": "codex", "pane": "%4" })), "The companion runs Codex in the tmux session companion on the hub's machine.");
     assert!(companion_line(&json!({ "agent": "claude", "pane": null })).contains("inyon companion start --agent claude"));
 }
+
+#[test]
+fn a_notification_carries_the_text_the_title_and_the_pane_it_runs_in() {
+    assert_eq!(notify_body("Deploy finished", None, Some("%3".into())), json!({ "text": "Deploy finished", "pane": "%3" }));
+    assert_eq!(notify_body("x", Some("Nightly"), None), json!({ "text": "x", "title": "Nightly" }));
+    // an empty title is left out
+    assert_eq!(notify_body("x", Some(" "), None), json!({ "text": "x" }));
+    // a long text from stdin is cut before it goes; the hub cuts it shorter still
+    assert_eq!(notify_body(&"a".repeat(5000), None, None)["text"].as_str().unwrap().len(), 2000);
+}
+
+#[test]
+fn a_notification_says_whether_anyone_heard_it() {
+    assert_eq!(notify_line(&json!({ "title": "work", "browsers": 2, "apps": false })), "Sent to your phones and browsers as \"work\".");
+    assert_eq!(notify_line(&json!({ "title": "work", "browsers": 0, "apps": true })), "Sent to your phones and browsers as \"work\".");
+    assert!(notify_line(&json!({ "title": "work", "browsers": 0, "apps": false })).contains("nobody heard it"));
+    assert!(notify_refusal(403, &json!({ "error": "x", "reason": "scope" }), false).contains("0.27 or later"));
+    assert!(notify_refusal(429, &json!({ "error": "Too many notifications from this machine", "reason": "rate" }), false).starts_with("Too many"));
+}
+
+#[test]
+fn the_pane_is_tmuxs_or_psmuxs_with_its_session_in_front() {
+    use std::collections::HashMap;
+    let env = |vars: &[(&'static str, &'static str)]| {
+        let m: HashMap<&str, &str> = vars.iter().copied().collect();
+        move |k: &str| m.get(k).map(|v| v.to_string())
+    };
+    let asked = std::cell::RefCell::new(Vec::<String>::new());
+    let ask = |out: Option<&'static str>| {
+        let asked = &asked;
+        move |cmd: &[&str]| {
+            asked.borrow_mut().push(cmd.join(" "));
+            out.map(str::to_owned)
+        }
+    };
+    // tmux and Inyon's own sessions: TMUX_PANE as it is, nothing asked
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%3"), ("TMUX", "/tmp/tmux-1000/default,1,0")]), ask(None)).as_deref(), Some("%3"));
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%3")]), ask(None)).as_deref(), Some("%3"));
+    assert!(asked.borrow().is_empty());
+    // outside a session, or a TMUX_PANE that isn't one
+    assert_eq!(pane_here(env(&[]), ask(None)), None);
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%")]), ask(None)), None);
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%1; rm")]), ask(None)), None);
+    // psmux: the session's number in front, from the pane's own server or the session named
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%3"), ("PSMUX_SESSION", "work"), ("TMUX", "x")]), ask(Some("$2\r\n"))).as_deref(), Some("%2.3"));
+    assert_eq!(asked.borrow().last().unwrap(), "tmux display -p #{session_id}");
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%3"), ("PSMUX_SESSION", "work")]), ask(Some("$4"))).as_deref(), Some("%4.3"));
+    assert_eq!(asked.borrow().last().unwrap(), "tmux display -p -t work #{session_id}");
+    // psmux that can't say which session: no pane rather than another session's
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%3"), ("PSMUX_SESSION", "__warm__")]), ask(Some("$4"))), None);
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%3"), ("PSMUX_SESSION", "work")]), ask(None)), None);
+    assert_eq!(pane_here(env(&[("TMUX_PANE", "%3"), ("PSMUX_SESSION", "work")]), ask(Some("no server"))), None);
+}

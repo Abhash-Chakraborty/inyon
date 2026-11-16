@@ -899,7 +899,7 @@ export type ServerMsg =
   | { t: 'chat.draft'; key: string; text: string; source: 'app' | 'terminal'; at: number }
   | { t: 'term.data'; id: string; d: string }
   | { t: 'term.exit'; id: string; reason?: string }
-  | { t: 'notify'; host: string; pane: string; kind: 'waiting' | 'done' | 'offline' | 'online'; title: string; body: string; agent?: AgentKind }
+  | { t: 'notify'; host: string; pane: string; kind: 'waiting' | 'done' | 'offline' | 'online' | 'message'; title: string; body: string; agent?: AgentKind }
   /** a page's progress board moved on: a task on it is done (from 0.22.4) */
   | { t: 'page.notify'; host: string; slug: string; title: string; body: string }
   | { t: 'pong' }

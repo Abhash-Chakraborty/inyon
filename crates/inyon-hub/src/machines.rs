@@ -6,7 +6,8 @@
 //! Settings allows it (`machinesSend`, off unless turned on), since that types into agents on other
 //! machines. On the hub's own machine it may also read a session's latest messages and answer
 //! the question an agent asks (`inyon read`, `inyon answer`), which the companion agent uses, and
-//! start or stop the companion (`inyon companion`).
+//! start or stop the companion (`inyon companion`). Either may send you a notification
+//! (`inyon notify`, from 0.27; see `notify`).
 //! Every other route answers 403.
 
 use axum::http::Method;
@@ -28,7 +29,7 @@ pub enum Caller {
     Machine(String),
 }
 
-pub const SCOPE_REFUSED: &str = "The inyon command can read machines, sessions and pages here, and hold messages for agents. Do the rest in the app.";
+pub const SCOPE_REFUSED: &str = "The inyon command can read machines, sessions and pages here, hold messages for agents and send you notifications. Do the rest in the app.";
 pub const LOCAL_ONLY: &str = "Only the inyon command on the hub's own machine can read conversations, answer questions and run the companion.";
 pub const SEND_OFF: &str = "This hub doesn't take messages from its machines. Turn on Settings > Machines can message agents in the app to allow it.";
 
@@ -68,6 +69,7 @@ pub async fn as_caller(mut req: Req, who: Caller) -> Resp {
     let res = match path.as_str() {
         "/api/overview" if get => Ok(overview()),
         "/api/pages" if get => crate::pages::list(req).await,
+        "/api/notify" if req.method == Method::POST => crate::notify::route(&mut req, &who).await,
         p if req.method == Method::POST && held_route(p) => {
             if matches!(who, Caller::Machine(_)) && !sends_allowed() {
                 return answer_json(403, &json!({ "error": SEND_OFF, "reason": "send-off" }));

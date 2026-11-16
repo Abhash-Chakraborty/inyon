@@ -27,6 +27,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon hub machines` | List the hub's machines |
 | `inyon sessions` | List the tmux sessions on the hub's machines, and their agents |
 | `inyon send <machine>/<session> "text"` | Give an agent on any of the hub's machines a message |
+| `inyon notify "text"` | From 0.27: send yourself a notification, titled with the session it runs in |
 | `inyon push` | List the browsers this computer sends notifications to |
 | `inyon service install`, `uninstall`, `status` | Manage the background service |
 | `inyon stop` | Stop everything Inyon runs in the background here |
@@ -207,7 +208,7 @@ laptop/experiment  codex   idle     C:\demo\robot
 - **From the hub's computer**, `send` always works.
 - **From a joined computer**, it works only when **Settings › Machines › Machines can message agents** is on. It's off until you turn it on, because a joined computer could then type into agents on all your machines. Reading machines, sessions and pages needs no switch.
 
-These commands can only read and hold messages. Everything else the hub answers with 403. `--json` gives the hub's answer as it came: `hosts` for `hub machines` and `sessions`, `pages` for `pages --hub`, and `held` with the message's `id` for `send`.
+These commands can only read, hold messages and [notify you](#notify-yourself). Everything else the hub answers with 403. `--json` gives the hub's answer as it came: `hosts` for `hub machines` and `sessions`, `pages` for `pages --hub`, and `held` with the message's `id` for `send`.
 
 ### Reading and answering, on the hub's computer
 
@@ -234,6 +235,26 @@ inyon companion stop
 ```
 
 From 0.22, on the hub's computer. It starts or stops the [companion agent](companion-agent.md), as **Settings › Companion** does.
+
+## Notify yourself
+
+```sh
+inyon notify "Deploy finished, check staging"
+inyon notify --title "Nightly build" "3 tests failed"
+make test 2>&1 | tail -n 5 | inyon notify -
+```
+
+From 0.27, on the hub's computer or one joined to it, with the same tokens as [`inyon send`](#sessions-and-messages). Any program or coding agent can run it to tell you something without waiting for you: a long job that finished, or a question for later. Every phone and browser that gets this hub's [notifications](notifications.md) shows it, and it goes in **Recent activity** on the overview.
+
+The title is the session it runs in: the name you gave the session in Inyon, else tmux's. It finds the session from `TMUX_PANE`, which tmux, psmux and Inyon's own [sessions without tmux](install.md#sessions-without-tmux) all set. Tapping the notification opens that session. Run outside a session, from cron for example, the title is the machine's name and a tap opens the machine. `--title` replaces either, and `-` reads the text from stdin.
+
+The hub keeps notifications short and few:
+
+- the text shows up to 500 characters and the title up to 80, and longer ones end in "…";
+- control characters, such as a terminal's colour codes, are left out;
+- each machine can send 5 a minute. The sixth is refused with *Too many notifications from this machine: 5 a minute at most. Try again in 40 s.*
+
+A machine can only send notifications as itself: the hub takes the machine from its token, never from the request. No setting is needed, as there is for `send`, because a notification doesn't type into anything. When no app is open and no browser has notifications on, the command says nobody heard it. An older hub refuses it with *The hub doesn't take notifications yet*. `--json` gives the `title` and `body` as they were sent and the `pane` it found.
 
 ## Notifications to browsers
 

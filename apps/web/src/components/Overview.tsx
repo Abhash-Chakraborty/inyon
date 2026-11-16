@@ -348,6 +348,8 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
  */
 export function activityLabel(e: ActivityEvent, activity: ActivityEvent[], hosts: HostState[]) {
   if (e.kind === 'done') return 'finished'
+  // sent with `inyon notify`: what it said
+  if (e.kind === 'message') return e.body
   const pane = hosts.find((h) => h.config.id === e.host)?.sessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).find((p) => p.id === e.pane)
   if (!pane?.agent) return 'asked'
   const latest = activity.find((a) => a.host === e.host && a.pane === e.pane && a.kind === 'waiting')
@@ -384,7 +386,7 @@ export function ActivityFeed() {
       </h2>
       <div className="space-y-3">
         {activity.slice(0, FEED_ROWS).map((e) => (
-          <Link key={e.id} to={paneHref(e.host, e.pane)} className="flex h-[2.4rem] gap-2.5">
+          <Link key={e.id} to={e.pane ? paneHref(e.host, e.pane) : `/machines/${encodeURIComponent(e.host)}`} className="flex h-[2.4rem] gap-2.5">
             <AgentLogo kind={e.agent as any} size={18} />
             <div className="min-w-0">
               <div className="truncate text-[13px]">

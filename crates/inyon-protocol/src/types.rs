@@ -1172,6 +1172,9 @@ pub enum NotifyKind {
     Done,
     Offline,
     Online,
+    /// what a program or agent sent with `inyon notify` (from 0.27): `pane` is the session it ran
+    /// in, or empty when it ran outside one. An app before that can't read it and leaves it out.
+    Message,
 }
 
 #[skip_serializing_none]

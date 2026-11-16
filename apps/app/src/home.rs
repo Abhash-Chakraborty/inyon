@@ -88,9 +88,12 @@ pub const FEED_ROWS: usize = 8;
 /// earlier one, or one the session has moved on from, was answered (from here, from an alert or at
 /// the keyboard), and one whose session has ended was just asked. "Latest" is judged from the live
 /// list, so a row held still under the pointer stops saying "needs you" once a newer question came.
-pub fn activity_label(e: &ActivityEvent, live: &[ActivityEvent], hosts: &[HostState]) -> &'static str {
-    if e.kind == ActivityKind::Done {
-        return "finished";
+/// A message sent with `inyon notify` says what it said.
+pub fn activity_label<'a>(e: &'a ActivityEvent, live: &[ActivityEvent], hosts: &[HostState]) -> &'a str {
+    match e.kind {
+        ActivityKind::Done => return "finished",
+        ActivityKind::Message => return &e.body,
+        ActivityKind::Waiting => {}
     }
     let agent = hosts
         .iter()
@@ -266,6 +269,9 @@ mod tests {
         ];
         let labels: Vec<_> = all.iter().map(|e| activity_label(e, &all, &h)).collect();
         assert_eq!(labels, ["needs you", "answered", "answered", "asked", "finished"]);
+        // a message from `inyon notify` reads as what it said
+        let said = ActivityEvent { body: "Deploy finished, check staging".into(), ..event(6, "%1", ActivityKind::Message) };
+        assert_eq!(activity_label(&said, &all, &h), "Deploy finished, check staging");
         // held still at the last four: the row that was latest is answered once a newer one came
         assert_eq!(activity_label(&all[1], &all[1..], &h), "needs you");
         assert_eq!(activity_label(&all[1], &all, &h), "answered");

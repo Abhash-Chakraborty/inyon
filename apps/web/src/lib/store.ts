@@ -92,7 +92,8 @@ export interface ActivityEvent {
   at: number
   host: string
   pane: string
-  kind: 'waiting' | 'done'
+  /** message: sent with `inyon notify`, with no pane when it came from outside a session */
+  kind: 'waiting' | 'done' | 'message'
   title: string
   body: string
   agent?: string
@@ -440,9 +441,11 @@ export const notifyTag = (host: string, pane?: string) => (pane ? `${host}:${pan
 
 function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   const { settings } = useStore.getState()
-  const machine = m.kind === 'offline' || m.kind === 'online'
+  const message = m.kind === 'message'
+  // a message from outside any session belongs to its machine
+  const machine = m.kind === 'offline' || m.kind === 'online' || (message && !m.pane)
   const href = machine ? `/machines/${encodeURIComponent(m.host)}` : `/m/${encodeURIComponent(m.host)}/p/${m.pane.replace(/^%/, '')}`
-  if (!machine) {
+  if (!machine || message) {
     const kind = m.kind as ActivityEvent['kind']
     useStore.setState({ activity: [{ id: Date.now(), at: Date.now(), host: m.host, pane: m.pane, kind, title: m.title, body: m.body, agent: m.agent }, ...useStore.getState().activity].slice(0, 30) })
   }
@@ -454,7 +457,7 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   const tag = notifyTag(m.host, machine ? undefined : m.pane)
   // two short pulses when an agent needs you or finishes, once per prompt; a buzz for a lost machine
   if (document.visibilityState === 'visible') {
-    if ((m.kind === 'waiting' || m.kind === 'done') && buzzOnce(tag, m.kind)) haptic('success')
+    if ((m.kind === 'waiting' || m.kind === 'done' || message) && buzzOnce(tag, m.kind)) haptic('success')
     else if (m.kind === 'offline' && !here) haptic('warning')
   }
   if (document.visibilityState === 'hidden' && isNative()) {

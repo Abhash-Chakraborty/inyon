@@ -297,7 +297,7 @@ describe('page notices', () => {
 })
 
 describe('notify', () => {
-  const note = (kind: 'waiting' | 'done' | 'offline' | 'online', title = 'Claude needs you') => emit({ t: 'notify', host: 'box', pane: '%3', kind, title, body: 'b', agent: 'claude' })
+  const note = (kind: 'waiting' | 'done' | 'offline' | 'online' | 'message', title = 'Claude needs you') => emit({ t: 'notify', host: 'box', pane: '%3', kind, title, body: 'b', agent: 'claude' })
   afterEach(() => history.pushState({}, '', '/'))
 
   test('agent events go in the activity list and toast with a link to the session', () => {
@@ -326,6 +326,17 @@ describe('notify', () => {
     expect(useStore.getState().activity).toHaveLength(1)
     note('waiting')
     expect(useStore.getState().toasts).toHaveLength(1)
+  })
+
+  test('a message from inyon notify toasts and goes in the activity list, even with finished notices off', () => {
+    useStore.getState().setSettings({ notifyDone: false })
+    note('message', 'work')
+    expect(useStore.getState().activity[0]).toMatchObject({ host: 'box', pane: '%3', kind: 'message', title: 'work' })
+    expect(useStore.getState().toasts[0]).toMatchObject({ title: 'work', tone: 'success', href: '/m/box/p/3' })
+    // from outside a session it opens the machine
+    emit({ t: 'notify', host: 'box', pane: '', kind: 'message', title: 'box', body: 'Backup done' })
+    expect(useStore.getState().activity[0]).toMatchObject({ pane: '', kind: 'message', body: 'Backup done' })
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'box', href: '/machines/box' })
   })
 
   test('the activity list keeps the latest 30', () => {

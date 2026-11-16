@@ -659,7 +659,7 @@ fn ActivityFeed() -> Element {
             }
             div { class: "activity-rows",
                 for (i, e) in list.iter().enumerate().take(home::FEED_ROWS) {
-                    a { key: "{e.id}-{i}", class: "activity-row", href: model::pane_href(&e.host, &e.pane),
+                    a { key: "{e.id}-{i}", class: "activity-row", href: if e.pane.is_empty() { model::machine_href(&e.host) } else { model::pane_href(&e.host, &e.pane) },
                         if let Some(kind) = e.agent {
                             AgentMark { kind, size: 18, decorative: true }
                         } else {

@@ -20,6 +20,7 @@ fn hub() {
     crate::companions::init();
     let mut routes = crate::server::hub_routes();
     crate::core_routes::add(&mut routes);
+    crate::notify::add(&mut routes);
     install_ctx(
         CtxInit {
             data_dir: std::env::temp_dir().join(format!("inyon-hub-machines-{}", std::process::id())),
@@ -147,5 +148,44 @@ fn reading_answering_and_the_companion_are_for_the_local_command_only() {
         // stopping it while it's off changes nothing
         let (status, _) = ask("DELETE", "/api/companion", LOCAL, "", None).await;
         assert_eq!(status, 200);
+    });
+}
+
+#[test]
+fn a_machine_or_the_local_command_sends_a_notice_for_itself_a_few_a_minute() {
+    crate::test_util::block(async {
+        hub();
+        let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::<Value>::new()));
+        let h = heard.clone();
+        crate::clients::on_notice(move |m| h.borrow_mut().push(serde_json::to_value(m).unwrap()));
+        let t = now_ms();
+        inyon_core::clock::set_now(Some(t));
+        // a pane the hub doesn't know, and a host the body names: the notice is the laptop's own
+        let (status, v) = ask("POST", "/api/notify", LAPTOP, r#"{"text":"Deploy finished","pane":"%3","host":"local"}"#, Some("100.64.0.9:5000")).await;
+        assert_eq!(status, 200, "{v}");
+        assert_eq!((v["title"].as_str(), v["body"].as_str(), &v["pane"]), (Some("laptop"), Some("Deploy finished"), &Value::Null));
+        assert_eq!(heard.borrow()[0], json!({ "t": "notify", "host": "laptop", "pane": "", "kind": "message", "title": "laptop", "body": "Deploy finished" }));
+        let (status, v) = ask("POST", "/api/notify", LAPTOP, r#"{"text":"x","title":"Nightly build"}"#, Some("100.64.0.9:5000")).await;
+        assert_eq!((status, v["title"].as_str()), (200, Some("Nightly build")), "{v}");
+        // nothing to say is refused, and doesn't count
+        let (status, v) = ask("POST", "/api/notify", LAPTOP, r#"{"text":"  "}"#, Some("100.64.0.9:5000")).await;
+        assert_eq!(status, 400, "{v}");
+        for _ in 2..crate::notify::PER_MINUTE {
+            assert_eq!(ask("POST", "/api/notify", LAPTOP, r#"{"text":"x"}"#, Some("100.64.0.9:5000")).await.0, 200);
+        }
+        let (status, v) = ask("POST", "/api/notify", LAPTOP, r#"{"text":"x"}"#, Some("100.64.0.9:5000")).await;
+        assert_eq!((status, v["reason"].as_str(), v["retryAfter"].as_u64()), (429, Some("rate"), Some(60)), "{v}");
+        assert_eq!(heard.borrow().len(), crate::notify::PER_MINUTE);
+        // the hub's own machine has a count of its own
+        let (status, v) = ask("POST", "/api/notify", LOCAL, r#"{"text":"Backup done"}"#, None).await;
+        assert_eq!(status, 200, "{v}");
+        assert_eq!(heard.borrow().last().unwrap()["host"], "local");
+        // a minute later the laptop may again
+        inyon_core::clock::set_now(Some(t + 60_000));
+        assert_eq!(ask("POST", "/api/notify", LAPTOP, r#"{"text":"x"}"#, Some("100.64.0.9:5000")).await.0, 200);
+        // without a token it's no caller: the hub asks for a sign-in
+        let (status, _) = ask("POST", "/api/notify", "nobody", r#"{"text":"x"}"#, Some("100.64.0.9:5000")).await;
+        assert_eq!(status, 401);
+        inyon_core::clock::set_now(None);
     });
 }

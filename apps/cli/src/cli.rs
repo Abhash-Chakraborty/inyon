@@ -133,6 +133,15 @@ enum Command {
         #[arg(required = true, allow_hyphen_values = true)]
         text: Vec<String>,
     },
+    /// Send yourself a notification, titled with the tmux session this runs in (from a hub or a machine joined to one)
+    Notify {
+        /// The title instead of the session's name (or the machine's, outside a session)
+        #[arg(long)]
+        title: Option<String>,
+        /// What to say (- reads it from stdin)
+        #[arg(required = true, allow_hyphen_values = true)]
+        text: Vec<String>,
+    },
     /// The latest messages of a session's conversation (on the hub's machine)
     Read {
         /// machine/session, or machine/session:window.pane when the session runs more than one agent
@@ -610,6 +619,7 @@ pub fn main() {
             json,
         ),
         Some(Command::Send { target, text }) => commands::finish(crate::hub_api::send_text(&text).and_then(|t| crate::hub_api::send_command(&target, &t)), json),
+        Some(Command::Notify { title, text }) => commands::finish(crate::hub_api::send_text(&text).and_then(|t| crate::hub_api::notify_command(&t, title.as_deref())), json),
         Some(Command::Pages { hub: false, action }) => commands::finish(
             match action {
                 Some(PagesAction::Add { dir, name, slug }) => pages::add_command(&dir, name.as_deref(), slug.as_deref()),
@@ -698,6 +708,19 @@ pub fn main() {
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
+
+    #[test]
+    fn notify_takes_its_words_and_a_title() {
+        let parse = |args: &[&str]| <super::Cli as clap::Parser>::try_parse_from(args).map(|c| c.command);
+        let Ok(Some(super::Command::Notify { title, text })) = parse(&["inyon", "notify", "Deploy", "finished,", "check", "staging"]) else { panic!("notify") };
+        assert_eq!((title, text.join(" ")), (None, "Deploy finished, check staging".to_string()));
+        let Ok(Some(super::Command::Notify { title, text })) = parse(&["inyon", "notify", "--title", "Nightly", "-"]) else { panic!("notify -") };
+        assert_eq!((title.as_deref(), text), (Some("Nightly"), vec!["-".to_string()]));
+        // a message that starts with a dash is still the message
+        let Ok(Some(super::Command::Notify { text, .. })) = parse(&["inyon", "--json", "notify", "-3 tests failed"]) else { panic!("notify -3") };
+        assert_eq!(text, ["-3 tests failed"]);
+        assert!(parse(&["inyon", "notify"]).is_err());
+    }
 
     /// A `hub` subcommand left out of HUB_OWN would go to the engine, which runs a hub instead.
     #[test]

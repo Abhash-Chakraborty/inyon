@@ -1,6 +1,6 @@
 ---
 title: Notifications
-description: Hear about it when an agent needs you or finishes, when a machine drops off or comes back, and when a page's board moves on.
+description: Hear about it when an agent needs you or finishes, when a machine drops off or comes back, when a page's board moves on, and when a program sends you a message.
 ---
 
 ## What you're told about
@@ -13,6 +13,7 @@ description: Hear about it when an agent needs you or finishes, when a machine d
 | **Offline** | A machine has been unreachable for a minute | No |
 | **Back online** | A machine that was reported offline reconnected, and how long it was away | No |
 | **Page** | From 0.22.4: a task on a [page's](pages.md) progress board is done, such as "Robot: 3 of 12 done · Payment sheet", or "All 12 done" at the end. The hub looks at every page's `progress.json` once a minute; adding a page, or a board rewritten with fewer tasks done, says nothing. Tapping it opens the page. | Yes: *When a page moves on* |
+| **Message** | From 0.27, with a hub: a program or agent on one of its machines ran [`inyon notify "text"`](cli.md#notify-yourself), such as "work: Deploy finished, check staging". The title is the session it ran in, or the machine outside one, and tapping it opens that session or machine. In Recent activity it shows what it said. Each machine can send 5 a minute | No |
 
 Every session and machine event also lands in **Recent activity** on the overview. A notification for the session you're already looking at isn't shown, and one you answered on another device is taken back.
 
@@ -28,7 +29,7 @@ How an alert travels depends on how you use Inyon.
 
 ### The Android app
 
-The app watches your machines itself and posts the notifications. Each kind has its own Android channel (*Needs you*, *Finished*, *Machines* and the connection notice), so you can set their sound and importance in Android's settings. *Needs you* alerts have **Open** and **Mark read** buttons.
+The app watches your machines itself and posts the notifications. Each kind has its own Android channel (*Needs you*, *Finished*, *Machines* and the connection notice), so you can set their sound and importance in Android's settings. From 0.27 a Message from `inyon notify` comes on the *Finished* channel. *Needs you* alerts have **Open** and **Mark read** buttons.
 
 Android pauses background apps, which would drop the connection. **Stay connected**, on by default, keeps a small ongoing notification (*Inyon is connected*) so alerts arrive right away. The first time a machine appears, the app asks once to be allowed to run without battery limits. Some Android versions still limit how long this can run each day; the app tells you when it was stopped. Before 0.23.1, alerts stopped coming about a minute after you left the app on phones with Android System WebView 156 or later, because the WebView froze the hidden page; update the app if that's what you see.
 

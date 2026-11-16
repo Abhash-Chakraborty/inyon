@@ -240,6 +240,8 @@ impl Toasts {
 pub enum ActivityKind {
     Waiting,
     Done,
+    /// sent with `inyon notify`; `pane` is empty when it came from outside a session
+    Message,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -385,6 +387,7 @@ pub enum NoticeKind {
     Offline,
     Online,
     Page,
+    Message,
 }
 
 impl From<NotifyKind> for NoticeKind {
@@ -394,6 +397,7 @@ impl From<NotifyKind> for NoticeKind {
             NotifyKind::Done => NoticeKind::Done,
             NotifyKind::Offline => NoticeKind::Offline,
             NotifyKind::Online => NoticeKind::Online,
+            NotifyKind::Message => NoticeKind::Message,
         }
     }
 }
@@ -560,10 +564,16 @@ impl Store {
 
     #[allow(clippy::too_many_arguments)]
     fn notify(&mut self, host: &str, pane: &str, kind: NotifyKind, title: &str, body: &str, agent: Option<AgentKind>, ctx: &Context, now: u64, out: &mut Vec<Effect>) {
-        let machine = matches!(kind, NotifyKind::Offline | NotifyKind::Online);
+        let message = kind == NotifyKind::Message;
+        // a message from outside any session belongs to its machine
+        let machine = matches!(kind, NotifyKind::Offline | NotifyKind::Online) || (message && pane.is_empty());
         let href = if machine { format!("/machines/{}", encode_uri_component(host)) } else { format!("/m/{}/p/{}", encode_uri_component(host), pane_slug(pane)) };
-        if !machine {
-            let kind = if kind == NotifyKind::Waiting { ActivityKind::Waiting } else { ActivityKind::Done };
+        if !machine || message {
+            let kind = match kind {
+                NotifyKind::Waiting => ActivityKind::Waiting,
+                NotifyKind::Message => ActivityKind::Message,
+                _ => ActivityKind::Done,
+            };
             self.activity.insert(0, ActivityEvent { id: now, at: now, host: host.into(), pane: pane.into(), kind, title: title.into(), body: body.into(), agent });
             self.activity.truncate(ACTIVITY_KEPT);
         }
@@ -579,8 +589,12 @@ impl Store {
         let tag = notify_tag(host, (!machine).then_some(pane));
         // two short pulses when an agent needs you or finishes, once per prompt; a buzz for a lost machine
         if ctx.visible {
-            let kind_name = if kind == NotifyKind::Waiting { "waiting" } else { "done" };
-            if matches!(kind, NotifyKind::Waiting | NotifyKind::Done) && self.notifier.buzz_once(&tag, kind_name, now) {
+            let kind_name = match kind {
+                NotifyKind::Waiting => "waiting",
+                NotifyKind::Message => "message",
+                _ => "done",
+            };
+            if matches!(kind, NotifyKind::Waiting | NotifyKind::Done | NotifyKind::Message) && self.notifier.buzz_once(&tag, kind_name, now) {
                 out.push(Effect::Haptic(Haptic::Success));
             } else if kind == NotifyKind::Offline && !here {
                 out.push(Effect::Haptic(Haptic::Warning));
@@ -937,6 +951,30 @@ mod tests {
         assert_eq!(s.activity.len(), 1);
         note(&mut s, NotifyKind::Waiting, "asks", &HOME, NOW);
         assert_eq!(s.toasts.list.len(), 1);
+    }
+
+    #[test]
+    fn a_message_toasts_and_goes_in_the_activity_list_even_with_finished_notices_off() {
+        let mut s = Store::new(Settings { notify_done: false, ..Settings::default() });
+        let u = note(&mut s, NotifyKind::Message, "work", &HOME, NOW);
+        assert_eq!((s.activity[0].kind, s.activity[0].pane.as_str()), (ActivityKind::Message, "%3"));
+        assert_eq!(toasts(&s), [("work".into(), Some("b".into()), Some("/m/box/p/3".into()), Tone::Success)]);
+        assert_eq!(u.effects[1], Effect::Haptic(Haptic::Success));
+        // from outside a session: the machine's, in the list and as a notification
+        let u = s.apply(
+            &ServerMsg::Notify { host: "box".into(), pane: "".into(), kind: NotifyKind::Message, title: "box".into(), body: "Backup done".into(), agent: None },
+            None,
+            &PHONE_HIDDEN,
+            NOW,
+        );
+        assert_eq!((s.activity[0].kind, s.activity[0].pane.as_str()), (ActivityKind::Message, ""));
+        assert!(u.effects.contains(&Effect::NativeNotify {
+            title: "box".into(),
+            body: "Backup done".into(),
+            href: "/machines/box".into(),
+            tag: "machine:box".into(),
+            kind: NoticeKind::Message
+        }));
     }
 
     #[test]
