@@ -83,6 +83,8 @@ export function webError(name: string): DictationError | undefined {
 }
 
 export interface Listeners {
+  /** the microphone is on: after any question about it, so the wait for words starts here */
+  listening(): void
   update(s: Spoken): void
   error(e: DictationError): void
   /** always called once, last, however it ended */
@@ -107,6 +109,7 @@ type WebRecognition = {
   onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null
   onerror: ((e: { error: string }) => void) | null
   onend: (() => void) | null
+  onstart: (() => void) | null
   start(): void
   stop(): void
   abort(): void
@@ -129,6 +132,7 @@ export function webEngine(): Engine | undefined {
       if (err) on.error(err)
     }
     r.onend = () => on.end()
+    r.onstart = () => on.listening()
     r.start()
     return { stop: () => r.stop(), abort: () => r.abort() }
   }
@@ -163,6 +167,9 @@ export function nativeEngine(): Engine | undefined {
     // the listener is in place before the recogniser can say anything
     void handle
       .then(() => (done ? undefined : device.startDictation({ id, lang })))
+      .then(() => {
+        if (!done) on.listening()
+      })
       .catch((e: { code?: string }) => {
         if (done) return
         // stopped while the phone was still asking for the microphone: nothing went wrong
@@ -287,9 +294,12 @@ export class Dictation {
   }
 
   start() {
-    this.arm(this.o.quietMs ?? QUIET_MS)
     try {
       this.rec = this.o.engine(this.o.lang, {
+        // nothing heard is only counted from here: a first-use question about the microphone can take a while
+        listening: () => {
+          if (!this.ended && !this.asked && !this.heard) this.arm(this.o.quietMs ?? QUIET_MS)
+        },
         update: (s) => this.update(s),
         error: (e) => this.fail(e),
         end: () => this.finish(),
@@ -340,8 +350,9 @@ export class Dictation {
 
   private fail(e: DictationError) {
     if (this.ended || this.failed) return
-    // the browser's recogniser says no-speech after a pause even when it heard you before it
-    if (e === 'no-speech' && this.heard) return
+    // the browser's recogniser says no-speech after a pause even when it heard you before it, and
+    // Android's says it when you tap off before speaking
+    if (e === 'no-speech' && (this.heard || this.stopped)) return
     this.failed = true
     this.o.onError(e)
   }

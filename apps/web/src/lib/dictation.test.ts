@@ -72,6 +72,7 @@ function fakeEngine() {
   const engine: Engine = (lang, l) => {
     calls.lang = lang
     on = l
+    l.listening()
     return { stop: () => void calls.stop++, abort: () => void calls.abort++ }
   }
   return { engine, calls, say: (final: string, interim = '') => on!.update({ final, interim }), error: (e: DictationError) => on!.error(e), end: () => on!.end() }
@@ -218,6 +219,7 @@ describe('a dictation', () => {
     const d = new Dictation({
       engine: (_lang, l) => {
         on = l
+        l.listening()
         return { stop: () => {}, abort: () => on!.end() }
       },
       lang: 'en-GB',
@@ -232,6 +234,38 @@ describe('a dictation', () => {
     d.abort()
     expect(seen).toEqual([])
     expect(d.listening).toBe(false)
+  })
+
+  test('a no-speech after tapping off before speaking is not an error', () => {
+    const s = start()
+    s.d.stop()
+    s.error('no-speech')
+    s.end()
+    expect(s.errors).toEqual([])
+  })
+
+  test('the wait for words starts once the microphone is on, not while it is asked for', () => {
+    let on: Listeners | undefined
+    const clock = fakeTimers()
+    const errors: DictationError[] = []
+    const d = new Dictation({
+      engine: (_lang, l) => {
+        on = l
+        return { stop: () => {}, abort: () => {} }
+      },
+      lang: 'en-GB',
+      text: '',
+      onText: () => {},
+      onError: (e) => errors.push(e),
+      onEnd: () => {},
+      quietMs: 8000,
+      timers: clock.timers,
+    }).start()
+    expect(clock.pending()).toBe(0)
+    on!.listening()
+    expect(clock.pending()).toBe(1)
+    expect(d.listening).toBe(true)
+    expect(errors).toEqual([])
   })
 
   test('tapped off before speaking: no toast', () => {
@@ -313,6 +347,7 @@ describe('which recogniser', () => {
     onresult: any = null
     onerror: any = null
     onend: any = null
+    onstart: any = null
     started = 0
     constructor() {
       FakeRecognition.last = this
@@ -338,9 +373,14 @@ describe('which recogniser', () => {
     const update = mock((_s: unknown) => {})
     const error = mock((_e: unknown) => {})
     const end = mock(() => {})
-    dictationEngine()!('fr-FR', { update, error, end })
+    const listening = mock(() => {})
+    dictationEngine()!('fr-FR', { listening, update, error, end })
     const r = FakeRecognition.last
     expect([r.lang, r.continuous, r.interimResults, r.started]).toEqual(['fr-FR', true, true, 1])
+    // the browser may ask for the microphone first; it says when it's on
+    expect(listening).not.toHaveBeenCalled()
+    r.onstart?.()
+    expect(listening).toHaveBeenCalledTimes(1)
     r.onresult({ results: [Object.assign([{ transcript: 'bonjour' }], { isFinal: false })] })
     expect(update).toHaveBeenCalledWith({ final: '', interim: 'bonjour' })
     r.onerror({ error: 'aborted' })
@@ -381,9 +421,13 @@ describe('which recogniser', () => {
     const update = mock((_s: unknown) => {})
     const error = mock((_e: unknown) => {})
     const end = mock(() => {})
-    const rec = nativeEngine()!('de-DE', { update, error, end })
+    const listening = mock(() => {})
+    const rec = nativeEngine()!('de-DE', { listening, update, error, end })
     await flush()
     expect(startDictation).toHaveBeenCalledWith({ id: expect.any(String), lang: 'de-DE' })
+    await flush()
+    // the microphone is on once the phone says so, after any question about it
+    expect(listening).toHaveBeenCalledTimes(1)
     emit({ kind: 'partial', text: 'hallo' })
     emit({ kind: 'final', text: 'hallo welt' })
     expect(update.mock.calls).toEqual([[{ final: '', interim: 'hallo' }], [{ final: 'hallo welt', interim: '' }]])
@@ -402,7 +446,7 @@ describe('which recogniser', () => {
     const { emit } = android({ startDictation: mock(async () => Promise.reject(Object.assign(new Error('Microphone blocked'), { code: 'NOT_ALLOWED' }))) })
     const error = mock((_e: unknown) => {})
     const end = mock(() => {})
-    nativeEngine()!('en-US', { update: () => {}, error, end })
+    nativeEngine()!('en-US', { listening: () => {}, update: () => {}, error, end })
     await flush()
     await flush()
     expect(error).toHaveBeenCalledWith('not-allowed')
@@ -414,7 +458,7 @@ describe('which recogniser', () => {
   test("the phone's errors by code", async () => {
     const { emit } = android({ startDictation: mock(async () => ({ ok: true })) })
     const error = mock((_e: unknown) => {})
-    nativeEngine()!('en-US', { update: () => {}, error, end: () => {} })
+    nativeEngine()!('en-US', { listening: () => {}, update: () => {}, error, end: () => {} })
     await flush()
     emit({ kind: 'error', error: 'NO_SPEECH' })
     emit({ kind: 'error', error: 'NETWORK' })
@@ -434,7 +478,7 @@ test("the end of the phone's last run doesn't end the next one", async () => {
   try {
     const end = mock(() => {})
     const update = mock((_s: unknown) => {})
-    nativeEngine()!('en-US', { update, error: () => {}, end })
+    nativeEngine()!('en-US', { listening: () => {}, update, error: () => {}, end })
     await flush()
     const id = startDictation.mock.calls[0]![0].id
     listeners.forEach((f) => f({ id: 'an-older-run', kind: 'end' }))
