@@ -141,6 +141,9 @@ jobs:
       - run: bun apps/app/e2e/controls.ts
         env:
           SHOTS: ${{ runner.temp }}/shots
+      - run: bun apps/app/e2e/composer-menus.ts
+        env:
+          SHOTS: ${{ runner.temp }}/shots
       - run: bun apps/app/e2e/session-sheet.ts
         env:
           SHOTS: ${{ runner.temp }}/shots

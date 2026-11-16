@@ -7,7 +7,7 @@ mod chat;
 mod composer;
 mod connect;
 mod controls;
-mod conversations;
+pub mod conversations;
 mod icons;
 mod kit;
 mod login;

@@ -508,6 +508,29 @@ async fn setting(host: &str, pane: &str, text: &str, fail: &str) -> bool {
     }
 }
 
+/// Opens a chip's menu (or OpenCode's providers sheet) for a command typed bare in the message
+/// box (`/model`, `/effort`, OpenCode's `/agents` and `/connect`). False when the session has no
+/// such chip or can't take picks yet, so the command goes to the agent as typed.
+pub fn open_picker(c: &Controls, p: crate::suggest::Picker, menu_at: &mut Signal<Option<menu::Menu>>) -> bool {
+    use crate::suggest::Picker;
+    if !c.ready {
+        return false;
+    }
+    let chip = match p {
+        Picker::Model => c.model_chip(),
+        Picker::Effort => c.effort_chip(),
+        Picker::Mode => c.mode_chip(),
+        Picker::Providers if c.agent == AgentKind::Opencode => {
+            run(ControlAct { host: c.host.clone(), pane: c.pane.clone(), op: ControlOp::Providers });
+            return true;
+        }
+        Picker::Providers | Picker::Conversations => None,
+    };
+    let Some(chip) = chip else { return false };
+    menu::drop_up(menu_at, chip.id, chip.items);
+    true
+}
+
 /// The machine's own model list for agents that have one, read again every minute and when a
 /// provider changes; none for the others, which use the catalog's.
 pub fn use_catalog(host: &str, pane: &str, agent: Option<AgentKind>) -> Option<AgentCatalog> {

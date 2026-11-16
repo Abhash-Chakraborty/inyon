@@ -48,6 +48,22 @@ mod imp {
         }
     }
 
+    /// Where a text box's cursor is, as a byte offset into its value.
+    pub fn caret(id: &str) -> Option<usize> {
+        let t = el(id)?.dyn_into::<web_sys::HtmlTextAreaElement>().ok()?;
+        let at = t.selection_start().ok().flatten()? as usize;
+        Some(super::utf16_to_byte(&t.value(), at))
+    }
+
+    /// Puts a text box's cursor at byte offset `at` of its value.
+    pub fn set_caret(id: &str, at: usize) {
+        if let Some(t) = el(id).and_then(|e| e.dyn_into::<web_sys::HtmlTextAreaElement>().ok()) {
+            let v = t.value();
+            let n = v.get(..at.min(v.len())).map_or(0, |s| s.encode_utf16().count()) as u32;
+            let _ = t.set_selection_range(n, n);
+        }
+    }
+
     /// A text box grows with its text up to `max_vh` of the screen, then scrolls.
     pub fn autosize(id: &str, max_vh: f64) {
         let Some(e) = el(id) else { return };
@@ -938,6 +954,15 @@ mod imp {
         }
     }
 
+    /// Scrolls the least it takes to show an element inside its list (a row picked with the arrows).
+    pub fn scroll_to_near(id: &str) {
+        if let Some(el) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id(id)) {
+            let o = web_sys::ScrollIntoViewOptions::new();
+            o.set_block(web_sys::ScrollLogicalPosition::Nearest);
+            el.scroll_into_view_with_scroll_into_view_options(&o);
+        }
+    }
+
     /// The address's `#…`, without the `#`.
     pub fn hash() -> String {
         web_sys::window().and_then(|w| w.location().hash().ok()).map(|h| h.trim_start_matches('#').to_string()).unwrap_or_default()
@@ -1240,6 +1265,10 @@ mod imp {
     pub fn focus(_id: &str) {}
     pub fn blur(_id: &str) {}
     pub fn caret_to_end(_id: &str) {}
+    pub fn caret(_id: &str) -> Option<usize> {
+        None
+    }
+    pub fn set_caret(_id: &str, _at: usize) {}
     pub fn autosize(_id: &str, _max_vh: f64) {}
     pub fn viewport() -> (f64, f64) {
         (1024.0, 768.0)
@@ -1429,6 +1458,7 @@ mod imp {
         format!("{}-{:02}-{:02}", t.year, t.month, t.day)
     }
     pub fn scroll_to(_id: &str) {}
+    pub fn scroll_to_near(_id: &str) {}
     pub fn hash() -> String {
         String::new()
     }
@@ -1473,6 +1503,20 @@ mod imp {
 
 pub use imp::*;
 
+/// The byte offset in `s` of UTF-16 offset `at` (where the page puts a cursor), on a character
+/// boundary.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn utf16_to_byte(s: &str, at: usize) -> usize {
+    let mut units = 0;
+    for (i, c) in s.char_indices() {
+        if units >= at {
+            return i;
+        }
+        units += c.len_utf16();
+    }
+    s.len()
+}
+
 /// What a right click that nothing in the app took landed on, for the menu it gets.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
@@ -1506,6 +1550,17 @@ pub enum TextOp {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn a_cursor_on_the_page_lands_on_a_character() {
+        // "é" is one UTF-16 unit and two bytes, "😀" two units and four bytes
+        let s = "é😀a";
+        assert_eq!(super::utf16_to_byte(s, 0), 0);
+        assert_eq!(super::utf16_to_byte(s, 1), 2);
+        assert_eq!(super::utf16_to_byte(s, 3), 6);
+        assert_eq!(super::utf16_to_byte(s, 4), 7);
+        assert_eq!(super::utf16_to_byte(s, 99), 7);
+    }
+
     #[test]
     fn the_app_coming_back_says_how_long_it_was_away() {
         let mut a = super::Away::default();
