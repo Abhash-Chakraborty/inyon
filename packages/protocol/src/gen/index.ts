@@ -508,6 +508,58 @@ at: number,
  */
 current?: boolean, };
 
+/**
+ * A saved conversation whose transcript holds the words searched for (from 0.28).
+ */
+export type ConversationHit = { agent: AgentKind, 
+/**
+ * what the agent's command line takes to resume it
+ */
+id: string, 
+/**
+ * the folder it ran in, when the transcript says
+ */
+cwd?: string, 
+/**
+ * the agent's own title for it, a name given in Inyon, or else the first thing you asked
+ */
+title: string, 
+/**
+ * last activity, ms since the epoch
+ */
+at: number, 
+/**
+ * a line of text around the first place the words appear
+ */
+snippet: string, };
+
+/**
+ * One machine's part of a conversation search: what it found, or why it has nothing to say.
+ */
+export type ConversationSearchMachine = { host: string, name: string, 
+/**
+ * newest first
+ */
+hits: Array<ConversationHit>, 
+/**
+ * more conversations matched than were read
+ */
+more?: boolean, 
+/**
+ * the search failed or ran out of time there
+ */
+error?: string, 
+/**
+ * it wasn't searched (offline)
+ */
+skipped?: string, };
+
+/**
+ * What `GET /api/conversations/search` answers: every machine's matches, those with the newest
+ * first.
+ */
+export type ConversationSearch = { query: string, machines: Array<ConversationSearchMachine>, };
+
 export type LiveKind = "text" | "thinking" | "plan" | "output";
 
 /**

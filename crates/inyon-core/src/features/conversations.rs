@@ -132,7 +132,7 @@ done"#,
 }
 
 /// The user's own words in a Claude "user" line, or nothing for a command, a tool result or the like.
-fn claude_prompt(line: &str) -> Option<String> {
+pub(crate) fn claude_prompt(line: &str) -> Option<String> {
     if !line.contains("\"type\":\"user\"") || re!(r#""isMeta":true|"isSidechain":true"#).is_match(line) {
         return None;
     }

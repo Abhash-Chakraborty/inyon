@@ -9,7 +9,7 @@ use inyon_core::claude::integration::{install_integration, uninstall_integration
 use inyon_core::claude::send_receipts::send_once;
 use inyon_core::config::{load_settings, save_settings, HubSettings};
 use inyon_core::features::uploads::{self as chunked, ChunkResult, StartUpload};
-use inyon_core::features::{companion, conversations, features as feat, models, providers, setup, signin, temp, workspace, worktrees};
+use inyon_core::features::{companion, conversation_search, conversations, features as feat, models, providers, setup, signin, temp, workspace, worktrees};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::hosts::node_link;
 use inyon_core::hosts::node_update::node_updates;
@@ -478,6 +478,7 @@ pub fn add(routes: &mut Routes) {
                     mode: loose(b.get("mode")),
                     prompt: loose(b.get("prompt")),
                     custom: loose(b.get("custom")),
+                    resume: loose(b.get("resume")),
                     sign_in: truthy(b.get("signIn")),
                     worktree: truthy(b.get("worktree")),
                     branch: loose(b.get("branch")),
@@ -1033,6 +1034,8 @@ pub fn add(routes: &mut Routes) {
             }),
         )],
     );
+    // every online machine's saved conversations that hold some words (from 0.28)
+    guarded(routes, "/api/conversations/search", vec![(M::GET, h(|r| async move { Ok(json_of(&conversation_search::search_conversations(&r.q("q")).await?)) }))]);
     // exits the running agent (the pane stays) and reopens it on another of its conversations
     guarded(
         routes,

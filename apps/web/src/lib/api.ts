@@ -1,4 +1,4 @@
-import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SessionMark, type SleepRule, type DelayedSend, type AutoRules, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
+import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type ConversationSearch, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SessionMark, type SleepRule, type DelayedSend, type AutoRules, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -400,6 +400,8 @@ type Hunk = NonNullable<ToolResultMeta['patch']>[number]
  * (100 s for a delete) and says why, so these wait a little longer to get that answer.
  */
 export const TEMP_WAIT = 70_000
+/** The hub gives each machine 30 s to search its conversations, then says which took too long. */
+export const SEARCH_WAIT = 40_000
 export const TEMP_DELETE_WAIT = 110_000
 
 export type SendFailure = { at: number; host: string; pane: string; agent?: string | null; error: string; chars: number; screen: string[] }
@@ -437,7 +439,8 @@ export const api = {
   nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
   /** `signIn`: a terminal-first agent's sign-in command instead of the agent, in a terminal to sign in from */
   /** `worktree`: start in a new git worktree of the folder's repo, on `branch` (from 0.27) */
-  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string; signIn?: boolean; worktree?: boolean; branch?: string }) =>
+  /** `resume`: one of the agent's saved conversations to start on (from 0.28) */
+  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string; signIn?: boolean; resume?: string; worktree?: boolean; branch?: string }) =>
     request<{ pane: string }>('POST', `${h(id)}/launch`, b),
   /** whether a folder on the machine is in a git repo: its top folder and checked-out branch; `root` is missing when it isn't */
   repo: (id: string, path: string) => request<{ root?: string; branch?: string }>('GET', `${h(id)}/repo?path=${encodeURIComponent(path)}`),
@@ -493,6 +496,9 @@ export const api = {
   /** the agent's past conversations in the pane's folder; `agent` says whose when none is running */
   conversations: (host: string, pane: string, agent?: AgentKind) =>
     request<{ agent: AgentKind; cwd: string; conversations: PastConversation[] }>('GET', `${panePath(host, pane)}/conversations${agent ? qs({ agent }) : ''}`, undefined, 45_000),
+  /** every online machine's saved conversations that hold `q` (from 0.28); a paired hub's with `hub` */
+  searchConversations: (q: string, hub?: PairedHub) =>
+    hub ? hubRequest<ConversationSearch>(hub, 'GET', `/api/conversations/search${qs({ q })}`, SEARCH_WAIT) : request<ConversationSearch>('GET', `/api/conversations/search${qs({ q })}`, undefined, SEARCH_WAIT),
   /** the agent exits (the pane stays) and starts again on conversation `id` */
   switchConversation: (host: string, pane: string, agent: AgentKind, id: string) => request<{ switched: boolean }>('POST', `${panePath(host, pane)}/switch`, { agent, id }, 120_000),
   refresh: () => request<{ ok: true }>('POST', '/api/refresh', undefined, 15_000),

@@ -180,6 +180,32 @@ Removing the worktree keeps its branch, unless git calls the branch merged (`git
 
 Git has to be installed on the machine. The [new app at `/next`](hub.md#the-new-app-at-next) has **In a new worktree** and **Branch** in **New session** too, but doesn't show the branch or offer to remove the worktree yet.
 
+## Searching past conversations
+
+From 0.28 you can find a conversation by what was said in it, on every machine at once, without knowing which folder it ran in. Open search (`Ctrl K`, `⌘ K` on a Mac, or the search button on a phone) and pick **Conversations**, or type the words under **Sessions** and choose **Search past conversations for "…"**. Type at least 3 characters; the search starts when you stop typing, or at once with `Enter`.
+
+The words are matched as plain text, ignoring case, in the transcripts each agent saves on the machine:
+
+| Agent | Where it looks |
+|---|---|
+| Claude Code | `~/.claude/projects` (subagents' transcripts count for their conversation) |
+| Codex | `~/.codex/sessions`, or `$CODEX_HOME/sessions`; runs of `codex exec` are left out, as in Codex's own picker |
+| GitHub Copilot | `~/.copilot/session-state` |
+| OpenCode | its database, `~/.local/share/opencode/opencode.db` |
+
+Each machine searches its own files: with [ripgrep](https://github.com/BurntSushi/ripgrep) when `rg` is installed, else with `grep`, for 12 seconds at most. Windows machines use the `grep` of the busybox that Inyon already runs commands with. Nothing is copied to the hub or kept there.
+
+Results come grouped by machine, the machine with the newest match first, and newest first within it, up to 25 a machine (*25+* when there were more). Each shows the conversation's title, when it was last active, the line around the first match with your words marked, and its folder. A machine that's offline is listed as not searched, and one that takes longer than 30 seconds shows *Took too long to answer*. A paired hub's machines are searched too.
+
+Click a result, or press `Enter` on it, for two buttons:
+
+- **Resume in a new session** opens a new tmux session in the conversation's folder and starts the agent on it, the way its own command does (`claude --resume <id>`, `codex resume <id>`, `copilot --resume <id>`, `opencode --session <id>`). `Enter` again does the same.
+- **Open the folder** opens a terminal in that folder.
+
+A result whose transcript doesn't name its folder can't be resumed from here. Antigravity CLI and Gemini CLI conversations aren't searched yet.
+
+Scripts can search with a signed-in session: `GET /api/conversations/search?q=<words>` answers `{"query": …, "machines": [{"host", "name", "hits": [{"agent", "id", "cwd", "title", "at", "snippet"}], "more", "error", "skipped"}]}`. `POST /api/hosts/<machine>/launch` with `{"agent": "claude", "cwd": "…", "resume": "<id>"}` starts a saved conversation in a new session. Companion apps can't use either.
+
 ## When nothing is running
 
 If the agent has exited, the session offers **Resume conversation**, **Past conversations** (to pick another one), **Start** for each installed agent, or **Terminal**. A pane that has closed says *This pane is gone*.

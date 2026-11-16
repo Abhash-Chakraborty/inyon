@@ -636,6 +636,49 @@ pub struct PastConversation {
     pub current: Option<bool>,
 }
 
+/// A saved conversation whose transcript holds the words searched for (from 0.28).
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct ConversationHit {
+    pub agent: AgentKind,
+    /// what the agent's command line takes to resume it
+    pub id: String,
+    /// the folder it ran in, when the transcript says
+    pub cwd: Option<String>,
+    /// the agent's own title for it, a name given in Inyon, or else the first thing you asked
+    pub title: String,
+    /// last activity, ms since the epoch
+    pub at: u64,
+    /// a line of text around the first place the words appear
+    pub snippet: String,
+}
+
+/// One machine's part of a conversation search: what it found, or why it has nothing to say.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct ConversationSearchMachine {
+    pub host: String,
+    pub name: String,
+    /// newest first
+    pub hits: Vec<ConversationHit>,
+    /// more conversations matched than were read
+    pub more: Option<bool>,
+    /// the search failed or ran out of time there
+    pub error: Option<String>,
+    /// it wasn't searched (offline)
+    pub skipped: Option<String>,
+}
+
+/// What `GET /api/conversations/search` answers: every machine's matches, those with the newest
+/// first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct ConversationSearch {
+    pub query: String,
+    pub machines: Vec<ConversationSearchMachine>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum LiveKind {
