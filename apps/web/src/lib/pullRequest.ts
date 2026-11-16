@@ -16,6 +16,8 @@ const USUAL_DEFAULTS = ['main', 'master', 'trunk']
 
 export function prView(s: GitState | undefined, st: PrState | undefined): PrView {
   if (!s?.repo || !st) return { kind: 'none' }
+  // an answer about another branch (the one checked out before) says nothing about this one
+  if (st.branch !== undefined && st.branch !== s.branch) return { kind: 'none' }
   if (st.pr) return { kind: 'pr', pr: st.pr }
   if (st.gh === 'not-github') return { kind: 'none' }
   const branch = s.branch

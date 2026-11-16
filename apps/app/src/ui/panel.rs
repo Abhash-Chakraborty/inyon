@@ -828,14 +828,19 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
     // the branch's pull request, through gh on the machine: asked when the panel opens, on refresh
     // and after a push, not on every agent step (it goes to GitHub)
     let (has_remote, branch_now) = git.read().data.as_ref().map_or((false, None), |s| (s.repo && s.remote == Some(true), s.branch.clone()));
-    let (prs, mut pr_rev) = use_load((host.clone(), pane.clone(), has_remote, branch_now), |(h, p, remote, _): (String, String, bool, Option<String>)| async move {
+    // each answer carries the session and branch it was asked for: while the next one loads, the
+    // last one stays, and must not show under another branch
+    let pr_key = format!("{host}\n{pane}\n{}", branch_now.clone().unwrap_or_default());
+    let (prs, mut pr_rev) = use_load((host.clone(), pane.clone(), has_remote, branch_now), |(h, p, remote, b): (String, String, bool, Option<String>)| async move {
         if remote {
-            api::git_pr(&h, &p).await.map(Some)
+            let key = format!("{h}\n{p}\n{}", b.unwrap_or_default());
+            api::git_pr(&h, &p).await.map(|st| Some((key, st)))
         } else {
             Ok(None)
         }
     });
-    let mut opening = use_signal(|| false);
+    // the sheet is for the branch it was opened on; it closes if the branch or session changes
+    let mut opening = use_signal(|| None::<String>);
     let mut sel = use_signal(|| None::<String>);
     let mut msg = use_signal(String::new);
     let mut busy = use_signal(|| None::<&'static str>);
@@ -990,7 +995,7 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
     let push_title = s.upstream.as_ref().map_or_else(|| "Push to origin".to_string(), |u| format!("Push to {u}"));
     let root = s.root.clone();
     let files_len = s.files.len();
-    let pr_state = prs.read().data.clone().flatten();
+    let pr_state = prs.read().data.clone().flatten().filter(|(k, _)| *k == pr_key).map(|(_, st)| st);
     let view = changes::pr_view(&s, pr_state.as_ref());
     let pr_base = pr_state.as_ref().and_then(|p| p.base.clone());
     let pr_draft = pr_state.as_ref().and_then(|p| p.draft.clone()).unwrap_or_default();
@@ -1014,7 +1019,7 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                         if busy() == Some("push") { "Pushing…" } else { "Push" }
                     }
                 } else if let Some(base) = open_base.clone() {
-                    button { class: "button button-xs button-ghost press", r#type: "button", title: base.map_or_else(|| "Open a pull request".to_string(), |b| format!("Open a pull request into {b}")), onclick: move |_| opening.set(true),
+                    button { class: "button button-xs button-ghost press", r#type: "button", title: base.map_or_else(|| "Open a pull request".to_string(), |b| format!("Open a pull request into {b}")), onclick: { let k = pr_key.clone(); move |_| opening.set(Some(k.clone())) },
                         Glyph { icon: Icon::GitPullRequest, size: 14 }
                         "Open pull request"
                     }
@@ -1031,12 +1036,12 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
             OpenPrSheet {
                 host: host.clone(),
                 pane: pane.clone(),
-                open: opening(),
+                open: opening().as_deref() == Some(pr_key.as_str()) && open_base.is_some(),
                 branch: s.branch.clone().unwrap_or_default(),
                 base: open_base.clone().flatten(),
                 draft: pr_draft,
-                on_close: move |_| opening.set(false),
-                on_opened: move |_| { opening.set(false); pr_rev += 1; },
+                on_close: move |_| opening.set(None),
+                on_opened: move |_| { opening.set(None); pr_rev += 1; },
             }
             if s.files.is_empty() {
                 Empty { icon: Icon::FileDiff, title: "No changes", "Nothing has changed since the last commit." }

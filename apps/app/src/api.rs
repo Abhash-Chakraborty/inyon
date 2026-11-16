@@ -1470,7 +1470,7 @@ pub struct PrDraft {
     pub body: String,
 }
 
-/// The branch's pull request, as gh on the session's machine sees it (hubs from 0.28).
+/// The branch's pull request, as gh on the session's machine sees it (hubs from 0.27).
 #[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
 pub struct PrState {
     /// ready, missing (gh isn't installed), signed-out, not-github or error

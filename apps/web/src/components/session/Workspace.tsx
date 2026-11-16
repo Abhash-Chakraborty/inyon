@@ -188,8 +188,16 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
   // the branch's pull request, through gh on the machine: asked when the panel opens, on refresh
   // and after a push, not on every agent step (it goes to GitHub)
   const hasRemote = !!(git.data?.repo && git.data.remote)
-  const prs = useLoad<PrState | null>(() => (hasRemote ? api.gitPr(p.host, p.pane) : Promise.resolve(null)), [p.host, p.pane, hasRemote, git.data?.branch])
-  const [opening, setOpening] = useState(false)
+  // each answer carries the session and branch it was asked for: while the next one loads, the
+  // last one stays, and must not show under another branch
+  const prKey = `${p.host}\n${p.pane}\n${git.data?.branch ?? ''}`
+  const prs = useLoad<{ key: string; st: PrState } | null>(
+    () => (hasRemote ? api.gitPr(p.host, p.pane).then((st) => ({ key: prKey, st })) : Promise.resolve(null)),
+    [p.host, p.pane, hasRemote, git.data?.branch],
+  )
+  const prState = !prs.error && prs.data?.key === prKey ? prs.data.st : undefined
+  // the sheet is for the branch it was opened on; it closes if the branch or session changes
+  const [opening, setOpening] = useState<string | null>(null)
   const [sel, setSel] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState<'commit' | 'push' | 'draft' | null>(null)
@@ -260,7 +268,7 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
   }
   // something to push, and somewhere to push it
   const canPush = s.remote && (!s.upstream || (s.ahead ?? 0) > 0)
-  const pr = prView(s, prs.error ? undefined : (prs.data ?? undefined))
+  const pr = prView(s, prState)
   const refresh = () => {
     git.reload()
     prs.reload()
@@ -331,7 +339,7 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
           </Button>
         ) : (
           pr.kind === 'open' && (
-            <Button size="xs" variant="ghost" onClick={() => setOpening(true)} title={pr.base ? `Open a pull request into ${pr.base}` : 'Open a pull request'}>
+            <Button size="xs" variant="ghost" onClick={() => setOpening(prKey)} title={pr.base ? `Open a pull request into ${pr.base}` : 'Open a pull request'}>
               <GitPullRequest className="size-3.5" />
               Open pull request
             </Button>
@@ -341,17 +349,17 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
           <RefreshCw className={clsx('size-3.5', (git.busy || prs.busy) && 'animate-spin')} />
         </IconButton>
       </div>
-      {pr.kind === 'pr' && <PrRow p={p} pr={pr.pr} base={prs.data?.base} />}
+      {pr.kind === 'pr' && <PrRow p={p} pr={pr.pr} base={prState?.base} />}
       {pr.kind === 'notice' && <PrNotice text={pr.text} command={pr.command} />}
       <OpenPrSheet
         p={p}
-        open={opening}
-        onClose={() => setOpening(false)}
+        open={opening === prKey && pr.kind === 'open'}
+        onClose={() => setOpening(null)}
         branch={s.branch}
         base={pr.kind === 'open' ? pr.base : undefined}
-        draft={prs.data?.draft}
+        draft={prState?.draft}
         onOpened={() => {
-          setOpening(false)
+          setOpening(null)
           prs.reload()
         }}
       />

@@ -410,7 +410,7 @@ export interface PullRequest {
   checks: { passed: number; skipped: number; failed: PrCheck[]; running: PrCheck[] }
 }
 
-/** The branch's pull request, as gh on the session's machine sees it (hubs from 0.28). */
+/** The branch's pull request, as gh on the session's machine sees it (hubs from 0.27). */
 export interface PrState {
   /** missing: gh isn't installed; not-github: no GitHub remote, nothing to show */
   gh: 'ready' | 'missing' | 'signed-out' | 'not-github' | 'error'

@@ -277,6 +277,41 @@ describe('Pull requests', () => {
     expect(api.gitPr.mock.calls.length).toBe(n + 1)
   })
 
+  test("after a branch switch the last branch's pull request and open sheet go while the new one loads", async () => {
+    let branch = 'fix/cart'
+    let answer: (v: any) => void = () => {}
+    api.git.mockImplementation(async () => ({ ...pushed, branch }))
+    api.gitPr.mockImplementation(() =>
+      branch === 'fix/cart' ? Promise.resolve({ gh: 'ready', branch: 'fix/cart', base: 'main', draft: { title: 'Fix the cart total', body: '' } }) : new Promise((r) => (answer = r)),
+    )
+    await render(<WorkingTree p={p} poke={0} />)
+    await userEvent.click(await screen.findByRole('button', { name: /Open pull request/ }))
+    expect(screen.getByLabelText('Title')).toBeTruthy()
+    branch = 'fix/tax'
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await screen.findByText('fix/tax')
+    // fix/tax's answer hasn't come: nothing about fix/cart is left to act on (the sheet closes)
+    await act(async () => new Promise((r) => setTimeout(r, 250)))
+    expect(screen.queryByLabelText('Title')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Open pull request/ })).toBeNull()
+    await act(async () => answer({ gh: 'ready', branch: 'fix/tax', base: 'main', pr: { ...open, number: 43, title: 'Fix the tax' } }))
+    expect(await screen.findByText('#43')).toBeTruthy()
+    expect(screen.queryByText('#42')).toBeNull()
+  })
+
+  test('a pull request shows only under its own branch', async () => {
+    let branch = 'fix/cart'
+    api.git.mockImplementation(async () => ({ ...pushed, branch }))
+    api.gitPr.mockImplementation(() => (branch === 'fix/cart' ? Promise.resolve({ gh: 'ready', branch: 'fix/cart', base: 'main', pr: open }) : new Promise(() => {})))
+    await render(<WorkingTree p={p} poke={0} />)
+    await screen.findByRole('region', { name: 'Pull request' })
+    branch = 'fix/tax'
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await screen.findByText('fix/tax')
+    expect(screen.queryByRole('region', { name: 'Pull request' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Send to agent/ })).toBeNull()
+  })
+
   test('without gh, or signed out, it says what to run there', async () => {
     api.gitPr.mockImplementation(async () => ({ gh: 'signed-out', branch: 'fix/cart', base: 'main' }))
     await render(<WorkingTree p={p} poke={0} />)

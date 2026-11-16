@@ -39,6 +39,25 @@ fn checks_are_summed_up_as_gh_pr_checks_reads_them() {
 }
 
 #[test]
+fn a_check_run_again_counts_only_its_latest_run() {
+    // CI / test failed, then passed when re-run on the same commit; lint was re-run and is
+    // running again; the rerun of a status context failed after it had passed
+    let rollup = json!([
+        { "__typename": "CheckRun", "name": "test", "workflowName": "CI", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-11-16T08:00:00Z", "detailsUrl": "https://x/1" },
+        { "__typename": "CheckRun", "name": "lint", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-11-16T08:00:00Z" },
+        { "__typename": "CheckRun", "name": "test", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-11-16T08:10:00Z", "detailsUrl": "https://x/2" },
+        { "__typename": "CheckRun", "name": "lint", "workflowName": "CI", "status": "QUEUED", "conclusion": "", "startedAt": "2026-11-16T08:11:00Z" },
+        { "__typename": "CheckRun", "name": "test", "workflowName": "Nightly", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-11-16T07:00:00Z" },
+        { "__typename": "StatusContext", "context": "ci/legacy", "state": "ERROR", "startedAt": "2026-11-16T08:20:00Z" },
+        { "__typename": "StatusContext", "context": "ci/legacy", "state": "SUCCESS", "startedAt": "2026-11-16T08:05:00Z" },
+    ]);
+    let c = summarize_checks(&rollup);
+    assert_eq!((c.passed, c.skipped), (1, 0));
+    assert_eq!(c.failed.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["Nightly / test", "ci/legacy"]);
+    assert_eq!(c.running.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["CI / lint"]);
+}
+
+#[test]
 fn a_merged_draft_or_conflicting_pull_request_and_one_with_no_checks() {
     let pr =
         parse_pr(r#"{"isDraft":true,"mergeable":"CONFLICTING","number":3,"state":"MERGED","statusCheckRollup":[],"title":"t","url":"https://github.com/o/r/pull/3"}"#).unwrap();
@@ -92,12 +111,15 @@ fn what_gh_said_becomes_a_state_the_app_can_show() {
 fn the_commands_carry_no_title_or_body_and_quote_the_folder() {
     let s = status_command("/w/it's here");
     assert!(s.contains(r"'/w/it'\''s here'"), "{s}");
-    assert!(s.contains(&format!("pr view --json {FIELDS}")), "{s}");
+    // gh is asked about the branch the command recorded, not whatever is checked out by then
+    assert!(s.contains(&format!("pr view --json {FIELDS} -- \"$br\";")), "{s}");
     assert!(s.contains("GH_PROMPT_DISABLED=1"), "{s}");
     let c = create_command("/w/a");
     assert!(c.contains("IFS= read -r title;"), "{c}");
     assert!(c.contains(r#"pr create --title "$title" --body-file - ${base:+--base "$base"}"#), "{c}");
     assert!(c.contains("|| exit 6"), "{c}");
+    // the default branch is found as the status finds it, gh's answer included
+    assert!(c.contains("[ -n \"$base\" ] || base=$(") && c.contains("repo view --json defaultBranchRef"), "{c}");
 }
 
 #[test]
@@ -115,14 +137,15 @@ fn the_title_is_one_line_and_both_have_limits() {
 const GIT_ENV: &str = "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=T GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=T GIT_COMMITTER_EMAIL=t@t; ";
 
 /// A `gh` that answers from files next to it: `view.json` for `pr view` (none: no pull
-/// request), `signed-out` to answer as gh does before `gh auth login`; `pr create` keeps its
-/// arguments, one per line, and what it read on stdin.
+/// request), `default` for the default branch `repo view` names (else main), `signed-out` to
+/// answer as gh does before `gh auth login`; `pr view` keeps its arguments in `view-args`, and
+/// `pr create` its arguments in `args`, one per line, and what it read on stdin in `body`.
 const FAKE_GH: &str = r#"#!/bin/sh
 d=$(dirname "$0")
 [ -f "$d/signed-out" ] && { echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4; }
 case "$1 $2" in
-"pr view") [ -f "$d/view.json" ] && { cat "$d/view.json"; exit 0; }; echo 'no pull requests found for branch "x"' >&2; exit 1 ;;
-"repo view") echo main ;;
+"pr view") printf '%s\n' "$@" > "$d/view-args"; [ -f "$d/view.json" ] && { cat "$d/view.json"; exit 0; }; echo 'no pull requests found for branch "x"' >&2; exit 1 ;;
+"repo view") cat "$d/default" 2>/dev/null || echo main ;;
 "pr create") for a in "$@"; do printf '%s\n' "$a"; done > "$d/args"; cat > "$d/body"; echo 'Creating pull request' >&2; echo 'https://github.com/o/r/pull/7' ;;
 *) exit 2 ;;
 esac
@@ -220,11 +243,28 @@ fn a_branch_with_a_pull_request_shows_it_and_a_signed_out_gh_says_so() {
         let s = pr_status("ws", "%1").await.unwrap();
         let pr = s.pr.unwrap();
         assert_eq!((pr.number, pr.checks.failed.len(), pr.checks.running.len(), s.draft), (247, 2, 2, None));
+        // asked by the branch's name, after `--`
+        assert_eq!(w.read("bin/view-args").lines().rev().take(2).collect::<Vec<_>>(), [r#"fix/it's-"q"-$(id)"#, "--"]);
 
         w.write("bin/signed-out", "");
         assert_eq!(pr_status("ws", "%1").await.unwrap().gh, "signed-out");
         let e = pr_create("ws", "%1", Some(&json!("t")), None).await.unwrap_err();
         assert_eq!(e.message, GH_SIGNED_OUT);
+    });
+}
+
+#[test]
+fn when_git_does_not_know_the_default_branch_both_ask_gh_and_create_names_it() {
+    let w = TempDir::new("inyon-pr-");
+    run(|| async move {
+        let repo = setup(&w, true);
+        git(&repo, "remote set-head origin -d");
+        git(&repo, "push -q origin main:trunk");
+        w.write("bin/default", "trunk\n");
+        let s = pr_status("ws", "%1").await.unwrap();
+        assert_eq!(s.base.as_deref(), Some("trunk"));
+        pr_create("ws", "%1", Some(&json!("t")), None).await.unwrap();
+        assert!(w.read("bin/args").ends_with("--base\ntrunk\n"), "{}", w.read("bin/args"));
     });
 }
 

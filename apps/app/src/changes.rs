@@ -301,6 +301,10 @@ const USUAL_DEFAULTS: [&str; 3] = ["main", "master", "trunk"];
 
 pub fn pr_view(s: &crate::api::GitState, st: Option<&crate::api::PrState>) -> PrView {
     let Some(st) = st.filter(|_| s.repo) else { return PrView::None };
+    // an answer about another branch (the one checked out before) says nothing about this one
+    if st.branch.is_some() && st.branch != s.branch {
+        return PrView::None;
+    }
     if let Some(pr) = &st.pr {
         return PrView::Pr(pr.clone());
     }
@@ -593,6 +597,10 @@ mod tests {
             PrView::None
         );
         assert_eq!(pr_view(&pushed, None), PrView::None);
+        // an answer about the branch checked out before shows nothing, its pull request included
+        let other = crate::api::GitState { branch: Some("other".into()), ..pushed.clone() };
+        assert_eq!(pr_view(&other, Some(&crate::api::PrState { pr: Some(pr(&[], &[], 1, 0)), ..ready.clone() })), PrView::None);
+        assert_eq!(pr_view(&other, Some(&ready)), PrView::None);
         let with = crate::api::PrState { pr: Some(pr(&[], &[], 1, 0)), ..ready.clone() };
         assert_eq!(pr_view(&crate::api::GitState { ahead: Some(1.0), ..pushed.clone() }, Some(&with)), PrView::Pr(pr(&[], &[], 1, 0)));
         let signed_out = crate::api::PrState { gh: "signed-out".into(), ..Default::default() };

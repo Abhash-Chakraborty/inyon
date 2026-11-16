@@ -35,6 +35,11 @@ describe('what the Working tree shows', () => {
     expect(prView({ ...pushed, ahead: 1 }, { ...ready, pr: pr() })).toEqual({ kind: 'pr', pr: pr() })
   })
 
+  test("an answer about the branch checked out before shows nothing, its pull request included", () => {
+    expect(prView({ ...pushed, branch: 'other' }, { ...ready, pr: pr() }).kind).toBe('none')
+    expect(prView({ ...pushed, branch: 'other' }, ready).kind).toBe('none')
+  })
+
   test('gh missing or signed out says what to run; a remote that is not GitHub shows nothing', () => {
     const missing = prView(pushed, { gh: 'missing', branch: 'fix/cart', base: 'main' })
     expect(missing).toEqual({ kind: 'notice', text: expect.stringContaining('install the GitHub CLI'), command: 'gh auth login' })

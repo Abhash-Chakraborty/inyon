@@ -28,30 +28,42 @@ fn branches() -> String {
     BRANCHES.replace("GIT", GIT)
 }
 
+/// When git doesn't know the default branch, gh asks GitHub (status and creation both, so a new
+/// pull request goes where the app said it would).
+fn default_from_gh() -> String {
+    format!("[ -n \"$base\" ] || base=$({GH} repo view --json defaultBranchRef --jq .defaultBranchRef.name)")
+}
+
 /// The shell line that reads the branch's pull request. It prints, between separators: the
 /// branch, the default branch, `missing` or `ready` (gh is installed), then, on a branch that
 /// isn't the default one, gh's JSON, its exit code, and the commits not on the default branch yet
-/// (or just the last one) for a draft. gh's errors go to stderr.
+/// (or just the last one) for a draft. gh's errors go to stderr. gh is asked about the branch it
+/// recorded by name, so a checkout in between can't pass another branch's pull request off as this one's.
 pub fn status_command(cwd: &str) -> String {
     format!(
         "{top}; {branches}; if ! command -v gh >/dev/null 2>&1; then printf '%s{SEP}%s{SEP}missing' \"$br\" \"$base\"; exit 0; fi; \
-         [ -n \"$base\" ] || base=$({GH} repo view --json defaultBranchRef --jq .defaultBranchRef.name); \
+         {default}; \
          printf '%s{SEP}%s{SEP}ready' \"$br\" \"$base\"; [ -n \"$br\" ] && [ \"$br\" != \"$base\" ] || exit 0; printf '{SEP}'; \
-         {GH} pr view --json {FIELDS}; printf '{SEP}%s{SEP}' $?; \
+         {GH} pr view --json {FIELDS} -- \"$br\"; printf '{SEP}%s{SEP}' $?; \
          {GIT} log {LOG} -n 50 \"origin/$base..HEAD\" 2>/dev/null || {GIT} log {LOG} -n 1 2>/dev/null",
         top = to_top(cwd),
         branches = branches(),
+        default = default_from_gh(),
     )
 }
 
 /// The shell line that opens a pull request from the pushed branch into the default branch. The
-/// title is the first line on stdin and the body the rest, so neither is ever part of the command.
+/// title is the first line on stdin, which gh then gets as its `--title` argument, and the body
+/// is the rest of stdin; neither is ever part of the command's text. The default branch is found
+/// the way the status found it and named with `--base`, so gh's own per-branch setting can't
+/// send it elsewhere.
 pub fn create_command(cwd: &str) -> String {
     format!(
-        "{top}; command -v gh >/dev/null 2>&1 || exit 6; IFS= read -r title; {branches}; \
+        "{top}; command -v gh >/dev/null 2>&1 || exit 6; IFS= read -r title; {branches}; {default}; \
          {GH} pr create --title \"$title\" --body-file - ${{base:+--base \"$base\"}}",
         top = to_top(cwd),
         branches = branches(),
+        default = default_from_gh(),
     )
 }
 
@@ -127,29 +139,46 @@ fn check_state(c: &Value) -> &str {
     }
 }
 
-/// `statusCheckRollup` summed up, sorted the way gh sorts it (passing, skipped, failing, running).
-pub fn summarize_checks(rollup: &Value) -> Checks {
-    let mut out = Checks::default();
+/// The latest run of each check: a check run again on the same commit (a re-run after a failure)
+/// is listed once per run, and only the newest counts, as `gh pr checks` reads it. Runs are
+/// told apart by name and workflow, newest by `startedAt`; the order is the first run's.
+fn latest_runs(rollup: &Value) -> Vec<(String, &Value)> {
+    let mut out: Vec<(String, &Value)> = vec![];
+    let mut started: Vec<String> = vec![];
     for c in rollup.as_array().into_iter().flatten() {
         let s = |k: &str| c.get(k).and_then(Value::as_str).unwrap_or("").jtrim().to_owned();
         let (name, workflow) = if c.get("context").is_some() { (s("context"), String::new()) } else { (s("name"), s("workflowName")) };
         // two workflows can each have a job called "check"
         let name = if workflow.is_empty() || workflow == name { name } else { format!("{workflow} / {name}") };
+        // ISO times sort as text; a run not started yet has none, or the zero time
+        let at = s("startedAt");
+        match out.iter().position(|(n, _)| *n == name) {
+            Some(i) if at > started[i] => {
+                out[i].1 = c;
+                started[i] = at;
+            }
+            Some(_) => {}
+            None => {
+                out.push((name, c));
+                started.push(at);
+            }
+        }
+    }
+    out
+}
+
+/// `statusCheckRollup` summed up: the latest run of each check, as passed, skipped, failed or still running.
+pub fn summarize_checks(rollup: &Value) -> Checks {
+    let mut out = Checks::default();
+    for (name, c) in latest_runs(rollup) {
+        let s = |k: &str| c.get(k).and_then(Value::as_str).unwrap_or("").jtrim().to_owned();
         let url = [s("detailsUrl"), s("targetUrl")].into_iter().find(|u| u.starts_with("https://") || u.starts_with("http://"));
         let check = Check { name, url };
         match check_state(c) {
             "SUCCESS" => out.passed += 1,
             "SKIPPED" | "NEUTRAL" => out.skipped += 1,
-            "ERROR" | "FAILURE" | "CANCELLED" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE" => {
-                if !out.failed.iter().any(|f| f.name == check.name) {
-                    out.failed.push(check)
-                }
-            }
-            _ => {
-                if !out.running.iter().any(|f| f.name == check.name) {
-                    out.running.push(check)
-                }
-            }
+            "ERROR" | "FAILURE" | "CANCELLED" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE" => out.failed.push(check),
+            _ => out.running.push(check),
         }
     }
     out
