@@ -134,6 +134,17 @@ const check = (ok: unknown, what: string) => {
   if (!ok) problems.push(what)
 }
 
+/** "until Mon 9:00", or on a Monday, when next Monday is a week away, "until Nov 23" (a date). */
+const isMonday = (at: string) => {
+  if (at.startsWith('until Mon ')) return true
+  const m = /^until ([A-Z][a-z]{2}) (\d{1,2})\b/.exec(at)
+  if (!m) return false
+  const now = new Date()
+  const day = new Date(`${m[1]} ${m[2]} ${now.getFullYear()} 12:00`)
+  if (day < now) day.setFullYear(now.getFullYear() + 1)
+  return day.getDay() === 1
+}
+
 /** Text smaller than 12px, or a page wider than its window. */
 async function layout(page: Page, label: string) {
   const small: string[] = await page.evaluate(() => {
@@ -250,7 +261,7 @@ try {
       await snoozeSheet.waitFor()
       const choices = await snoozeSheet.locator('.snooze-label').allTextContents()
       check(choices.join('|') === 'For an hour|For three hours|Until tomorrow morning|Until next week', `${label}: the snooze choices (${choices})`)
-      check((await snoozeSheet.locator('.snooze-at').nth(3).textContent())?.startsWith('until Mon '), `${label}: next week is a Monday (${await snoozeSheet.locator('.snooze-at').nth(3).textContent()})`)
+      check(isMonday((await snoozeSheet.locator('.snooze-at').nth(3).textContent()) ?? ''), `${label}: next week is a Monday (${await snoozeSheet.locator('.snooze-at').nth(3).textContent()})`)
       check(await snoozeSheet.getByText('It moves to Parked and snoozed on every device and comes back on its own. The agent keeps running.').isVisible(), `${label}: the sheet says what a snooze does`)
       await snoozeSheet.getByRole('switch', { name: "Tell me when it's back" }).click()
       await page.screenshot({ path: path.join(shots, 'organize-snooze-1440-light.png') })

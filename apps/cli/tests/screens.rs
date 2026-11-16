@@ -23,8 +23,8 @@ fn check(name: &str, text: &str) {
         fs::write(&file, format!("{text}\n")).unwrap();
         return;
     }
-    // a checkout on Windows may have given the file CRLF line endings
-    let want = fs::read_to_string(&file).unwrap().replace("\r\n", "\n");
+    // a checkout on Windows may have given the file CRLF line endings, or even CR CR LF
+    let want = fs::read_to_string(&file).unwrap().replace('\r', "");
     assert_eq!(text.trim_end(), want.trim_end(), "{name} changed; run with UPDATE_SNAPSHOTS=1 if that's meant");
 }
 
