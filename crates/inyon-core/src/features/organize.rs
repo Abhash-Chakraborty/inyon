@@ -100,8 +100,10 @@ fn load() -> State {
 
 /// Brings a record from an earlier version up to this one. Version 0 is a record from before
 /// versions were written, which never shipped; it reads as version 1. Version 2 added messages
-/// sent later, sleep rules, saved prompts and closing when done, and version 3 carrying on after a
-/// plan limit and compacting, all of them new fields, so an earlier record reads as it is.
+/// sent later, sleep rules, saved prompts and closing when done, version 3 carrying on after a
+/// plan limit and compacting, and version 4 (0.27) messages that repeat, all of them new fields,
+/// so an earlier record reads as it is. A version 3 hub would send a repeating message once and
+/// forget the rest of it, so it may only read version 4.
 pub fn migrate(mut org: Organize) -> Organize {
     if org.v < ORGANIZE_VERSION {
         org.v = ORGANIZE_VERSION;
@@ -982,6 +984,12 @@ fn pane_name(title: Option<&str>, host: &str, pane: &str, hosts: &[HostState]) -
     }
     let p = hosts.iter().filter(|h| h.config.id == host).flat_map(|h| h.sessions.iter().flat_map(|s| s.windows.iter().flat_map(|w| w.panes.iter()))).find(|p| p.id == pane);
     p.map(|p| p.label.clone().unwrap_or_else(|| crate::hosts::registry::pane_title(p))).filter(|t| !t.is_empty()).unwrap_or_else(|| "A session".to_owned())
+}
+
+/// What a notice calls the session in a pane: the title it was given, else the pane's name.
+pub(super) fn session_name(host: &str, pane: &str, hosts: &[HostState]) -> String {
+    let title = with(|st| st.org.sessions.iter().find(|m| m.live && m.host == host && m.pane == pane).and_then(|m| m.title.clone()));
+    pane_name(title.as_deref(), host, pane, hosts)
 }
 
 /// Ends the snoozes that are over, raising the notices they asked for. Whether any ended.

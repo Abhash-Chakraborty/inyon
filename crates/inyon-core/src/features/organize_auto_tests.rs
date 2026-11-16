@@ -662,3 +662,242 @@ fn a_session_compacts_before_its_context_fills_and_not_again_until_it_drops() {
         assert_eq!(acts.borrow().last(), Some(&hold("%3", "/compress")));
     });
 }
+
+// ---------- repeating messages (from 0.27) ----------
+
+const DAY: u64 = 24 * 60 * MIN;
+
+/// Every day at 9:00 UTC (T is Monday 21 September 2026, 14:13 UTC).
+fn daily(more: Value) -> Value {
+    let mut b = json!({ "text": "check the nightly build", "repeat": { "every": "day", "minute": 540, "tz": "UTC", "offset": 0 } });
+    b.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+    b
+}
+
+#[test]
+fn a_repeating_message_goes_at_each_time_and_writes_the_next_down_before_it_goes() {
+    run(|| async {
+        let acts = fresh(None);
+        let hosts = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &daily(json!({})), T).unwrap();
+        let first = s.at;
+        assert_eq!(first, 1_790_067_600_000, "9:00 the next morning");
+        assert_eq!(get().v, 4, "a record a 0.26 hub only reads");
+        assert!(!auto::send_due(first - 1, &hosts));
+        auto::set_actions(Some(Rc::new({
+            let acts = acts.clone();
+            move |x: &Act| {
+                let next = kv::get_value(KEY).unwrap()["sends"][0]["at"].as_u64().unwrap();
+                assert!(next > first && (next - first).is_multiple_of(DAY), "the next time is written down first");
+                acts.borrow_mut().push(x.clone());
+                Ok(())
+            }
+        })));
+        assert!(auto::send_due(first, &hosts));
+        assert_eq!(*acts.borrow(), vec![hold("%3", "check the nightly build")]);
+        // the hub restarts: nothing again until tomorrow, and the rule is still there
+        reset();
+        auto::send_due(first + MIN, &hosts);
+        assert_eq!(acts.borrow().len(), 1);
+        let kept = get().sends.unwrap();
+        assert_eq!((kept[0].at, kept[0].repeat.as_ref().map(|r| r.minute)), (first + DAY, Some(Some(540))));
+        auto::send_due(first + DAY, &hosts);
+        assert_eq!(acts.borrow().len(), 2);
+        // the hub was off for three days: one late time, not three
+        auto::send_due(first + 4 * DAY + 3 * 60 * MIN, &hosts);
+        auto::send_due(first + 4 * DAY + 4 * 60 * MIN, &hosts);
+        assert_eq!(acts.borrow().len(), 3);
+        assert_eq!(get().sends.unwrap()[0].at, first + 5 * DAY);
+    });
+}
+
+#[test]
+fn a_busy_agent_is_tried_again_a_few_times_then_that_time_is_skipped_with_a_notice() {
+    run(|| async {
+        let acts = fresh(None);
+        let heard = notices();
+        put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &daily(json!({})), T).unwrap();
+        let first = s.at;
+        let busy = put(&[("%3", "/w", Some("conv-a"), "working")]);
+        auto::send_due(first, &busy);
+        let w = get().sends.unwrap().remove(0);
+        assert_eq!((w.at, w.due, w.tries), (first + auto::REPEAT_RETRY_MS, Some(first), Some(1)));
+        // tried at its time and five more times, five minutes apart; a restart in between loses no count
+        reset();
+        for i in 1..auto::REPEAT_TRIES as u64 {
+            assert!(!auto::send_due(first + i * auto::REPEAT_RETRY_MS - 1, &busy), "not before the retry");
+            auto::send_due(first + i * auto::REPEAT_RETRY_MS, &busy);
+        }
+        assert!(acts.borrow().is_empty());
+        let w = get().sends.unwrap().remove(0);
+        assert_eq!((w.at, w.due, w.tries, w.skipped), (first + DAY, None, None, Some(first)));
+        assert_eq!(*heard.borrow(), vec![("%3".to_owned(), "Skipped “check the nightly build”: the agent was busy".to_owned())]);
+        // free the next morning: it goes, and the skip is forgotten
+        let idle = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        auto::send_due(first + DAY, &idle);
+        assert_eq!(*acts.borrow(), vec![hold("%3", "check the nightly build")]);
+        assert_eq!(get().sends.unwrap()[0].skipped, None);
+    });
+}
+
+#[test]
+fn a_repeating_message_waits_for_an_empty_box_and_an_empty_held_queue() {
+    run(|| async {
+        let acts = fresh(None);
+        let hosts = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let first = auto::add_send("box", "%3", &daily(json!({})), T).unwrap().at;
+        // half a message typed in the app
+        crate::claude::drafts::set_draft(
+            "box:%3",
+            Some(crate::claude::drafts::Draft { text: "and also".into(), source: inyon_protocol::DraftSource::App, at: 0.0, mirrored: None }),
+        );
+        auto::send_due(first, &hosts);
+        assert!(acts.borrow().is_empty());
+        assert_eq!(get().sends.unwrap()[0].tries, Some(1));
+        crate::claude::drafts::set_draft("box:%3", None);
+        // asking a question counts as busy as well
+        let mut asking = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        asking[0].sessions[0].windows[0].panes[0].agent.as_mut().unwrap().waiting_for = Some("permission".into());
+        auto::send_due(first + auto::REPEAT_RETRY_MS, &asking);
+        assert!(acts.borrow().is_empty());
+        auto::send_due(first + 2 * auto::REPEAT_RETRY_MS, &hosts);
+        assert_eq!(*acts.borrow(), vec![hold("%3", "check the nightly build")]);
+    });
+}
+
+#[test]
+fn a_paused_one_doesnt_go_and_resumes_at_its_next_time_after_now() {
+    run(|| async {
+        let acts = fresh(None);
+        let hosts = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &daily(json!({})), T).unwrap();
+        let p = auto::update_send(&s.id, &json!({ "paused": true }), T).unwrap();
+        assert_eq!(p.paused, Some(true));
+        auto::send_due(s.at + 2 * DAY, &hosts);
+        assert!(acts.borrow().is_empty());
+        let r = auto::update_send(&s.id, &json!({ "paused": false }), s.at + 2 * DAY + MIN).unwrap();
+        assert_eq!((r.paused, r.at), (None, s.at + 3 * DAY), "the missed ones don't go late");
+        // a one-off can't be paused
+        let once = auto::add_send("box", "%3", &json!({ "text": "x", "at": T + MIN }), T).unwrap();
+        assert_eq!(auto::update_send(&once.id, &json!({ "paused": true }), T).unwrap_err().status, Some(400));
+    });
+}
+
+#[test]
+fn a_new_rule_or_none_reschedules_it() {
+    run(|| async {
+        fresh(None);
+        put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &daily(json!({})), T).unwrap();
+        let hours = auto::update_send(&s.id, &json!({ "repeat": { "every": "hours", "hours": 2, "tz": "UTC", "offset": 0 } }), T).unwrap();
+        assert_eq!((hours.at, hours.repeat.unwrap().hours), (T + 120 * MIN, Some(2)));
+        // weekly on Wednesday at 8:30
+        let week = auto::update_send(&s.id, &json!({ "repeat": { "every": "week", "day": 3, "minute": 510, "tz": "UTC", "offset": 0 }, "notify": true }), T).unwrap();
+        assert_eq!((week.at, week.notify), (1_790_065_800_000 + DAY, Some(true)));
+        let once = auto::update_send(&s.id, &json!({ "repeat": null, "text": "only once" }), T).unwrap();
+        assert_eq!((once.repeat, once.at, once.text.as_str()), (None, week.at, "only once"));
+        assert_eq!(auto::add_send("box", "%3", &json!({ "text": "x", "repeat": { "every": "fortnight", "tz": "UTC", "offset": 0 } }), T).unwrap_err().status, Some(400));
+    });
+}
+
+#[test]
+fn a_notice_says_when_each_time_goes_if_asked() {
+    run(|| async {
+        fresh(None);
+        let heard = notices();
+        let hosts = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let quiet = auto::add_send("box", "%3", &daily(json!({})), T).unwrap();
+        auto::send_due(quiet.at, &hosts);
+        assert!(heard.borrow().is_empty(), "none unless asked");
+        auto::remove_send(&quiet.id).unwrap();
+        let loud = auto::add_send("box", "%3", &daily(json!({ "notify": true, "text": "\n  summarise the night\nin three lines" })), T).unwrap();
+        auto::send_due(loud.at, &hosts);
+        assert_eq!(*heard.borrow(), vec![("%3".to_owned(), "Scheduled: summarise the night".to_owned())]);
+    });
+}
+
+#[test]
+fn a_repeating_message_goes_on_in_its_pane_when_the_conversation_there_changes() {
+    run(|| async {
+        let acts = fresh(None);
+        put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &daily(json!({})), T).unwrap();
+        // /clear: a new conversation in the same pane
+        let hosts = put(&[("%3", "/w", Some("conv-b"), "idle")]);
+        auto::send_due(s.at, &hosts);
+        assert_eq!(*acts.borrow(), vec![hold("%3", "check the nightly build")]);
+        assert_eq!(get().sends.unwrap()[0].conv.as_deref(), Some("conv-b"), "and follows the new one from now on");
+        // the pane is gone: it waits with the reason
+        let gone = put(&[("%5", "/w", Some("conv-c"), "idle")]);
+        auto::send_due(s.at + DAY, &gone);
+        assert_eq!(get().sends.unwrap()[0].error.as_deref(), Some("The session isn't there any more"));
+    });
+}
+
+#[test]
+fn one_that_starts_a_new_session_launches_the_agent_in_the_folder_each_time() {
+    run(|| async {
+        let acts = fresh(None);
+        let hosts = put(&[("%3", "/w/inyon", Some("conv-a"), "working")]);
+        let s = auto::add_send("box", "%3", &daily(json!({ "newSession": true })), T).unwrap();
+        assert_eq!((s.new_session.as_ref().map(|n| n.cwd.as_str()), s.conv.as_deref()), (Some("/w/inyon"), None));
+        // a busy agent in the pane it was set on doesn't matter
+        auto::send_due(s.at, &hosts);
+        let launch = Act::Launch {
+            host: "box".into(),
+            agent: inyon_protocol::AgentKind::Claude,
+            cwd: "/w/inyon".into(),
+            text: "check the nightly build".into(),
+            send: s.id.clone(),
+            notify: false,
+        };
+        assert_eq!(*acts.borrow(), vec![launch.clone()]);
+        // nor does that pane being gone
+        let gone = put(&[]);
+        auto::send_due(s.at + DAY, &gone);
+        assert_eq!(*acts.borrow(), vec![launch.clone(), launch.clone()]);
+        assert_eq!(get().sends.unwrap()[0].at, s.at + 2 * DAY);
+        // Send now starts one more, and keeps the rule
+        auto::send_now(&s.id).unwrap();
+        assert_eq!(acts.borrow().len(), 3);
+        assert_eq!(get().sends.unwrap()[0].at, s.at + 2 * DAY);
+        // it doesn't keep the agent it was set on awake
+        auto::set_sleep(&json!({ "minutes": 10 })).unwrap();
+        let idle = put(&[("%3", "/w/inyon", Some("conv-a"), "idle")]);
+        auto::check_agents(T, &idle);
+        auto::check_agents(T + 11 * MIN, &idle);
+        assert_eq!(acts.borrow().last(), Some(&Act::Sleep { host: "box".into(), pane: "%3".into() }));
+    });
+}
+
+#[test]
+fn a_new_session_needs_an_agent_that_takes_a_first_message() {
+    run(|| async {
+        fresh(None);
+        let Some(kind) = inyon_protocol::AGENT_KINDS.iter().copied().find(|k| !k.chat()) else { return };
+        let mut hosts = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        hosts[0].sessions[0].windows[0].panes[0].agent.as_mut().unwrap().kind = kind;
+        let rt = Rc::new(RefCell::new(HostRuntime::new(Host::new(hosts[0].config.clone()), hosts[0].clone())));
+        rt.borrow_mut().hold_polls();
+        registry().insert_runtime("box", rt);
+        let e = auto::add_send("box", "%3", &daily(json!({ "newSession": true })), T).unwrap_err();
+        assert_eq!(e.status, Some(400));
+        assert!(e.message.ends_with("starts without a first message, so it can't start a session for one"), "{}", e.message);
+    });
+}
+
+#[test]
+fn a_carry_on_cant_be_made_to_repeat() {
+    run(|| async {
+        fresh(None);
+        let hosts = limited("idle", true);
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "carryOn": true }), T).unwrap()).unwrap();
+        auto::plan_carry_on(&hosts);
+        let id = carry_ons()[0].id.clone();
+        let e = auto::update_send(&id, &json!({ "repeat": { "every": "day", "minute": 540, "tz": "UTC", "offset": 0 } }), T).unwrap_err();
+        assert_eq!(e.status, Some(400));
+        assert_eq!(auto::update_send(&id, &json!({ "newSession": true }), T).unwrap_err().status, Some(400));
+        assert_eq!(carry_ons()[0].repeat, None);
+    });
+}

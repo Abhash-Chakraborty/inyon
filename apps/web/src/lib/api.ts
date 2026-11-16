@@ -1,4 +1,4 @@
-import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type ConversationSearch, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SessionMark, type SleepRule, type DelayedSend, type AutoRules, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
+import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type ConversationSearch, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SessionMark, type SleepRule, type DelayedSend, type AutoRules, type Repeat, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -443,6 +443,17 @@ export interface CompanionStatus {
   pane: string | null
 }
 
+/** A message to send later: once at `at`, or on `repeat` (`at` is then its first time, if given). */
+export interface ScheduleBody {
+  text: string
+  at?: number
+  conv?: string
+  repeat?: Repeat
+  /** each time starts the pane's agent in its folder as a new session */
+  newSession?: boolean
+  notify?: boolean
+}
+
 export const api = {
   /** `version` and `commit` say what the hub runs, once signed in */
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
@@ -499,6 +510,11 @@ export const api = {
   /** a message the hub sends at `at` (unix ms), once the agent is free then */
   /** `conv`: the conversation it's for, when it's put back (Undo); else the pane's own. */
   sendLater: (host: string, pane: string, text: string, at: number, conv?: string) => request<DelayedSend>('POST', `${panePath(host, pane)}/sends`, { text, at, ...(conv && { conv }) }),
+  /** the same, with a rule to go again on (from 0.27), a new session each time, a notice each time */
+  schedule: (host: string, pane: string, b: ScheduleBody) => request<DelayedSend>('POST', `${panePath(host, pane)}/sends`, b),
+  /** new text or rule for a message waiting to go; `paused` stops a repeating one until it's false again */
+  editSend: (host: string, id: string, b: Partial<Omit<ScheduleBody, 'repeat'>> & { repeat?: Repeat | null; paused?: boolean }) =>
+    request<DelayedSend>('PATCH', `${h(host)}/sends/${encodeURIComponent(id)}`, b),
   /** A waiting message goes now: off the schedule and into the held queue in one step. */
   sendNow: (host: string, id: string) => request<{ pane: string }>('POST', `${h(host)}/sends/${encodeURIComponent(id)}/now`),
   cancelSend: (host: string, id: string) => request('DELETE', `${h(host)}/sends/${encodeURIComponent(id)}`),

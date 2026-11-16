@@ -263,3 +263,98 @@ describe('a message waiting to go', () => {
     expect(api.cancelSend).not.toHaveBeenCalled()
   })
 })
+
+describe('a message that repeats', () => {
+  /** A hub that keeps repeating messages (version 4 of its record) and the session's machine. */
+  const v4 = () => emit({ t: 'overview', hosts: [box()], organize: { ...org(), v: 4 } })
+  const daily = { id: 'd-1', host: 'box', pane: '%1', text: 'check the nightly build', at: Date.now() + 3600_000, repeat: { every: 'day' as const, minute: 540, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, offset: 0 } }
+
+  test('Repeat sets a rule in this device’s zone, and only on a hub that keeps them', async () => {
+    emit({ t: 'overview', hosts: [box()], organize: { ...org(), v: 3 } })
+    const user = userEvent.setup()
+    const older = await render(<SendLaterSheet host="box" pane="%1" text="check the nightly build" agent="claude" open onClose={() => {}} onSent={() => {}} />)
+    expect(screen.queryByRole('radio', { name: 'Repeat' })).toBeNull()
+    older.unmount()
+
+    v4()
+    let sent = 0
+    api.schedule.mockImplementation(async () => ({ ...daily, at: Date.now() + 3600_000 }))
+    await render(<SendLaterSheet host="box" pane="%1" text="check the nightly build " agent="claude" open onClose={() => {}} onSent={() => sent++} />)
+    await user.click(screen.getByRole('radio', { name: 'Repeat' }))
+    await user.click(screen.getByRole('combobox', { name: 'Repeats' }))
+    await user.click(screen.getByRole('option', { name: 'Weekdays' }))
+    await user.click(screen.getByRole('combobox', { name: 'Hour' }))
+    await user.click(screen.getByRole('option', { name: new Date(2000, 0, 3, 8).toLocaleTimeString([], { hour: 'numeric' }) }))
+    await user.click(screen.getByRole('radio', { name: 'A new session' }))
+    await user.click(screen.getByRole('switch', { name: 'Tell me each time it goes' }))
+    await user.click(screen.getByRole('button', { name: 'Schedule' }))
+    const [host, pane, body] = api.schedule.mock.calls[0]!
+    expect([host, pane]).toEqual(['box', '%1'])
+    expect(body).toEqual({
+      text: 'check the nightly build',
+      repeat: { every: 'weekdays', minute: 8 * 60, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, offset: -new Date().getTimezoneOffset() },
+      newSession: true,
+      notify: true,
+    })
+    expect(sent).toBe(1)
+    expect(useStore.getState().toasts.at(-1)?.title).toMatch(/^Weekdays at /)
+  })
+
+  test('an agent that starts without a first message can only repeat into its own session', async () => {
+    v4()
+    await render(<SendLaterSheet host="box" pane="%1" text="go on" agent="cursor" open onClose={() => {}} onSent={() => {}} />)
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Repeat' }))
+    expect(screen.queryByRole('radio', { name: 'A new session' })).toBeNull()
+  })
+
+  test('it shows its rule and next time, and pauses, resumes and deletes with an Undo', async () => {
+    v4()
+    const user = userEvent.setup()
+    const view = await render(<ScheduledBubble host="box" pane="%1" s={daily} />)
+    expect(screen.getByText(/^Every day at /)).toBeTruthy()
+    expect(screen.getByText(/^Next /)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Pause' }))
+    expect(api.editSend).toHaveBeenLastCalledWith('box', 'd-1', { paused: true })
+    view.unmount()
+    const paused = await render(<ScheduledBubble host="box" pane="%1" s={{ ...daily, paused: true }} />)
+    expect(screen.getByText('Paused')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Resume' }))
+    expect(api.editSend).toHaveBeenLastCalledWith('box', 'd-1', { paused: false })
+    paused.unmount()
+    await render(<ScheduledBubble host="box" pane="%1" s={{ ...daily, newSession: { agent: 'claude', cwd: '/w' }, notify: true }} />)
+    expect(screen.getByText(/^New session each time · Next /)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(api.cancelSend).toHaveBeenCalledWith('box', 'd-1')
+    expect(useStore.getState().toasts.at(-1)?.title).toBe('Repeating message deleted')
+    await act(async () => useStore.getState().toasts.at(-1)!.action!.onSelect())
+    expect(api.schedule).toHaveBeenLastCalledWith('box', '%1', { text: 'check the nightly build', repeat: daily.repeat, newSession: true, notify: true })
+  })
+
+  test('a busy agent and a skipped time say so', async () => {
+    const at = Date.now() + 5 * 60_000
+    const view = await render(<ScheduledBubble host="box" pane="%1" s={{ ...daily, at, due: at - 5 * 60_000, tries: 1 }} />)
+    expect(screen.getByText(/^Agent busy, trying again at /)).toBeTruthy()
+    view.unmount()
+    await render(<ScheduledBubble host="box" pane="%1" s={{ ...daily, skipped: Date.now() - 3600_000 }} />)
+    expect(screen.getByText(/^Skipped .*: the agent was busy$/)).toBeTruthy()
+  })
+
+  test('Edit changes the text and the rule, and leaves alone what stayed the same', async () => {
+    v4()
+    const user = userEvent.setup()
+    await render(<ScheduledBubble host="box" pane="%1" s={daily} />)
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const box = screen.getByRole('textbox')
+    await user.clear(box)
+    await user.type(box, 'check the build')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(api.editSend).toHaveBeenLastCalledWith('box', 'd-1', { text: 'check the build' })
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    await user.click(screen.getByRole('combobox', { name: 'Repeats' }))
+    await user.click(screen.getByRole('option', { name: 'Every few hours' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    const [, , b] = api.editSend.mock.calls.at(-1)!
+    expect(b).toEqual({ repeat: { every: 'hours', hours: 3, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, offset: -new Date().getTimezoneOffset() } })
+  })
+})

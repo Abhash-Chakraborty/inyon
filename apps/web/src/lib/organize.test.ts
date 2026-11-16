@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { Organize, SessionMark } from '@inyon/protocol'
+import type { Organize, Repeat, SessionMark } from '@inyon/protocol'
 import { allPanes } from './overview.ts'
-import { markFor, mergeOrganize, nextWake, parseTags, placeOf, renameOrganize, sendAt, sendsFor, snoozeUntil, sortPanes, timeText } from './organize.ts'
+import { clockText, deviceZone, firstRun, markFor, mergeOrganize, nextWake, parseTags, placeOf, renameOrganize, repeatText, sendAt, sendsFor, snoozeUntil, sortPanes, timeText } from './organize.ts'
 import { agentPane, host } from '../test/fixtures.ts'
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime()
@@ -115,5 +115,39 @@ describe('organised sessions', () => {
   test('tags are typed in one box and come out as the hub keeps them', () => {
     expect(parseTags(' Review, #needs   docs,, review ')).toEqual(['review', 'needs docs'])
     expect(parseTags('')).toEqual([])
+  })
+})
+
+describe('messages that repeat', () => {
+  const here = deviceZone().tz
+  const rule = (r: Partial<Repeat>): Repeat => ({ every: 'day', minute: 540, tz: here, offset: 0, ...r })
+
+  test('the rule in words, saying the zone only when it is another one', () => {
+    const nine = clockText(540)
+    expect(repeatText(rule({}))).toBe(`Every day at ${nine}`)
+    expect(repeatText(rule({ every: 'weekdays' }))).toBe(`Weekdays at ${nine}`)
+    expect(repeatText(rule({ every: 'week', day: 1 }))).toBe(`Every Monday at ${nine}`)
+    expect(repeatText(rule({ every: 'hours', hours: 3, minute: undefined }))).toBe('Every 3 hours')
+    expect(repeatText(rule({ every: 'hours', hours: 1, minute: undefined }))).toBe('Every hour')
+    expect(repeatText(rule({ tz: 'Mars/Olympus_Mons' }), 'Europe/Berlin')).toBe(`Every day at ${nine} (Mars/Olympus_Mons)`)
+    expect(repeatText(rule({ every: 'hours', hours: 2, tz: 'Mars/Olympus_Mons' }), 'Europe/Berlin')).toBe('Every 2 hours')
+  })
+
+  test('when a rule first goes, by this device\'s clock: weekends skipped, a weekly one on its day', () => {
+    // Tuesday 27 October 2026, noon
+    const tue = new Date(NOW)
+    expect(new Date(firstRun(rule({}), tue))).toEqual(new Date(2026, 9, 28, 9, 0))
+    expect(new Date(firstRun(rule({ minute: 13 * 60 }), tue))).toEqual(new Date(2026, 9, 27, 13, 0))
+    expect(new Date(firstRun(rule({ every: 'week', day: 2 }), tue))).toEqual(new Date(2026, 10, 3, 9, 0))
+    expect(new Date(firstRun(rule({ every: 'week', day: 2, minute: 13 * 60 }), tue))).toEqual(new Date(2026, 9, 27, 13, 0))
+    // Friday after nine: Monday; across the end of the month
+    expect(new Date(firstRun(rule({ every: 'weekdays' }), new Date(2026, 9, 30, 10, 0)))).toEqual(new Date(2026, 10, 2, 9, 0))
+    expect(firstRun(rule({ every: 'hours', hours: 4 }), tue)).toBe(NOW + 4 * 3600_000)
+  })
+
+  test("this device's zone and offset go with a rule set here", () => {
+    const z = deviceZone(new Date(NOW))
+    expect(z.tz.length).toBeGreaterThan(0)
+    expect(z.offset).toBe(-new Date(NOW).getTimezoneOffset())
   })
 })

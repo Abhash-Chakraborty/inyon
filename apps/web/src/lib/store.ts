@@ -154,6 +154,9 @@ export const canAutomate = (hostId: string) => (organizeOf(hostId)?.v ?? 0) >= 3
 /** What that hub does for every session that doesn't say otherwise. */
 export const autoRules = (hostId: string) => organizeOf(hostId)?.auto
 
+/** Whether the hub a machine is on sends messages again and again (version 4 of its record, from 0.27). */
+export const canRepeat = (hostId: string) => (organizeOf(hostId)?.v ?? 0) >= 4
+
 /** Whether the hub a machine is on keeps how sessions are organised (an older one doesn't). */
 export function canOrganize(hostId: string) {
   const hub = splitHostId(hostId).hub

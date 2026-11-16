@@ -865,21 +865,35 @@ export interface Space {
   projects: string[]
 }
 
-/** A message the hub types into a session at a set time, through the held queue: it waits for the agent to be free, then goes once. */
+/** A message the hub types into a session at a set time, through the held queue: it waits for the agent to be free, then goes once. With `repeat` (from 0.27, version 4) it goes again on that rule, each time only into an idle agent with nothing typed. */
 export interface DelayedSend {
   /** "d-" and 12 hex digits */
   id: string
   host: string
+  /** the pane it goes to; for one that starts a new session each time, the last one it started */
   pane: string
   conv?: string
   tmuxId?: string
   text: string
-  /** when it goes, unix ms */
+  /** when it goes (or, while a repeating one waits for a busy agent, tries again), unix ms */
   at: number
   /** why it couldn't go; it stays until dismissed */
   error?: string
   /** planned by the hub itself rather than by you (from version 3) */
   auto?: SendAuto
+  /** goes again on this rule, `at` being the next time (from version 4) */
+  repeat?: Repeat
+  /** starts a new session each time instead, with this agent in this folder on the same machine */
+  newSession?: NewSession
+  /** a notice on every device each time it goes */
+  notify?: boolean
+  /** a repeating one that doesn't go until it's resumed */
+  paused?: boolean
+  /** while a repeating one waits for its busy agent: when this time was due, and the tries so far */
+  due?: number
+  tries?: number
+  /** when the last time was skipped because the agent stayed busy; cleared when one goes */
+  skipped?: number
 }
 
 /** Why the hub planned a message on its own: carry-on is "continue" a minute after the plan limit the agent stopped on resets, sent only if it's still stopped on it then. */
@@ -891,6 +905,30 @@ export interface AutoRules {
   autoCompact?: boolean
   /** percent, 85 when unset */
   compactAt?: number
+}
+
+/** How often a message sent later goes again. */
+export type RepeatEvery = 'hours' | 'day' | 'weekdays' | 'week'
+
+/** When a repeating message goes: wall-clock times in `tz`, so 9:00 stays 9:00 across a daylight saving change. */
+export interface Repeat {
+  every: RepeatEvery
+  /** every this many hours, 1 to 24 */
+  hours?: number
+  /** the time of day, in minutes after midnight */
+  minute?: number
+  /** the day of the week: 0 is Sunday, 6 Saturday */
+  day?: number
+  /** the time zone of the device that set it, as the IANA names it ("Europe/Berlin") */
+  tz: string
+  /** that device's minutes east of UTC when it set it, used where the hub doesn't know the zone */
+  offset: number
+}
+
+/** The session a repeating message starts each time: the agent, in the folder, on its machine. */
+export interface NewSession {
+  agent: AgentKind
+  cwd: string
 }
 
 /** A prompt kept to send again: for every session, or for one project's. */
@@ -920,7 +958,7 @@ export interface Organize {
   projects: Project[]
   groups: ProjectGroup[]
   spaces: Space[]
-  /** from version 2 */
+  /** from version 2; repeating ones from version 4 */
   sends?: DelayedSend[]
   prompts?: SavedPrompt[]
   sleep?: SleepRule[]

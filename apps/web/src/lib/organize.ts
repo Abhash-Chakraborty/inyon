@@ -1,4 +1,4 @@
-import type { DelayedSend, Organize, SessionMark } from '@inyon/protocol'
+import type { DelayedSend, Organize, Repeat, SessionMark } from '@inyon/protocol'
 import { matchesQuery, searchText } from './groups.ts'
 import type { PaneRef } from './overview.ts'
 
@@ -154,4 +154,62 @@ export function parseTags(text: string): string[] {
     if (t && !out.includes(t)) out.push(t)
   }
   return out
+}
+
+// ---------- messages that repeat (from 0.27) ----------
+
+/** Every so many hours: the choices offered. */
+export const REPEAT_HOURS = [1, 2, 3, 4, 6, 8, 12]
+
+/** A week as the pickers list it: Monday first (0 is Sunday, as the hub counts). */
+export const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]
+
+/** This device's time zone, which a rule set here keeps its times in, and its offset now. */
+export function deviceZone(now = new Date()): { tz: string; offset: number } {
+  let tz = 'UTC'
+  try {
+    tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {}
+  return { tz, offset: -now.getTimezoneOffset() }
+}
+
+/** "9:00" (or "9:00 AM") for minutes after midnight, as this device writes times. */
+export function clockText(minute: number) {
+  return new Date(2000, 0, 3, Math.floor(minute / 60), minute % 60).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+/** "Monday" for 1 (0 is Sunday). 2 January 2000 was a Sunday. */
+export function dayName(day: number, style: 'long' | 'short' = 'long') {
+  return new Date(2000, 0, 2 + day).toLocaleDateString([], { weekday: style })
+}
+
+/** The rule in words: "Every 3 hours", "Every day at 9:00", "Weekdays at 9:00", "Every Monday at 9:00".
+ * A rule set in another time zone says which. */
+export function repeatText(r: Repeat, here = deviceZone().tz) {
+  const at = clockText(r.minute ?? 0)
+  const text =
+    r.every === 'hours'
+      ? r.hours === 1
+        ? 'Every hour'
+        : `Every ${r.hours} hours`
+      : r.every === 'day'
+        ? `Every day at ${at}`
+        : r.every === 'weekdays'
+          ? `Weekdays at ${at}`
+          : `Every ${dayName(r.day ?? 1)} at ${at}`
+  return r.every !== 'hours' && r.tz !== here ? `${text} (${r.tz})` : text
+}
+
+/** When a rule set on this device first goes, by its clock: the hub works it out the same way, so
+ * this is what the sheet shows before it's kept. A time the clocks skip moves past the change. */
+export function firstRun(r: Repeat, now = new Date()): number {
+  if (r.every === 'hours') return now.getTime() + (r.hours ?? 1) * 3600_000
+  const m = r.minute ?? 0
+  for (let i = 0; i <= 8; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, Math.floor(m / 60), m % 60)
+    const day = d.getDay()
+    const on = r.every === 'day' || (r.every === 'weekdays' ? day >= 1 && day <= 5 : day === r.day)
+    if (on && d.getTime() > now.getTime()) return d.getTime()
+  }
+  return now.getTime()
 }

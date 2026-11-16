@@ -5,22 +5,31 @@
 //!
 //! Each automatic step fires once. A message sent later leaves the record (written down) before it
 //! is handed to the held queue, and a session closed when done loses its flag before it's ended,
-//! so a hub that stops halfway through doesn't do it again when it starts. The hand-offs go through
-//! [`set_actions`] in tests.
+//! so a hub that stops halfway through doesn't do it again when it starts. A repeating message
+//! (from 0.27) has its next time written down before it goes, for the same reason. The hand-offs
+//! go through [`set_actions`] in tests.
+//!
+//! A repeating message goes into its session only while the agent is idle with nothing typed in
+//! its box: a message dropped into the middle of something else would be worse than none. A busy
+//! agent is tried again every [`REPEAT_RETRY_MS`], [`REPEAT_TRIES`] times in all, and then that
+//! time is skipped with a notice. One that starts a new session each time needs no such wait.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use inyon_protocol::{
-    carries_on, compact_at, compacts, is_busy, js_len, project_of, sleep_minutes, AgentState, AutoRules, DelayedSend, HostState, HostStatus, Organize, PaneInfo, SavedPrompt,
-    SendAuto, SessionInfo, SessionMark, SleepRule, TurnFailure, CARRY_ON_DELAY_MS, CARRY_ON_TEXT, COMPACT_MAX, COMPACT_MIN, MAX_PROMPTS, MAX_SENDS, PROMPT_LEN, SEND_LEN,
-    SLEEP_ALL, SLEEP_MAX, SLEEP_MIN,
+    carries_on, chat_key, compact_at, compacts, is_busy, js_len, project_of, sleep_minutes, AgentKind, AgentState, AutoRules, DelayedSend, HostState, HostStatus, NewSession,
+    Organize, PaneInfo, SavedPrompt, SendAuto, SessionInfo, SessionMark, SleepRule, TurnFailure, CARRY_ON_DELAY_MS, CARRY_ON_TEXT, COMPACT_MAX, COMPACT_MIN, MAX_PROMPTS,
+    MAX_SENDS, PROMPT_LEN, SEND_LEN, SLEEP_ALL, SLEEP_MAX, SLEEP_MIN,
 };
 use serde_json::{Map, Value};
 
-use super::{bool_field, change, change_or_keep, conv_of, emit, given, new_id, object, pane_name, ref_field, switch_field, with, Event, Given, SessionPatch, MAX_SNOOZE_MS};
+use super::{
+    bool_field, change, change_or_keep, conv_of, emit, given, new_id, object, pane_name, ref_field, session_name, switch_field, with, Event, Given, SessionPatch, MAX_SNOOZE_MS,
+};
 use crate::clock::now_ms;
+use crate::features::repeat::{next_run, read_repeat};
 use crate::hosts::http_error::{http, HubResult};
 use crate::hosts::registry::registry;
 
@@ -28,6 +37,10 @@ use crate::hosts::registry::registry;
 pub const CLOSE_SETTLE_MS: u64 = 5_000;
 /// A session that couldn't be ended is tried again after this long.
 pub const CLOSE_RETRY_MS: u64 = 60_000;
+/// A repeating message that finds its agent busy tries again after this long,
+pub const REPEAT_RETRY_MS: u64 = 5 * 60_000;
+/// this many times in all (the first included), and is then skipped until its next time.
+pub const REPEAT_TRIES: u32 = 6;
 
 /// What the hub hands on to the rest of Inyon.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +51,9 @@ pub enum Act {
     Sleep { host: String, pane: String },
     /// a session done with its work, ended (End session)
     End { host: String, pane: String },
+    /// a new session with the agent in the folder, the message its first; `send` is the message
+    /// sent later it's for
+    Launch { host: String, agent: AgentKind, cwd: String, text: String, send: String, notify: bool },
 }
 
 type Actions = Rc<dyn Fn(&Act) -> HubResult<()>>;
@@ -84,6 +100,14 @@ fn act(a: Act) -> HubResult<()> {
                     crate::platform::console::error(&format!("couldn't end the session in {host} {pane} once done: {}", e.message));
                     rearm_close(&host, &pane, now_ms());
                 }
+            });
+            Ok(())
+        }
+        Act::Launch { host, agent, cwd, text, send, notify } => {
+            spawn(async move {
+                let opts = crate::claude::actions::LaunchOpts { cwd: Some(cwd.clone()), agent: Some(agent.as_str().to_owned()), prompt: Some(text.clone()), ..Default::default() };
+                let r = crate::claude::actions::launch(&host, &opts).await.map_err(|e| e.message);
+                launched(&send, &host, agent, &cwd, &text, notify, r);
             });
             Ok(())
         }
@@ -143,19 +167,54 @@ fn at_field(b: &Map<String, Value>, required: bool, now: u64) -> HubResult<Optio
 
 // ---------- messages sent later ----------
 
-/// Keeps a message to send to the pane's agent at `at`.
+/// The session a message starts each time, taken from the pane it's set on: its agent, in its
+/// folder. Only an agent that takes a first message as it starts can do that.
+fn new_session_of(p: &PaneInfo) -> HubResult<NewSession> {
+    let a = p.agent.as_ref().ok_or_else(|| http(409, "No agent is running in this pane"))?;
+    if !a.kind.chat() {
+        return Err(http(400, format!("{} starts without a first message, so it can't start a session for one", a.kind.def().name)));
+    }
+    Ok(NewSession { agent: a.kind, cwd: p.cwd.clone() })
+}
+
+/// The first time a new rule goes.
+fn first_run(r: &inyon_protocol::Repeat, now: u64) -> HubResult<u64> {
+    next_run(r, now, now).ok_or_else(|| http(400, "Pick when it repeats"))
+}
+
+/// `repeat`: absent, null (no longer repeating) or a rule.
+fn repeat_field(b: &Map<String, Value>) -> HubResult<Option<Option<inyon_protocol::Repeat>>> {
+    Ok(match given(b, "repeat") {
+        Given::Absent => None,
+        Given::Null => Some(None),
+        Given::Some(v) => Some(Some(read_repeat(v)?)),
+    })
+}
+
+/// Keeps a message to send to the pane's agent at `at`. With `repeat` it goes again on that rule
+/// (`at`, if given, is its first time); with `newSession` each time starts a session of its own
+/// with the pane's agent in its folder; with `notify` each time raises a notice.
 pub fn add_send(host_id: &str, pane_id: &str, b: &Value, now: u64) -> HubResult<DelayedSend> {
     let b = object(b)?;
-    let (text, at) = (text_field(b, true, SEND_LEN)?.unwrap_or_default(), at_field(b, true, now)?.unwrap_or_default());
+    let text = text_field(b, true, SEND_LEN)?.unwrap_or_default();
+    let repeat = repeat_field(b)?.flatten();
+    let at = match (at_field(b, repeat.is_none(), now)?, &repeat) {
+        (Some(at), _) => at,
+        (None, Some(r)) => first_run(r, now)?,
+        (None, None) => unreachable!("at is required without a repeat"),
+    };
     let conv = match given(b, "conv") {
         Given::Absent | Given::Null => None,
         Given::Some(Value::String(c)) if !c.is_empty() && c.len() <= 200 => Some(c.clone()),
         Given::Some(_) => return Err(http(400, "conv must be a conversation id")),
     };
+    let notify = bool_field(b, "notify")?.unwrap_or(false);
+    let fresh = bool_field(b, "newSession")?.unwrap_or(false);
     let f = registry().find_pane(host_id, pane_id).ok_or_else(|| http(404, "Pane not found"))?;
     if f.pane.agent.is_none() {
         return Err(http(409, "No agent is running in this pane"));
     }
+    let new_session = if fresh { Some(new_session_of(&f.pane)?) } else { None };
     change(|org| {
         let sends = org.sends.get_or_insert_with(Vec::new);
         if sends.len() >= MAX_SENDS {
@@ -165,30 +224,88 @@ pub fn add_send(host_id: &str, pane_id: &str, b: &Value, now: u64) -> HubResult<
             id: new_id("d"),
             host: host_id.to_owned(),
             pane: pane_id.to_owned(),
-            // one put back (Undo after a cancel) keeps the conversation it was for
-            conv: conv.or_else(|| conv_of(&f.pane).map(str::to_owned)),
+            // one put back (Undo after a cancel) keeps the conversation it was for; one that starts
+            // sessions of its own has none to follow
+            conv: if new_session.is_some() { None } else { conv.or_else(|| conv_of(&f.pane).map(str::to_owned)) },
             tmux_id: Some(f.session.id.clone()),
             text,
             at,
             error: None,
             auto: None,
+            repeat,
+            new_session,
+            notify: notify.then_some(true),
+            paused: None,
+            due: None,
+            tries: None,
+            skipped: None,
         };
         sends.push(s.clone());
         Ok(s)
     })
 }
 
-/// New text or time for a message waiting to go; one that failed can go again.
+/// New text, time or rule for a message waiting to go; one that failed can go again. A repeating
+/// one can be paused, and goes at its next time after now when it's resumed.
 pub fn update_send(id: &str, b: &Value, now: u64) -> HubResult<DelayedSend> {
     let b = object(b)?;
-    let (text, at) = (text_field(b, false, SEND_LEN)?, at_field(b, false, now)?);
+    let (text, at, repeat) = (text_field(b, false, SEND_LEN)?, at_field(b, false, now)?, repeat_field(b)?);
+    let (notify, paused) = (bool_field(b, "notify")?, bool_field(b, "paused")?);
+    // a session of its own each time: the agent and folder of the pane it's shown in
+    let new_session = match bool_field(b, "newSession")? {
+        Some(true) => {
+            let (host, pane) = with(|st| st.org.sends.iter().flatten().find(|s| s.id == id).map(|s| (s.host.clone(), s.pane.clone())))
+                .ok_or_else(|| http(404, "That message isn't waiting any more"))?;
+            let f = registry().find_pane(&host, &pane).ok_or_else(|| http(404, "Pane not found"))?;
+            Some(Some(new_session_of(&f.pane)?))
+        }
+        Some(false) => Some(None),
+        None => None,
+    };
     change(|org| {
         let s = org.sends.get_or_insert_with(Vec::new).iter_mut().find(|s| s.id == id).ok_or_else(|| http(404, "That message isn't waiting any more"))?;
+        // carrying on after a limit is for the session stopped on it, once
+        if s.auto.is_some() && (matches!(repeat, Some(Some(_))) || matches!(new_session, Some(Some(_)))) {
+            return Err(http(400, "Carrying on after a limit goes once, to its own session"));
+        }
         if let Some(t) = text {
             s.text = t;
         }
+        if let Some(ns) = new_session {
+            if ns.is_some() {
+                s.conv = None;
+            }
+            s.new_session = ns;
+        }
+        if let Some(r) = repeat {
+            s.repeat = r;
+            // a new rule starts afresh
+            (s.due, s.tries, s.skipped) = (None, None, None);
+            if let (Some(r), None) = (&s.repeat, at) {
+                s.at = first_run(r, now)?;
+            }
+        }
         if let Some(a) = at {
-            s.at = a;
+            (s.at, s.due, s.tries) = (a, None, None);
+        }
+        if let Some(n) = notify {
+            s.notify = n.then_some(true);
+        }
+        match (paused, &s.repeat) {
+            (Some(true), None) => return Err(http(400, "Only a message that repeats can be paused")),
+            (Some(true), Some(_)) => s.paused = Some(true),
+            (Some(false), Some(r)) if s.paused.is_some() => {
+                s.paused = None;
+                // the times it missed while paused don't go late
+                if s.at <= now {
+                    s.at = next_run(r, s.due.unwrap_or(s.at), now).ok_or_else(|| http(400, "Pick when it repeats"))?;
+                }
+                (s.due, s.tries) = (None, None);
+            }
+            _ => {}
+        }
+        if s.repeat.is_none() {
+            (s.paused, s.due, s.tries, s.skipped) = (None, None, None, None);
         }
         s.error = None;
         Ok(s.clone())
@@ -212,26 +329,31 @@ pub fn remove_send(id: &str) -> HubResult<()> {
 /// The pane a message goes to now: its conversation's wherever that is. One kept without a
 /// conversation goes to its pane, if that's still in the same tmux session. One whose
 /// conversation is nowhere goes nowhere: another conversation in its old pane isn't the one it
-/// was written for.
+/// was written for. A repeating one is for the session rather than one conversation in it, so
+/// it goes on to whatever conversation its pane holds now.
 fn target(s: &DelayedSend, hosts: &[HostState]) -> Option<String> {
     let on_host = || panes(hosts).filter(|(h, _, _)| h.config.id == s.host);
     if let Some(conv) = s.conv.as_deref() {
-        return on_host().find(|(_, _, p)| conv_of(p) == Some(conv)).map(|(_, _, p)| p.id.clone());
+        let found = on_host().find(|(_, _, p)| conv_of(p) == Some(conv)).map(|(_, _, p)| p.id.clone());
+        if found.is_some() || s.repeat.is_none() {
+            return found;
+        }
     }
     on_host().find(|(_, t, p)| p.id == s.pane && p.agent.is_some() && s.tmux_id.as_deref().is_none_or(|id| id == t.id)).map(|(_, _, p)| p.id.clone())
 }
 
-/// Hands the messages whose time has come to their panes' held queues, once each. Whether any went.
+/// Hands the messages whose time has come on, once each. Whether any were due.
 pub fn send_due(now: u64, hosts: &[HostState]) -> bool {
     // one for a machine that isn't online waits for it to be back
     let away = |host: &str| hosts.iter().any(|h| h.config.id == host && h.status != HostStatus::Online);
-    let due: Vec<DelayedSend> = with(|st| st.org.sends.iter().flatten().filter(|s| s.at <= now && s.error.is_none() && !away(&s.host)).cloned().collect::<Vec<_>>());
+    let due: Vec<DelayedSend> =
+        with(|st| st.org.sends.iter().flatten().filter(|s| s.at <= now && s.error.is_none() && s.paused.is_none() && !away(&s.host)).cloned().collect::<Vec<_>>());
     if due.is_empty() {
         return false;
     }
     for s in due {
         if s.auto != Some(SendAuto::CarryOn) {
-            let _ = deliver(&s.id, hosts);
+            let _ = if s.repeat.is_some() { run_repeat(&s, now, hosts) } else { deliver(&s.id, hosts).map(|_| ()) };
             continue;
         }
         // a carry-on goes only to an agent still stopped on the limit, with nothing typed
@@ -253,17 +375,24 @@ pub fn send_due(now: u64, hosts: &[HostState]) -> bool {
 pub const CARRIED_ON: &str = "Carrying on: the plan limit has reset";
 
 /// `POST /api/hosts/:id/sends/:did/now`: a waiting message (or one that failed) goes now, in one
-/// step, so it can't be both held and still waiting.
+/// step, so it can't be both held and still waiting. A repeating one goes now as an extra time,
+/// and keeps its rule.
 pub fn send_now(id: &str) -> HubResult<String> {
-    deliver(id, &registry().overview())
+    let hosts = registry().overview();
+    let s = with(|st| st.org.sends.iter().flatten().find(|s| s.id == id).cloned()).ok_or_else(|| http(404, "That message isn't waiting any more"))?;
+    if s.repeat.is_none() {
+        return deliver(id, &hosts);
+    }
+    let to = if s.new_session.is_some() { None } else { Some(target(&s, &hosts).ok_or_else(|| http(409, GONE))?) };
+    go(&s, to.as_deref(), &hosts)
 }
 
-/// Hands a waiting message to the held queue of the pane it goes to now, returning that pane. It
-/// leaves the record (written down) first, so a hub that stops after this never sends it twice;
-/// when it can't go, it's back on the list with the reason.
+/// Hands a waiting message to the held queue of the pane it goes to now (or starts its session),
+/// returning that pane. It leaves the record (written down) first, so a hub that stops after this
+/// never sends it twice; when it can't go, it's back on the list with the reason.
 fn deliver(id: &str, hosts: &[HostState]) -> HubResult<String> {
     let s = with(|st| st.org.sends.iter().flatten().find(|s| s.id == id).cloned()).ok_or_else(|| http(404, "That message isn't waiting any more"))?;
-    let to = target(&s, hosts);
+    let to = if s.new_session.is_some() { Some(s.pane.clone()) } else { target(&s, hosts) };
     change(|org| {
         let sends = org.sends.get_or_insert_with(Vec::new);
         let i = sends.iter().position(|x| x.id == s.id).ok_or_else(|| http(404, "That message isn't waiting any more"))?;
@@ -277,7 +406,8 @@ fn deliver(id: &str, hosts: &[HostState]) -> HubResult<String> {
         Ok(())
     })?;
     let Some(pane) = to else { return Err(http(409, GONE)) };
-    if let Err(e) = act(Act::Hold { host: s.host.clone(), pane: pane.clone(), text: s.text.clone() }) {
+    let goes = if s.new_session.is_some() { None } else { Some(pane.as_str()) };
+    if let Err(e) = go(&s, goes, hosts) {
         // kept even when it can't be written down now, so it can still be retried or dismissed
         let back = DelayedSend { pane: pane.clone(), error: Some(e.message.clone()), ..s };
         if let Err(w) = change_or_keep(|org| org.sends.get_or_insert_with(Vec::new).push(back)) {
@@ -286,6 +416,116 @@ fn deliver(id: &str, hosts: &[HostState]) -> HubResult<String> {
         return Err(e);
     }
     Ok(pane)
+}
+
+/// One time of a message: into the held queue of `pane`, or (with no pane) a new session of its
+/// own. A notice says so when it asked for one; a new session's says so once it has started.
+fn go(s: &DelayedSend, pane: Option<&str>, hosts: &[HostState]) -> HubResult<String> {
+    let notify = s.notify == Some(true);
+    match (pane, &s.new_session) {
+        (Some(pane), _) => {
+            act(Act::Hold { host: s.host.clone(), pane: pane.to_owned(), text: s.text.clone() })?;
+            if notify {
+                notice(&s.host, pane, format!("Scheduled: {}", first_line(&s.text)), hosts);
+            }
+            Ok(pane.to_owned())
+        }
+        (None, Some(ns)) => {
+            act(Act::Launch { host: s.host.clone(), agent: ns.agent, cwd: ns.cwd.clone(), text: s.text.clone(), send: s.id.clone(), notify })?;
+            Ok(s.pane.clone())
+        }
+        (None, None) => Err(http(409, GONE)),
+    }
+}
+
+/// Whether the agent in a pane can take a repeating message now: idle, asking nothing, with
+/// nothing held for it and nothing typed in its box (in an app or in the terminal).
+fn free_for(host: &str, pane: &str, hosts: &[HostState]) -> bool {
+    let Some((_, _, p)) = panes(hosts).find(|(h, _, p)| h.config.id == host && p.id == pane) else { return false };
+    let idle = p.agent.as_ref().is_some_and(|a| a.state == AgentState::Idle && a.waiting_for.is_none());
+    idle && crate::claude::held::list(host, pane).is_empty() && !crate::claude::drafts::keeps_draft(crate::claude::drafts::get_draft(&chat_key(host, pane)).as_ref())
+}
+
+/// One time of a repeating message whose time has come: it goes if its agent is free (its next
+/// time written down first), tries again a little later if not, and after [`REPEAT_TRIES`] tries
+/// skips this time with a notice. Times the hub missed while it was off go once, late, not each.
+fn run_repeat(s: &DelayedSend, now: u64, hosts: &[HostState]) -> HubResult<()> {
+    let Some(r) = &s.repeat else { return Ok(()) };
+    let due = s.due.unwrap_or(s.at);
+    let next = next_run(r, due, now);
+    let to = if s.new_session.is_some() { None } else { Some(target(s, hosts)) };
+    let edit = |f: &dyn Fn(&mut DelayedSend)| {
+        change(|org| {
+            if let Some(x) = org.sends.iter_mut().flatten().find(|x| x.id == s.id) {
+                f(x);
+            }
+            Ok(())
+        })
+    };
+    let Some(next) = next else { return edit(&|x| x.error = Some("Pick when it repeats".into())) };
+    let pane = match to {
+        // its session is gone: it waits with the reason, as a one-off does
+        Some(None) => return edit(&|x| (x.error, x.due, x.tries) = (Some(GONE.into()), None, None)),
+        Some(Some(p)) => Some(p),
+        None => None,
+    };
+    if let Some(p) = pane.as_deref().filter(|p| !free_for(&s.host, p, hosts)) {
+        let tries = s.tries.unwrap_or(0) + 1;
+        if tries < REPEAT_TRIES {
+            return edit(&|x| (x.at, x.due, x.tries) = (now + REPEAT_RETRY_MS, Some(due), Some(tries)));
+        }
+        edit(&|x| (x.at, x.due, x.tries, x.skipped) = (next, None, None, Some(due)))?;
+        notice(&s.host, p, format!("Skipped “{}”: the agent was busy", first_line(&s.text)), hosts);
+        return Ok(());
+    }
+    // the next time is written down before this one goes, so a hub that stops right after
+    // doesn't send it again; it follows the conversation its pane holds now
+    let conv = pane.as_deref().and_then(|p| panes(hosts).find(|(h, _, x)| h.config.id == s.host && x.id == p)).and_then(|(_, _, x)| conv_of(x).map(str::to_owned));
+    edit(&|x| {
+        (x.at, x.due, x.tries, x.skipped) = (next, None, None, None);
+        if let Some(p) = &pane {
+            x.pane = p.clone();
+            x.conv = conv.clone();
+        }
+    })?;
+    if let Err(e) = go(s, pane.as_deref(), hosts) {
+        notice(&s.host, pane.as_deref().unwrap_or(&s.pane), format!("Skipped “{}”: {}", first_line(&s.text), e.message), hosts);
+    }
+    Ok(())
+}
+
+/// A session started for a message sent later. A repeating one is shown in that session's chat
+/// from now on; the notice, when it asked for one, opens it. One that couldn't start says why.
+fn launched(send: &str, host: &str, agent: AgentKind, cwd: &str, text: &str, notify: bool, r: Result<String, String>) {
+    let hosts = registry().overview();
+    let title = format!("{} in {}", agent.def().name, cwd.trim_end_matches('/').rsplit('/').next().filter(|f| !f.is_empty()).unwrap_or(cwd));
+    match r {
+        Ok(pane) => {
+            let tmux = panes(&hosts).find(|(h, _, p)| h.config.id == host && p.id == pane).map(|(_, t, _)| t.id.clone());
+            let _ = change(|org| {
+                if let Some(x) = org.sends.iter_mut().flatten().find(|x| x.id == send) {
+                    (x.pane, x.tmux_id) = (pane.clone(), tmux);
+                }
+                Ok(())
+            });
+            if notify {
+                emit(Event::Notice { host: host.to_owned(), pane, title, body: format!("Scheduled: {}", first_line(text)) });
+            }
+        }
+        Err(e) => {
+            let pane = with(|st| st.org.sends.iter().flatten().find(|x| x.id == send).map(|x| x.pane.clone())).unwrap_or_default();
+            emit(Event::Notice { host: host.to_owned(), pane, title, body: format!("Couldn't start the scheduled session: {e}") });
+        }
+    }
+}
+
+fn notice(host: &str, pane: &str, body: String, hosts: &[HostState]) {
+    emit(Event::Notice { host: host.to_owned(), pane: pane.to_owned(), title: session_name(host, pane, hosts), body });
+}
+
+/// A message's first line, for a notice.
+fn first_line(text: &str) -> &str {
+    text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default()
 }
 
 const GONE: &str = "The session isn't there any more";
@@ -393,10 +633,11 @@ pub fn check_agents(now: u64, hosts: &[HostState]) {
         let Some(t) = since else { continue };
         let Some(minutes) = sleep_minutes(&org, project_of(&org, &h.config.id, &p.cwd, mark)) else { continue };
         // a pinned one stays awake, and so does one without a conversation to resume, one with a
-        // message waiting for it, and the companion
+        // message waiting for it (one that starts sessions of its own is only shown here), and
+        // the companion
         // (a message goes to its conversation wherever that is now)
         let waiting = !crate::claude::held::list(&h.config.id, &p.id).is_empty()
-            || org.sends.iter().flatten().any(|s| s.host == h.config.id && (s.pane == p.id || (s.conv.is_some() && s.conv == a.session_id)));
+            || org.sends.iter().flatten().any(|s| s.host == h.config.id && s.new_session.is_none() && (s.pane == p.id || (s.conv.is_some() && s.conv == a.session_id)));
         if mark.is_some_and(|m| m.pinned.is_some()) || a.session_id.as_deref().is_none_or(str::is_empty) || p.companion == Some(true) || waiting {
             continue;
         }
@@ -589,6 +830,13 @@ pub fn plan_carry_on(hosts: &[HostState]) -> bool {
                 at,
                 error: None,
                 auto: Some(SendAuto::CarryOn),
+                repeat: None,
+                new_session: None,
+                notify: None,
+                paused: None,
+                due: None,
+                tries: None,
+                skipped: None,
             });
             Ok(())
         });
