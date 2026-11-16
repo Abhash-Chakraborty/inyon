@@ -110,6 +110,8 @@ static SUB: GlobalSignal<Option<SubagentInfo>> = Signal::global(|| None);
 static FILES_GO: GlobalSignal<Option<(u64, bool, String)>> = Signal::global(|| None);
 /// A file to show the diff of in the working tree, from its right-click menu.
 static TREE_PICK: GlobalSignal<Option<String>> = Signal::global(|| None);
+/// Stage, unstage or discard a file in the working tree, from its right-click menu.
+static TREE_ACT: GlobalSignal<Option<(&'static str, String)>> = Signal::global(|| None);
 static OP_N: GlobalSignal<u64> = Signal::global(|| 0);
 /// Bumped when a right-click menu's Mention puts a path in the box, so the phone's sheet over the
 /// box gets out of the way.
@@ -127,6 +129,8 @@ pub enum PanelOp {
     /// a folder (true) or a file in the Files tab
     Open(bool, String),
     ShowDiff(String),
+    /// "stage", "unstage" or "discard" the working tree's file at this path
+    Tree(&'static str, String),
 }
 
 pub fn run(op: PanelOp) {
@@ -142,6 +146,7 @@ pub fn run(op: PanelOp) {
             *FILES_GO.write() = Some((n, dir, path));
         }
         PanelOp::ShowDiff(path) => *TREE_PICK.write() = Some(path),
+        PanelOp::Tree(action, path) => *TREE_ACT.write() = Some((action, path)),
     }
 }
 
@@ -823,6 +828,8 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
     let mut sel = use_signal(|| None::<String>);
     let mut msg = use_signal(String::new);
     let mut busy = use_signal(|| None::<&'static str>);
+    // the file being staged, unstaged or discarded ("*" for all of them)
+    let acting = use_signal(|| None::<String>);
     // the agent did something: look again, a moment later
     let first = use_hook(|| Rc::new(Cell::new(true)));
     use_effect(use_reactive!(|poke| {
@@ -842,6 +849,63 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
             *TREE_PICK.write() = None;
         }
     });
+    // stage, unstage or discard one file (or, with none, stage or unstage every change)
+    let act = {
+        let (host, pane) = (host.clone(), pane.clone());
+        Rc::new(move |action: &'static str, file: Option<api::GitFile>| {
+            if acting.peek().is_some() {
+                return;
+            }
+            let (host, pane) = (host.clone(), pane.clone());
+            let (mut git, mut rev, mut acting) = (git, rev, acting);
+            spawn(async move {
+                if action == "discard" {
+                    let Some(f) = file.as_ref() else { return };
+                    let (title, body) = changes::discard_ask(f);
+                    if !toast::confirm(Ask { title, body: Some(body), yes: "Discard".into(), danger: true, ..Default::default() }).await {
+                        return;
+                    }
+                }
+                acting.set(Some(file.as_ref().map_or("*".into(), |f| f.path.clone())));
+                let paths = match (&file, action) {
+                    (Some(f), "discard") => changes::discard_paths(f),
+                    (Some(f), _) => vec![f.path.clone()],
+                    (None, _) => vec![],
+                };
+                match api::git_files(&host, &pane, action, &paths, file.is_none()).await {
+                    Ok(state) => {
+                        git.write().data = Some(state);
+                        if action == "discard" {
+                            toast::toast("Changes discarded", None, ToastTone::Success);
+                        }
+                    }
+                    Err(e) => {
+                        let what = match action {
+                            "stage" => "Could not stage",
+                            "unstage" => "Could not unstage",
+                            _ => "Could not discard",
+                        };
+                        toast::toast(what, Some(e.message), ToastTone::Error);
+                        rev += 1;
+                    }
+                }
+                acting.set(None);
+            });
+        })
+    };
+    // an action picked from a file's right-click menu
+    {
+        let act = act.clone();
+        use_effect(move || {
+            if let Some((action, path)) = TREE_ACT() {
+                *TREE_ACT.write() = None;
+                let f = git.peek().data.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned());
+                if f.is_some() {
+                    act(action, f);
+                }
+            }
+        });
+    }
     let g = git.read();
     if g.data.is_none() && g.busy && g.error.is_none() {
         return rsx! { WaitRows { label: "Reading git status", class: "pp-wait" } };
@@ -859,6 +923,9 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
     let behind = s.behind.unwrap_or(0.0);
     // something to push, and somewhere to push it
     let can_push = s.remote == Some(true) && (s.upstream.is_none() || ahead > 0.0);
+    let staging = changes::can_stage(&s.files);
+    let (commit_label, commit_title, commit_staged) = changes::commit_plan(&s.files);
+    let (staged_files, changed_files) = changes::tree_groups(&s.files);
     let run = {
         let (host, pane) = (host.clone(), pane.clone());
         move |what: &'static str| {
@@ -867,19 +934,36 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
             spawn(async move {
                 let r = if what == "commit" {
                     let message = msg.peek().clone();
-                    api::git_commit(&host, &pane, &message).await.map(|c| {
+                    api::git_commit(&host, &pane, &message, commit_staged).await.map(|c| {
                         // a message typed while it committed stays
                         if *msg.peek() == message {
                             msg.set(String::new());
                         }
                         format!("Committed {}", c.commit)
                     })
+                } else if what == "draft" {
+                    match api::git_draft(&host, &pane).await {
+                        Ok(d) => {
+                            msg.set(d.message);
+                            busy.set(None);
+                            return;
+                        }
+                        Err(e) => Err(e),
+                    }
                 } else {
                     api::git_push(&host, &pane).await.map(|_| "Pushed".to_string())
                 };
                 match r {
                     Ok(t) => toast::toast(t, None, ToastTone::Success),
-                    Err(e) => toast::toast(if what == "commit" { "Could not commit" } else { "Could not push" }, Some(e.message), ToastTone::Error),
+                    Err(e) => toast::toast(
+                        match what {
+                            "commit" => "Could not commit",
+                            "draft" => "Could not draft a message",
+                            _ => "Could not push",
+                        },
+                        Some(e.message),
+                        ToastTone::Error,
+                    ),
                 }
                 rev += 1;
                 busy.set(None);
@@ -888,9 +972,12 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
     };
     let mut push = run.clone();
     let mut commit = run.clone();
+    let mut commit_key = run.clone();
+    let mut draft = run.clone();
     let push_title = s.upstream.as_ref().map_or_else(|| "Push to origin".to_string(), |u| format!("Push to {u}"));
     let root = s.root.clone();
     let files_len = s.files.len();
+    let msg_rows = msg().split('\n').count().clamp(1, 6);
     rsx! {
         div { class: "pp-col",
             div { class: "pp-branch",
@@ -916,44 +1003,41 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                 Empty { icon: Icon::FileDiff, title: "No changes", "Nothing has changed since the last commit." }
             } else {
                 div { class: "pp-files",
-                    for gf in s.files.iter().cloned() {
-                        {
-                            let (label, tone) = status_tone(&gf.status);
-                            let full = root.as_ref().map_or(gf.path.clone(), |r| format!("{r}/{}", gf.path));
-                            let mut items = vec![Item::new("Show diff", Icon::FileDiff, Action::Panel(PanelOp::ShowDiff(gf.path.clone())))];
-                            if gf.status != "D" {
-                                items.push(Item::new("Mention in message", Icon::AtSign, Action::Panel(PanelOp::Mention { host: host.clone(), pane: pane.clone(), path: gf.path.clone() })));
-                            }
-                            items.push(Item::copy("Copy path", &full));
-                            let title = gf.from.as_ref().map_or(gf.path.clone(), |from| format!("{from} → {}", gf.path));
-                            rsx! {
-                                button {
-                                    key: "{gf.path}",
-                                    class: if cur.as_ref().is_some_and(|c| c.path == gf.path) { "pp-file pp-file-on" } else { "pp-file" },
-                                    r#type: "button",
-                                    title: "{title}",
-                                    oncontextmenu: menu::open(items),
-                                    onclick: { let p = gf.path.clone(); move |_| sel.set(Some(p.clone())) },
-                                    span { class: "pp-status mono {tone}", "{label}" }
-                                    span { class: "pp-file-name truncate",
-                                        span { class: "fg-3", "{dir_of(&gf.path)}" }
-                                        "{name_of(&gf.path)}"
-                                    }
-                                    if gf.status != "?" {
-                                        span { class: "pp-counts mono tabular",
-                                            span { class: "fg-ok", "+{gf.add}" }
-                                            " "
-                                            span { class: "fg-danger", "−{gf.del}" }
-                                        }
-                                    }
-                                }
-                            }
+                    if staging {
+                        if !staged_files.is_empty() {
+                            TreeGroupHead { title: "Staged", n: staged_files.len(), all: "Unstage all", busy: acting().is_some(), on_all: { let act = act.clone(); move |_| act("unstage", None) } }
+                        }
+                        for gf in staged_files.iter().cloned() {
+                            TreeRow { key: "s:{gf.path}", host: host.clone(), pane: pane.clone(), root: root.clone(), on: cur.as_ref().is_some_and(|c| c.path == gf.path), staged: true, staging, acting: acting(), on_pick: move |p: String| sel.set(Some(p)), on_act: { let act = act.clone(); move |(a, f): (&'static str, api::GitFile)| act(a, Some(f)) }, file: gf }
+                        }
+                        if !changed_files.is_empty() {
+                            TreeGroupHead { title: "Changes", n: changed_files.len(), all: "Stage all", busy: acting().is_some(), on_all: { let act = act.clone(); move |_| act("stage", None) } }
+                        }
+                        for gf in changed_files.iter().cloned() {
+                            TreeRow { key: "c:{gf.path}", host: host.clone(), pane: pane.clone(), root: root.clone(), on: cur.as_ref().is_some_and(|c| c.path == gf.path), staged: false, staging, acting: acting(), on_pick: move |p: String| sel.set(Some(p)), on_act: { let act = act.clone(); move |(a, f): (&'static str, api::GitFile)| act(a, Some(f)) }, file: gf }
+                        }
+                    } else {
+                        for gf in s.files.iter().cloned() {
+                            TreeRow { key: "c:{gf.path}", host: host.clone(), pane: pane.clone(), root: root.clone(), on: cur.as_ref().is_some_and(|c| c.path == gf.path), staged: false, staging, acting: acting(), on_pick: move |p: String| sel.set(Some(p)), on_act: { let act = act.clone(); move |(a, f): (&'static str, api::GitFile)| act(a, Some(f)) }, file: gf }
                         }
                     }
                 }
                 if let Some(c) = cur {
+                    if staging {
+                        div { class: "pp-diff-head",
+                            span { class: "pp-diff-path mono truncate", title: "{c.path}", "{c.path}" }
+                            button { class: "button button-xs button-ghost press", r#type: "button", title: "Throw away the changes to this file", disabled: acting().is_some(),
+                                onclick: { let act = act.clone(); let c = c.clone(); move |_| act("discard", Some(c.clone())) },
+                                Glyph { icon: Icon::RotateCcw, size: 14 }
+                                if acting().as_deref() == Some(c.path.as_str()) { "Discarding…" } else { "Discard" }
+                            }
+                        }
+                    }
                     // read again with the status: Refresh, the agent's edits, a file coming or going
-                    TreeDiff { key: "{c.path}:{poke}:{files_len}:{rev}", host: host.clone(), pane: pane.clone(), path: c.path.clone() }
+                    {
+                        let k = format!("{}:{poke}:{files_len}:{}:{:?}:{:?}", c.path, rev(), c.staged, c.unstaged);
+                        rsx! { TreeDiff { key: "{k}", host: host.clone(), pane: pane.clone(), path: c.path.clone() } }
+                    }
                 }
                 form {
                     class: "pp-commit",
@@ -963,10 +1047,111 @@ fn WorkingTree(host: String, pane: String, poke: usize) -> Element {
                             commit("commit");
                         }
                     },
-                    input { class: "field pp-input", value: "{msg}", placeholder: "Commit message", "aria-label": "Commit message", oninput: move |e| msg.set(e.value()) }
-                    button { class: "button button-sm button-primary press", r#type: "submit", title: "Commit every change shown here", disabled: msg().trim().is_empty() || busy().is_some(),
-                        if busy() == Some("commit") { "Committing…" } else { "Commit all" }
+                    textarea {
+                        class: "field pp-input pp-message",
+                        rows: "{msg_rows}",
+                        value: "{msg}",
+                        placeholder: "Commit message",
+                        "aria-label": "Commit message",
+                        oninput: move |e| msg.set(e.value()),
+                        onkeydown: move |e: KeyboardEvent| {
+                            if e.key() == Key::Enter && (e.modifiers().meta() || e.modifiers().ctrl()) {
+                                e.prevent_default();
+                                if !msg.peek().trim().is_empty() && busy.peek().is_none() {
+                                    commit_key("commit");
+                                }
+                            }
+                        },
                     }
+                    div { class: "pp-commit-row",
+                        button { class: "button button-xs button-ghost press", r#type: "button", title: "Write a message from the files that would be committed", disabled: busy().is_some(), onclick: move |_| draft("draft"),
+                            Glyph { icon: Icon::Pencil, size: 14 }
+                            if busy() == Some("draft") { "Drafting…" } else { "Draft" }
+                        }
+                        span { class: "pp-grow" }
+                        button { class: "button button-sm button-primary press", r#type: "submit", title: "{commit_title}", disabled: msg().trim().is_empty() || busy().is_some(),
+                            if busy() == Some("commit") { "Committing…" } else { "{commit_label}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The heading over the Staged or Changes list, with its count and Stage all or Unstage all.
+#[component]
+fn TreeGroupHead(title: &'static str, n: usize, all: &'static str, busy: bool, on_all: EventHandler<()>) -> Element {
+    rsx! {
+        div { class: "pp-group-head",
+            span { class: "pp-group-title", "{title}" }
+            span { class: "tabular", "{n}" }
+            span { class: "pp-grow" }
+            button { class: "pp-group-all press", r#type: "button", disabled: busy, onclick: move |_| on_all.call(()), "{all}" }
+        }
+    }
+}
+
+/// One changed file: pick it for its diff, right-click for its menu, and (with a hub that stages) + or − at its end.
+#[component]
+fn TreeRow(
+    host: String,
+    pane: String,
+    root: Option<String>,
+    file: api::GitFile,
+    on: bool,
+    staged: bool,
+    staging: bool,
+    acting: Option<String>,
+    on_pick: EventHandler<String>,
+    on_act: EventHandler<(&'static str, api::GitFile)>,
+) -> Element {
+    let gf = file;
+    let (label, tone) = status_tone(&gf.status);
+    let full = root.as_ref().map_or(gf.path.clone(), |r| format!("{r}/{}", gf.path));
+    let mut items = vec![Item::new("Show diff", Icon::FileDiff, Action::Panel(PanelOp::ShowDiff(gf.path.clone())))];
+    if gf.status != "D" {
+        items.push(Item::new("Mention in message", Icon::AtSign, Action::Panel(PanelOp::Mention { host: host.clone(), pane: pane.clone(), path: gf.path.clone() })));
+    }
+    items.push(Item::copy("Copy path", &full));
+    if staging {
+        items.push(if staged {
+            Item::new("Unstage", Icon::Minus, Action::Panel(PanelOp::Tree("unstage", gf.path.clone())))
+        } else {
+            Item::new("Stage", Icon::Plus, Action::Panel(PanelOp::Tree("stage", gf.path.clone())))
+        });
+        items.push(Item::new("Discard changes", Icon::RotateCcw, Action::Panel(PanelOp::Tree("discard", gf.path.clone()))).danger());
+    }
+    let title = gf.from.as_ref().map_or(gf.path.clone(), |from| format!("{from} → {}", gf.path));
+    let name = name_of(&gf.path).to_string();
+    let mine = acting.as_deref() == Some(gf.path.as_str());
+    let toggle = if staged { "unstage" } else { "stage" };
+    let toggle_label = format!("{} {name}", if staged { "Unstage" } else { "Stage" });
+    rsx! {
+        div { class: if on { "pp-file-row pp-file-on" } else { "pp-file-row" },
+            button {
+                class: "pp-file",
+                r#type: "button",
+                title: "{title}",
+                oncontextmenu: menu::open(items),
+                onclick: { let p = gf.path.clone(); move |_| on_pick.call(p.clone()) },
+                span { class: "pp-status mono {tone}", "{label}" }
+                span { class: "pp-file-name truncate",
+                    span { class: "fg-3", "{dir_of(&gf.path)}" }
+                    "{name}"
+                }
+                if gf.status != "?" {
+                    span { class: "pp-counts mono tabular",
+                        span { class: "fg-ok", "+{gf.add}" }
+                        " "
+                        span { class: "fg-danger", "−{gf.del}" }
+                    }
+                }
+            }
+            if staging {
+                button { class: "icon-button pp-stage press", r#type: "button", "aria-label": "{toggle_label}", title: "{toggle_label}", disabled: acting.is_some(),
+                    onclick: { let f = gf.clone(); move |_| on_act.call((toggle, f.clone())) },
+                    Glyph { icon: if staged { Icon::Minus } else { Icon::Plus }, size: 14, class: if mine { "spin" } else { "" } }
                 }
             }
         }

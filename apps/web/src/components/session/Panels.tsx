@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { Bot, FileDiff, LayoutPanelLeft, PanelsTopLeft, SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2 } from 'lucide-react'
+import { Bot, Columns2, FileDiff, LayoutPanelLeft, PanelsTopLeft, Rows2, SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2 } from 'lucide-react'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { buildRows } from '../../lib/chat.ts'
 import { api } from '../../lib/api.ts'
@@ -8,7 +8,7 @@ import { openLink, shortPath, since } from '../../lib/format.ts'
 import { Diff, useHunks } from '../chat/Diff.tsx'
 import { AssistantTurn, CommandRow, GoalRow, NoticeRow, UserMessage } from '../chat/Messages.tsx'
 import { Button, Empty, Segmented, Sheet, Waiting, arrowStep, useStrip } from '../ui/primitives.tsx'
-import { CommentableDiff, FilesTab, ReviewBar, WorkingTree, type PaneKey } from './Workspace.tsx'
+import { CommentableDiff, FilesTab, ReviewBar, WorkingTree, useDiffLayout, type PaneKey } from './Workspace.tsx'
 import { panelBox, usePanelResize } from './PanelResize.tsx'
 import { UsagePanel } from './Usage.tsx'
 import type { SessionModel } from './useSession.ts'
@@ -92,11 +92,27 @@ export function ChangesTab({ items, p, onComposed }: { items: ChatItem[]; p?: Pa
       localStorage.setItem('inyon.changes', m)
     } catch {}
   }
+  const layout = useDiffLayout()
   if (!p) return <ChatChanges items={items} />
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 px-2.5 pt-2.5 pb-1.5">
-        <Segmented full size="sm" value={mode} onChange={pick} options={[{ v: 'chat', label: 'This chat' }, { v: 'tree', label: 'Working tree', title: 'Every change since the last commit' }]} />
+      <div className="flex shrink-0 items-center gap-2 px-2.5 pt-2.5 pb-1.5">
+        <div className="min-w-0 flex-1">
+          <Segmented full size="sm" value={mode} onChange={pick} options={[{ v: 'chat', label: 'This chat' }, { v: 'tree', label: 'Working tree', title: 'Every change since the last commit' }]} />
+        </div>
+        {/* side by side only where there's room for two columns */}
+        {layout.can && (
+          <Segmented
+            size="sm"
+            label="Diff layout"
+            value={layout.view}
+            onChange={layout.pick}
+            options={[
+              { v: 'unified', label: <Rows2 className="size-3.5" />, name: 'One column', title: 'One column' },
+              { v: 'split', label: <Columns2 className="size-3.5" />, name: 'Side by side', title: 'Side by side' },
+            ]}
+          />
+        )}
       </div>
       <div key={mode} className="animate-fade-in flex min-h-0 flex-1 flex-col">
         {mode === 'chat' ? <ChatChanges items={items} p={p} onTree={() => pick('tree')} /> : <WorkingTree p={p} poke={items.length} />}

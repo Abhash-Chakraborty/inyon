@@ -239,6 +239,51 @@ pub fn running(info: Option<&ChatInfo>) -> usize {
     })
 }
 
+// ---------- the working tree's actions (lib/worktree.ts) ----------
+
+/// The hub reports what's staged (from 0.27); an older hub gets no staging controls.
+pub fn can_stage(files: &[crate::api::GitFile]) -> bool {
+    files.iter().any(|f| f.staged.is_some())
+}
+
+/// The staged files, and the files with changes not staged yet; a file can be in both.
+pub fn tree_groups(files: &[crate::api::GitFile]) -> (Vec<crate::api::GitFile>, Vec<crate::api::GitFile>) {
+    let staged = files.iter().filter(|f| f.staged == Some(true)).cloned().collect();
+    let changes = files.iter().filter(|f| f.unstaged.unwrap_or(true)).cloned().collect();
+    (staged, changes)
+}
+
+/// What the commit button says, its tooltip, and the `staged` the commit sends.
+pub fn commit_plan(files: &[crate::api::GitFile]) -> (String, String, Option<bool>) {
+    if !can_stage(files) {
+        return ("Commit all".into(), "Commit every change shown here".into(), None);
+    }
+    match files.iter().filter(|f| f.staged == Some(true)).count() {
+        0 => ("Commit all".into(), "Commit every change shown here".into(), Some(false)),
+        1 => ("Commit 1 staged".into(), "Commit the staged file only".into(), Some(true)),
+        n => (format!("Commit {n} staged"), format!("Commit the {n} staged files only"), Some(true)),
+    }
+}
+
+/// The paths a discard names: a renamed file goes back to where it was, so both.
+pub fn discard_paths(f: &crate::api::GitFile) -> Vec<String> {
+    let mut v = vec![f.path.clone()];
+    v.extend(f.from.clone());
+    v
+}
+
+/// The confirm sheet's title and line before a discard.
+pub fn discard_ask(f: &crate::api::GitFile) -> (String, String) {
+    let name = f.path.rsplit('/').next().unwrap_or(&f.path);
+    let what = match (f.status.as_str(), &f.from) {
+        ("?" | "A", _) => "It's a new file, so it's deleted. ".to_string(),
+        ("R", Some(from)) => format!("It goes back to {from}. "),
+        ("D", _) => "The file comes back as it was in the last commit. ".to_string(),
+        _ => String::new(),
+    };
+    (format!("Discard your changes to {name}?"), format!("{what}This can't be undone."))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,5 +438,30 @@ mod tests {
         .unwrap();
         assert_eq!(running(Some(&info)), 2);
         assert_eq!(running(None), 0);
+    }
+
+    fn gf(path: &str, status: &str, staged: Option<bool>, unstaged: Option<bool>) -> crate::api::GitFile {
+        crate::api::GitFile { path: path.into(), from: None, status: status.into(), add: 1.0, del: 0.0, staged, unstaged }
+    }
+
+    #[test]
+    fn working_tree_groups_commit_and_discard_read_as_the_web_app_does() {
+        let files = [gf("a.ts", "M", Some(true), Some(false)), gf("b.ts", "M", Some(true), Some(true)), gf("c.md", "?", Some(false), Some(true))];
+        let (staged, changes) = tree_groups(&files);
+        assert_eq!(staged.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.ts", "b.ts"]);
+        assert_eq!(changes.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b.ts", "c.md"]);
+        assert_eq!(commit_plan(&files), ("Commit 2 staged".into(), "Commit the 2 staged files only".into(), Some(true)));
+        assert_eq!(commit_plan(&files[2..]).2, Some(false));
+        let old = [gf("a.ts", "M", None, None)];
+        assert!(!can_stage(&old));
+        assert_eq!(commit_plan(&old), ("Commit all".into(), "Commit every change shown here".into(), None));
+        assert_eq!(tree_groups(&old).1.len(), 1);
+
+        assert_eq!(discard_ask(&gf("src/a b.ts", "M", Some(false), Some(true))), ("Discard your changes to a b.ts?".into(), "This can't be undone.".into()));
+        assert_eq!(discard_ask(&gf("n.md", "?", Some(false), Some(true))).1, "It's a new file, so it's deleted. This can't be undone.");
+        let mut r = gf("new.ts", "R", Some(true), Some(false));
+        r.from = Some("old.ts".into());
+        assert_eq!(discard_ask(&r).1, "It goes back to old.ts. This can't be undone.");
+        assert_eq!(discard_paths(&r), ["new.ts", "old.ts"]);
     }
 }

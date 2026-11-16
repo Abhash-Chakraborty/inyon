@@ -1316,6 +1316,12 @@ pub struct GitFile {
     pub add: f64,
     #[serde(default)]
     pub del: f64,
+    /// some of its changes are staged (hubs from 0.27; None from an older one)
+    #[serde(default)]
+    pub staged: Option<bool>,
+    /// it has changes not staged yet
+    #[serde(default)]
+    pub unstaged: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
@@ -1362,12 +1368,38 @@ pub struct Commit {
 #[derive(Serialize)]
 struct CommitBody<'a> {
     message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    staged: Option<bool>,
 }
 
-/// Commits every change in the working tree.
-pub async fn git_commit(host: &str, pane: &str, message: &str) -> Result<Commit, ApiError> {
-    let body = serde_json::to_string(&CommitBody { message }).unwrap_or_default();
+/// Commits what's staged (`staged: Some(true)`), every change (`Some(false)`), or what the hub picks.
+pub async fn git_commit(host: &str, pane: &str, message: &str, staged: Option<bool>) -> Result<Commit, ApiError> {
+    let body = serde_json::to_string(&CommitBody { message, staged }).unwrap_or_default();
     parse(&request("POST", &format!("{}/git/commit", pane_path(host, pane)), Some(body)).await?)
+}
+
+#[derive(Serialize)]
+struct FilesBody<'a> {
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    paths: &'a [String],
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    all: bool,
+}
+
+/// `stage`, `unstage` or `discard` these files (or, with `all`, stage or unstage every change); the new status.
+pub async fn git_files(host: &str, pane: &str, action: &str, paths: &[String], all: bool) -> Result<GitState, ApiError> {
+    let body = serde_json::to_string(&FilesBody { paths, all }).unwrap_or_default();
+    parse(&request("POST", &format!("{}/git/{action}", pane_path(host, pane)), Some(body)).await?)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct Draft {
+    pub message: String,
+}
+
+/// A commit message to start from, made on the machine from the changed files.
+pub async fn git_draft(host: &str, pane: &str) -> Result<Draft, ApiError> {
+    parse(&request("GET", &format!("{}/git/draft", pane_path(host, pane)), None).await?)
 }
 
 pub async fn git_push(host: &str, pane: &str) -> Result<(), ApiError> {

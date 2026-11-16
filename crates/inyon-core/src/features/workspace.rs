@@ -1,8 +1,8 @@
 //! Port of features/workspace.ts.
 //!
 //! The folder a session works in, as the Files and Changes tabs see it: its files, read only, and
-//! its git working tree (what changed since the last commit, whoever changed it), with commit and
-//! push. Everything runs as one short shell command on the pane's machine, in the agent's folder.
+//! its git working tree (what changed since the last commit, whoever changed it), with stage,
+//! unstage, discard, a drafted commit message, commit and push. Everything runs as one short shell command on the pane's machine, in the agent's folder.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -180,6 +180,10 @@ pub struct GitFile {
     pub status: &'static str,
     pub add: u64,
     pub del: u64,
+    /// some of its changes are in the index, ready to commit
+    pub staged: bool,
+    /// it has changes the index doesn't have yet (always, for a file git doesn't track)
+    pub unstaged: bool,
 }
 
 /// What `parseStatus` reads: the changed files, then the branch and how far from its upstream
@@ -211,20 +215,27 @@ pub struct GitState {
 }
 
 const GIT: &str = "GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 git -c core.quotepath=off -c color.ui=false";
+/// git for commands that name files: a path is a file name, never a pattern (`*.md`, `:(top)x`).
+const GITP: &str = "GIT_TERMINAL_PROMPT=0 GIT_LITERAL_PATHSPECS=1 git -c core.quotepath=off -c color.ui=false";
 
-/// Reads `git status --porcelain=v1 -z --branch` and `git diff --numstat -z` into a list.
-pub fn parse_status(status: &str, numstat: &str) -> ParsedStatus {
-    let mut parts: Vec<&str> = status.split('\0').collect();
-    let mut out = ParsedStatus::default();
-    let head = if parts.first().is_some_and(|p| p.starts_with("## ")) { parts.remove(0)[3..].to_owned() } else { String::new() };
-    if let Some(hm) = re!(r"^(?:No commits yet on |Initial commit on )?(.+?)(?:\.\.\.(\S+))?(?: \[(.+)\])?$").captures(&head) {
-        out.branch = Some(if &hm[1] == "HEAD (no branch)" { "detached".into() } else { hm[1].to_owned() });
-        out.upstream = hm.get(2).map(|m| m.as_str().to_owned());
-        let track = hm.get(3).map(|m| m.as_str()).unwrap_or("");
-        out.ahead = Some(re!(r"ahead (\d+)").captures(track).map_or(0, |c| count(&c[1])));
-        out.behind = Some(re!(r"behind (\d+)").captures(track).map_or(0, |c| count(&c[1])));
+/// The letter a file shows from git's two status columns (index, then working tree).
+fn status_letter(x: char, y: char) -> &'static str {
+    if x == '?' {
+        "?"
+    } else if x == 'R' || y == 'R' || x == 'C' || y == 'C' {
+        "R"
+    } else if x == 'D' || y == 'D' {
+        "D"
+    } else if x == 'A' || y == 'A' {
+        "A"
+    } else {
+        "M"
     }
-    let mut counts: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
+}
+
+/// Line counts from `git diff --numstat -z`, by path (a rename counts under its new path).
+fn numstat_counts(numstat: &str) -> std::collections::HashMap<String, (u64, u64)> {
+    let mut counts = std::collections::HashMap::new();
     let ns: Vec<&str> = numstat.split('\0').collect();
     let mut i = 0;
     while i < ns.len() {
@@ -242,6 +253,99 @@ pub fn parse_status(status: &str, numstat: &str) -> ParsedStatus {
         }
         i += 1;
     }
+    counts
+}
+
+/// Reads `git status --porcelain=v2 -z --branch` (or v1, from a git older than 2.11) and
+/// `git diff --numstat -z` into a list.
+pub fn parse_status(status: &str, numstat: &str) -> ParsedStatus {
+    if !status.starts_with("# ") && !status.is_empty() {
+        return parse_status_v1(status, numstat);
+    }
+    let counts = numstat_counts(numstat);
+    let mut out = ParsedStatus::default();
+    let parts: Vec<&str> = status.split('\0').collect();
+    let mut file = |path: &str, from: Option<String>, xy: &str| {
+        let mut c = xy.chars();
+        let (x, y) = (c.next().unwrap_or('.'), c.next().unwrap_or('.'));
+        let (add, del) = counts.get(path).copied().unwrap_or((0, 0));
+        let untracked = x == '?';
+        out.files.push(GitFile {
+            path: path.to_owned(),
+            from: from.filter(|f| !f.is_empty()),
+            status: status_letter(x, y),
+            add,
+            del,
+            staged: !untracked && x != '.',
+            unstaged: untracked || y != '.',
+        });
+    };
+    let (mut branch, mut upstream, mut ab) = (None, None, None);
+    let mut i = 0;
+    while i < parts.len() {
+        let e = parts[i];
+        i += 1;
+        if let Some(h) = e.strip_prefix("# ") {
+            if let Some(b) = h.strip_prefix("branch.head ") {
+                branch = Some(if b == "(detached)" { "detached".to_owned() } else { b.to_owned() });
+            } else if let Some(u) = h.strip_prefix("branch.upstream ") {
+                upstream = Some(u.to_owned());
+            } else if let Some(m) = h.strip_prefix("branch.ab ").and_then(|v| re!(r"^\+(\d+) -(\d+)$").captures(v)) {
+                ab = Some((count(&m[1]), count(&m[2])));
+            }
+            continue;
+        }
+        match e.split(' ').next() {
+            // "1 XY sub mH mI mW hH hI path"
+            Some("1") => {
+                let f: Vec<&str> = e.splitn(9, ' ').collect();
+                if f.len() == 9 {
+                    file(f[8], None, f[1]);
+                }
+            }
+            // "2 XY sub mH mI mW hH hI Xscore path", then where it was as the next field
+            Some("2") => {
+                let f: Vec<&str> = e.splitn(10, ' ').collect();
+                let from = parts.get(i).map(|s| s.to_string());
+                i += 1;
+                if f.len() == 10 {
+                    file(f[9], from, f[1]);
+                }
+            }
+            // a conflict, "u XY sub m1 m2 m3 mW h1 h2 h3 path": not resolved until it's staged
+            Some("u") => {
+                let f: Vec<&str> = e.splitn(11, ' ').collect();
+                if f.len() == 11 {
+                    file(f[10], None, ".M");
+                }
+            }
+            Some("?") => file(&e[2..], None, "??"),
+            _ => {}
+        }
+    }
+    if let Some(b) = branch {
+        out.branch = Some(b);
+        out.upstream = upstream;
+        let (a, b) = ab.unwrap_or((0, 0));
+        out.ahead = Some(a);
+        out.behind = Some(b);
+    }
+    out
+}
+
+/// `git status --porcelain=v1 -z --branch`, for a git without v2.
+fn parse_status_v1(status: &str, numstat: &str) -> ParsedStatus {
+    let mut parts: Vec<&str> = status.split('\0').collect();
+    let mut out = ParsedStatus::default();
+    let head = if parts.first().is_some_and(|p| p.starts_with("## ")) { parts.remove(0)[3..].to_owned() } else { String::new() };
+    if let Some(hm) = re!(r"^(?:No commits yet on |Initial commit on )?(.+?)(?:\.\.\.(\S+))?(?: \[(.+)\])?$").captures(&head) {
+        out.branch = Some(if &hm[1] == "HEAD (no branch)" { "detached".into() } else { hm[1].to_owned() });
+        out.upstream = hm.get(2).map(|m| m.as_str().to_owned());
+        let track = hm.get(3).map(|m| m.as_str()).unwrap_or("");
+        out.ahead = Some(re!(r"ahead (\d+)").captures(track).map_or(0, |c| count(&c[1])));
+        out.behind = Some(re!(r"behind (\d+)").captures(track).map_or(0, |c| count(&c[1])));
+    }
+    let counts = numstat_counts(numstat);
     let mut i = 0;
     while i < parts.len() {
         let e = parts[i];
@@ -257,19 +361,10 @@ pub fn parse_status(status: &str, numstat: &str) -> ParsedStatus {
         } else {
             None
         };
-        let status = if xy == "??" {
-            "?"
-        } else if xy.contains('R') {
-            "R"
-        } else if xy.contains('D') {
-            "D"
-        } else if xy.contains('A') {
-            "A"
-        } else {
-            "M"
-        };
+        let mut c = xy.chars().map(|c| if c == ' ' { '.' } else { c });
+        let (x, y) = (c.next().unwrap_or('.'), c.next().unwrap_or('.'));
         let (add, del) = counts.get(&path).copied().unwrap_or((0, 0));
-        out.files.push(GitFile { path, from: from.filter(|f| !f.is_empty()), status, add, del });
+        out.files.push(GitFile { path, from: from.filter(|f| !f.is_empty()), status: status_letter(x, y), add, del, staged: x != '?' && x != '.', unstaged: x == '?' || y != '.' });
         i += 1;
     }
     out
@@ -282,7 +377,7 @@ pub async fn git_status(host_id: &str, pane_id: &str) -> HubResult<GitState> {
     let r = host
         .exec(
             &format!(
-                "cd {} 2>/dev/null && command -v git >/dev/null && {GIT} rev-parse --show-toplevel 2>/dev/null || exit 3; printf '{sep}'; {GIT} status --porcelain=v1 -z --branch --untracked-files=all 2>/dev/null | head -c 1000000; printf '{sep}'; {{ {GIT} diff HEAD --numstat -z 2>/dev/null || {GIT} diff --cached --numstat -z 2>/dev/null; }} | head -c 1000000; printf '{sep}'; {GIT} remote 2>/dev/null | head -1",
+                "cd {} 2>/dev/null && command -v git >/dev/null && {GIT} rev-parse --show-toplevel 2>/dev/null || exit 3; printf '{sep}'; {{ {GIT} status --porcelain=v2 -z --branch --untracked-files=all 2>/dev/null || {GIT} status --porcelain=v1 -z --branch --untracked-files=all 2>/dev/null; }} | head -c 1000000; printf '{sep}'; {{ {GIT} diff HEAD --numstat -z 2>/dev/null || {GIT} diff --cached --numstat -z 2>/dev/null; }} | head -c 1000000; printf '{sep}'; {GIT} remote 2>/dev/null | head -1",
                 shq(&cwd)
             ),
             ExecOptions::timeout(20000),
@@ -340,8 +435,8 @@ pub async fn git_diff(host_id: &str, pane_id: &str, rel: &str) -> HubResult<GitD
     let r = host
         .exec(
             &format!(
-                "cd \"$({GIT} -C {} rev-parse --show-toplevel)\" || exit 3; if {GIT} ls-files --error-unmatch -- {p} >/dev/null 2>&1; then {GIT} diff HEAD --no-ext-diff -U3 -- {p} 2>/dev/null || {GIT} diff --cached --no-ext-diff -U3 -- {p}; else {GIT} diff --no-index --no-ext-diff -U3 -- /dev/null {p}; fi | head -c 2000000",
-                shq(&cwd)
+                "{}; if {GITP} ls-files --error-unmatch -- {p} >/dev/null 2>&1; then {GITP} diff HEAD --no-ext-diff -U3 -- {p} 2>/dev/null || {GITP} diff --cached --no-ext-diff -U3 -- {p}; else {GITP} diff --no-index --no-ext-diff -U3 -- /dev/null {p}; fi | head -c 2000000",
+                to_top(&cwd)
             ),
             ExecOptions::timeout(20000),
         )
@@ -368,10 +463,42 @@ fn last_lines(text: &str, fallback: &str) -> String {
     }
 }
 
-/// Commits everything in the working tree with your message, as `git add -A && git commit` would.
-/// Git's own hooks and signing run as usual; one that needs a password typed fails instead of waiting.
+/// What a commit takes: what's staged, everything, or (when the app doesn't say) what's staged
+/// if anything is and everything otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitWhat {
+    Staged,
+    All,
+    Auto,
+}
+
+impl CommitWhat {
+    /// The request's `staged` field: true, false, or left out.
+    pub fn from_field(v: Option<&Value>) -> Self {
+        match v {
+            Some(Value::Bool(true)) => Self::Staged,
+            Some(Value::Bool(false)) => Self::All,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// The shell line that commits, with the message on stdin, and prints the new commit's short hash.
+pub fn commit_command(cwd: &str, what: CommitWhat) -> String {
+    let add = match what {
+        CommitWhat::All => format!("{GIT} add -A && "),
+        // exit 1 from diff --quiet means something is staged
+        CommitWhat::Staged => format!("if {GIT} diff --cached --quiet; then echo 'Nothing is staged' >&2; exit 5; fi; "),
+        CommitWhat::Auto => format!("if {GIT} diff --cached --quiet; then {GIT} add -A || exit 1; fi; "),
+    };
+    format!("cd {} || exit 3; {add}{GIT} commit -q -F - && {GIT} log -1 --format=%h", shq(cwd))
+}
+
+/// Commits with your message, as `git commit` would: what's staged when you say so (or when
+/// anything is), otherwise everything, as `git add -A && git commit`. Git's own hooks and signing
+/// run as usual; one that needs a password typed fails instead of waiting.
 /// `message` is the request's field as it came (`String(message ?? '')`).
-pub async fn git_commit(host_id: &str, pane_id: &str, message: Option<&Value>) -> HubResult<GitCommitted> {
+pub async fn git_commit(host_id: &str, pane_id: &str, message: Option<&Value>, what: CommitWhat) -> HubResult<GitCommitted> {
     let (host, cwd) = folder(host_id, pane_id)?;
     let raw = match message {
         None | Some(Value::Null) => String::new(),
@@ -384,7 +511,7 @@ pub async fn git_commit(host_id: &str, pane_id: &str, message: Option<&Value>) -
     if msg.len16() > 10000 || msg.contains('\0') {
         return Err(http(400, "That message is too long"));
     }
-    let r = host.exec(&format!("cd {} && {GIT} add -A && {GIT} commit -q -F - && {GIT} log -1 --format=%h", shq(&cwd)), ExecOptions::input(msg).with_timeout(60000)).await?;
+    let r = host.exec(&commit_command(&cwd, what), ExecOptions::input(msg).with_timeout(60000)).await?;
     if r.code != 0 {
         let said = if r.stderr.is_empty() { &r.stdout } else { &r.stderr };
         return Err(http(409, last_lines(said, "Could not commit")));
@@ -412,6 +539,196 @@ pub async fn git_push(host_id: &str, pane_id: &str) -> HubResult<GitPushed> {
         return Err(http(409, last_lines(&r.stderr, "Could not push")));
     }
     Ok(GitPushed {})
+}
+
+// ---------- one file at a time: stage, unstage, discard ----------
+
+/// `cd` to the top of the repository the folder is in, or exit 3 when there's none.
+fn to_top(cwd: &str) -> String {
+    format!("top=$({GIT} -C {} rev-parse --show-toplevel 2>/dev/null) && [ -n \"$top\" ] && cd \"$top\" || exit 3", shq(cwd))
+}
+
+/// The most files one request names; "all" covers more.
+const PATHS_MAX: usize = 1000;
+
+/// The request's `paths`: each inside the repository, none empty, at most PATHS_MAX.
+pub fn paths_of(v: Option<&Value>) -> HubResult<Vec<String>> {
+    let list = match v {
+        Some(Value::Array(a)) => a,
+        None | Some(Value::Null) => return Ok(vec![]),
+        _ => return Err(http(400, "paths is a list of files")),
+    };
+    if list.len() > PATHS_MAX {
+        return Err(http(400, format!("At most {PATHS_MAX} files at a time")));
+    }
+    let mut out = vec![];
+    for p in list {
+        let Value::String(p) = p else { return Err(http(400, "paths is a list of files")) };
+        let p = inside(p)?;
+        if p.is_empty() {
+            return Err(http(400, "Bad path"));
+        }
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    Ok(out)
+}
+
+fn quoted(paths: &[String]) -> String {
+    paths.iter().map(|p| shq(p)).collect::<Vec<_>>().join(" ")
+}
+
+/// What `git_stage` does to the index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// put the files' changes in the index, deletions too
+    Add,
+    /// take them out again, leaving the files as they are
+    Remove,
+}
+
+/// The shell line that stages or unstages `paths` (every change, with `paths` empty).
+pub fn stage_command(cwd: &str, how: Stage, paths: &[String]) -> String {
+    let files = if paths.is_empty() { String::new() } else { format!(" -- {}", quoted(paths)) };
+    let run = match how {
+        Stage::Add if paths.is_empty() => format!("{GITP} add -A"),
+        Stage::Add => format!("{GITP} add -A{files}"),
+        // reset works before the first commit too, where restore --staged has no HEAD to go back to
+        Stage::Remove => format!("{GITP} reset -q{files}"),
+    };
+    format!("{}; {run}", to_top(cwd))
+}
+
+/// The shell line that throws away every change to `paths`: a file the last commit has goes back
+/// to it (index and working tree), a file added since is taken out of the index and deleted, and a
+/// file git doesn't track is deleted. A path with nothing to discard (an ignored file, a file with
+/// no changes) stops it before anything changes, with exit 4.
+pub fn discard_command(cwd: &str, paths: &[String]) -> String {
+    let mut s = to_top(cwd);
+    for p in paths {
+        let q = shq(p);
+        s += &format!("; [ -n \"$({GITP} status --porcelain=v1 -z --untracked-files=all -- {q} 2>/dev/null | tr '\\000' '\\n')\" ] || {{ printf 'Nothing to discard in %s\\n' {q} >&2; exit 4; }}");
+    }
+    for p in paths {
+        let q = shq(p);
+        s += &format!(
+            "; if {GIT} cat-file -e HEAD:{q} 2>/dev/null; then {GITP} restore --source=HEAD --staged --worktree -- {q} 2>/dev/null || {GITP} checkout -q HEAD -- {q} || exit 1; elif {GITP} ls-files --error-unmatch -- {q} >/dev/null 2>&1; then {GITP} rm -q -f -- {q} || exit 1; else {GITP} clean -q -f -- {q} || exit 1; fi"
+        );
+    }
+    s
+}
+
+/// Stages or unstages files (`paths`), or every change (`all`), and answers with the new status.
+pub async fn git_stage(host_id: &str, pane_id: &str, how: Stage, paths: Vec<String>, all: bool) -> HubResult<GitState> {
+    if paths.is_empty() && !all {
+        return Err(http(400, "Pick a file"));
+    }
+    let (host, cwd) = folder(host_id, pane_id)?;
+    let r = host.exec(&stage_command(&cwd, how, if all { &[] } else { &paths }), ExecOptions::timeout(30000)).await?;
+    if r.code == 3 {
+        return Err(http(409, "Not a git repository"));
+    }
+    if r.code != 0 {
+        return Err(http(409, last_lines(&r.stderr, if how == Stage::Add { "Could not stage" } else { "Could not unstage" })));
+    }
+    git_status(host_id, pane_id).await
+}
+
+/// Throws away the changes to `paths` (a renamed file names both its paths) and answers with the new status.
+pub async fn git_discard(host_id: &str, pane_id: &str, paths: Vec<String>) -> HubResult<GitState> {
+    if paths.is_empty() {
+        return Err(http(400, "Pick a file"));
+    }
+    let (host, cwd) = folder(host_id, pane_id)?;
+    let r = host.exec(&discard_command(&cwd, &paths), ExecOptions::timeout(30000)).await?;
+    match r.code {
+        0 => git_status(host_id, pane_id).await,
+        3 => Err(http(409, "Not a git repository")),
+        4 => Err(http(409, last_lines(&r.stderr, "Nothing to discard"))),
+        _ => Err(http(409, last_lines(&r.stderr, "Could not discard"))),
+    }
+}
+
+// ---------- a draft commit message ----------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GitDraft {
+    pub message: String,
+}
+
+/// The most files a draft lists by name.
+const DRAFT_LIST: usize = 20;
+
+/// The folder every path is in ("" when they share none), at most two levels deep.
+fn common_dir(paths: &[&str]) -> String {
+    let mut dirs = paths.iter().map(|p| p.rsplit_once('/').map_or("", |(d, _)| d));
+    let Some(first) = dirs.next() else { return String::new() };
+    let mut common: Vec<&str> = if first.is_empty() { vec![] } else { first.split('/').collect() };
+    for d in dirs {
+        let segs: Vec<&str> = if d.is_empty() { vec![] } else { d.split('/').collect() };
+        let same = common.iter().zip(&segs).take_while(|(a, b)| a == b).count();
+        common.truncate(same);
+    }
+    common.truncate(2);
+    common.join("/")
+}
+
+fn name_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// A commit message to start from, made from the changed files alone: a short summary line
+/// ("Update 3 files in apps/web") and, for more than one file, a list of them. It describes what
+/// would be committed: the staged files when any are staged, otherwise all of them.
+pub fn draft_message(files: &[GitFile]) -> String {
+    let staged: Vec<&GitFile> = files.iter().filter(|f| f.staged).collect();
+    let list: Vec<&GitFile> = if staged.is_empty() { files.iter().collect() } else { staged };
+    let verb = |s: &str| match s {
+        "A" | "?" => "Add",
+        "D" => "Remove",
+        "R" => "Rename",
+        _ => "Update",
+    };
+    let short = |p: &str| if p.chars().count() > 50 { name_of(p).to_owned() } else { p.to_owned() };
+    match list.as_slice() {
+        [] => String::new(),
+        [f] if f.status == "R" && f.from.is_some() => {
+            let from = f.from.as_deref().unwrap_or("");
+            format!("Rename {} to {}", name_of(from), short(&f.path))
+        }
+        [f] => format!("{} {}", verb(f.status), short(&f.path)),
+        many => {
+            let v = verb(many[0].status);
+            let v = if many.iter().all(|f| verb(f.status) == v) { v } else { "Update" };
+            let paths: Vec<&str> = many.iter().map(|f| f.path.as_str()).collect();
+            let dir = common_dir(&paths);
+            let mut s = format!("{v} {} files{}", many.len(), if dir.is_empty() { String::new() } else { format!(" in {dir}") });
+            s += "\n";
+            for f in many.iter().take(DRAFT_LIST) {
+                let note = match f.status {
+                    "A" | "?" if v != "Add" => " (new)".to_owned(),
+                    "D" if v != "Remove" => " (deleted)".to_owned(),
+                    "R" => f.from.as_ref().map_or(String::new(), |from| format!(" (was {from})")),
+                    _ => String::new(),
+                };
+                s += &format!("\n- {}{note}", f.path);
+            }
+            if many.len() > DRAFT_LIST {
+                s += &format!("\n- and {} more", many.len() - DRAFT_LIST);
+            }
+            s
+        }
+    }
+}
+
+/// A draft commit message for what the working tree would commit now.
+pub async fn git_draft(host_id: &str, pane_id: &str) -> HubResult<GitDraft> {
+    let s = git_status(host_id, pane_id).await?;
+    if !s.repo {
+        return Err(http(409, "Not a git repository"));
+    }
+    Ok(GitDraft { message: draft_message(&s.status.files) })
 }
 
 #[cfg(test)]

@@ -360,6 +360,10 @@ export interface GitFile {
   status: 'M' | 'A' | 'D' | 'R' | '?'
   add: number
   del: number
+  /** some of its changes are in the index (hubs from 0.27) */
+  staged?: boolean
+  /** it has changes the index doesn't have yet */
+  unstaged?: boolean
 }
 
 export interface GitState {
@@ -475,7 +479,13 @@ export const api = {
   /** its git working tree against the last commit */
   git: (host: string, pane: string) => request<GitState>('GET', `${panePath(host, pane)}/git`, undefined, 25_000),
   gitDiff: (host: string, pane: string, path: string) => request<{ path: string; binary: boolean; hunks: Hunk[] }>('GET', `${panePath(host, pane)}/git/diff${qs({ path })}`, undefined, 25_000),
-  gitCommit: (host: string, pane: string, message: string) => request<{ commit: string }>('POST', `${panePath(host, pane)}/git/commit`, { message }, 70_000),
+  /** `staged`: commit only what's staged (true) or every change (false); left out, the hub picks */
+  gitCommit: (host: string, pane: string, message: string, staged?: boolean) => request<{ commit: string }>('POST', `${panePath(host, pane)}/git/commit`, staged === undefined ? { message } : { message, staged }, 70_000),
+  /** into the index, out of it, or thrown away; `all` stages or unstages every change. Answers with the new status */
+  gitFiles: (host: string, pane: string, action: 'stage' | 'unstage' | 'discard', paths: string[], all?: boolean) =>
+    request<GitState>('POST', `${panePath(host, pane)}/git/${action}`, all ? { all: true } : { paths }, 40_000),
+  /** a commit message to start from, made from the changed files */
+  gitDraft: (host: string, pane: string) => request<{ message: string }>('GET', `${panePath(host, pane)}/git/draft`, undefined, 25_000),
   gitPush: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/git/push`, undefined, 100_000),
   /** a copy of the conversation in a new window next to this one */
   fork: (host: string, pane: string) => request<{ pane: string }>('POST', `${panePath(host, pane)}/fork`, undefined, 30_000),

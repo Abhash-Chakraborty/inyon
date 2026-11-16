@@ -697,10 +697,31 @@ pub fn add(routes: &mut Routes) {
             h(|mut r| async move {
                 let b = r.body().await?;
                 let message = field(&b, "message")?.cloned();
-                Ok(json_of(&workspace::git_commit(&id(&r), &pane(&r), message.as_ref()).await?))
+                let what = workspace::CommitWhat::from_field(field(&b, "staged")?);
+                Ok(json_of(&workspace::git_commit(&id(&r), &pane(&r), message.as_ref(), what).await?))
             }),
         )],
     );
+    // one file at a time (or every change, with "all": true): into the index, out of it, or thrown away
+    for (route, how) in [("stage", Some(workspace::Stage::Add)), ("unstage", Some(workspace::Stage::Remove)), ("discard", None)] {
+        guarded(
+            routes,
+            &format!("/api/hosts/:id/panes/:pane/git/{route}"),
+            vec![(
+                M::POST,
+                h(move |mut r| async move {
+                    let b = r.body().await?;
+                    let paths = workspace::paths_of(field(&b, "paths")?)?;
+                    let all = matches!(field(&b, "all")?, Some(Value::Bool(true)));
+                    Ok(json_of(&match how {
+                        Some(how) => workspace::git_stage(&id(&r), &pane(&r), how, paths, all).await?,
+                        None => workspace::git_discard(&id(&r), &pane(&r), paths).await?,
+                    }))
+                }),
+            )],
+        );
+    }
+    guarded(routes, "/api/hosts/:id/panes/:pane/git/draft", vec![(M::GET, h(|r| async move { Ok(json_of(&workspace::git_draft(&id(&r), &pane(&r)).await?)) }))]);
     guarded(routes, "/api/hosts/:id/panes/:pane/git/push", vec![(M::POST, h(|r| async move { Ok(json_of(&workspace::git_push(&id(&r), &pane(&r)).await?)) }))]);
     guarded(
         routes,
