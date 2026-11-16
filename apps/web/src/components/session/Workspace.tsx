@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { ArrowLeft, ArrowDown, ArrowUp, AtSign, ChevronRight, File, FileDiff, Folder, FolderGit2, GitBranch, MessageSquare, Minus, PenLine, Plus, RefreshCw, Undo2, X } from 'lucide-react'
-import { api, type DirEntry, type FileView, type GitFile, type GitState } from '../../lib/api.ts'
-import { bytes } from '../../lib/format.ts'
+import { ArrowLeft, ArrowDown, ArrowUp, AtSign, ChevronRight, CircleCheck, CircleDashed, CircleX, Copy, File, FileDiff, Folder, FolderGit2, GitBranch, GitPullRequest, MessageSquare, Minus, PenLine, Plus, RefreshCw, Send, Undo2, X } from 'lucide-react'
+import { api, type DirEntry, type FileView, type GitFile, type GitState, type PrState, type PullRequest } from '../../lib/api.ts'
+import { copyText } from '../../lib/clipboard.ts'
+import { useOpened } from '../../lib/useOpened.ts'
+import { checksSummary, failingPrompt, prStateLabel, prView } from '../../lib/pullRequest.ts'
+import { bytes, openLink } from '../../lib/format.ts'
 import { compose } from '../../lib/compose.ts'
 import { review, reviewMessage, useReview, type ReviewNote } from '../../lib/review.ts'
 import { toast, useStore } from '../../lib/store.ts'
@@ -182,6 +185,11 @@ type Acting = { action: 'stage' | 'unstage' | 'discard'; key: string } | null
 /** What git sees in the session's folder: every change since the last commit, whoever made it. */
 export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
   const git = useLoad(() => api.git(p.host, p.pane), [p.host, p.pane])
+  // the branch's pull request, through gh on the machine: asked when the panel opens, on refresh
+  // and after a push, not on every agent step (it goes to GitHub)
+  const hasRemote = !!(git.data?.repo && git.data.remote)
+  const prs = useLoad<PrState | null>(() => (hasRemote ? api.gitPr(p.host, p.pane) : Promise.resolve(null)), [p.host, p.pane, hasRemote, git.data?.branch])
+  const [opening, setOpening] = useState(false)
   const [sel, setSel] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState<'commit' | 'push' | 'draft' | null>(null)
@@ -212,6 +220,7 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
       } else {
         await api.gitPush(p.host, p.pane)
         toast({ title: 'Pushed', tone: 'success' })
+        prs.reload()
       }
       git.reload()
     } catch (e) {
@@ -251,6 +260,11 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
   }
   // something to push, and somewhere to push it
   const canPush = s.remote && (!s.upstream || (s.ahead ?? 0) > 0)
+  const pr = prView(s, prs.error ? undefined : (prs.data ?? undefined))
+  const refresh = () => {
+    git.reload()
+    prs.reload()
+  }
   const { staged, changes } = groups(s.files)
   const row = (f: GitFile, inStaged: boolean) => {
     const on = cur?.path === f.path
@@ -311,15 +325,36 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
         {(s.ahead ?? 0) > 0 && <span className="tabular flex items-center text-fg-3" title={`${s.ahead} commits not pushed`}><ArrowUp className="size-3" />{s.ahead}</span>}
         {(s.behind ?? 0) > 0 && <span className="tabular flex items-center text-fg-3" title={`${s.behind} commits to pull`}><ArrowDown className="size-3" />{s.behind}</span>}
         <span className="flex-1" />
-        {canPush && (
+        {canPush ? (
           <Button size="xs" variant="ghost" loading={busy === 'push'} disabled={!!busy} onClick={() => run('push')} title={s.upstream ? `Push to ${s.upstream}` : 'Push to origin'}>
             Push
           </Button>
+        ) : (
+          pr.kind === 'open' && (
+            <Button size="xs" variant="ghost" onClick={() => setOpening(true)} title={pr.base ? `Open a pull request into ${pr.base}` : 'Open a pull request'}>
+              <GitPullRequest className="size-3.5" />
+              Open pull request
+            </Button>
+          )
         )}
-        <IconButton label="Refresh" className="size-7" onClick={git.reload}>
-          <RefreshCw className={clsx('size-3.5', git.busy && 'animate-spin')} />
+        <IconButton label="Refresh" className="size-7" onClick={refresh}>
+          <RefreshCw className={clsx('size-3.5', (git.busy || prs.busy) && 'animate-spin')} />
         </IconButton>
       </div>
+      {pr.kind === 'pr' && <PrRow p={p} pr={pr.pr} base={prs.data?.base} />}
+      {pr.kind === 'notice' && <PrNotice text={pr.text} command={pr.command} />}
+      <OpenPrSheet
+        p={p}
+        open={opening}
+        onClose={() => setOpening(false)}
+        branch={s.branch}
+        base={pr.kind === 'open' ? pr.base : undefined}
+        draft={prs.data?.draft}
+        onOpened={() => {
+          setOpening(false)
+          prs.reload()
+        }}
+      />
       {!s.files.length ? (
         <Empty icon={<FileDiff className="size-5" />} title="No changes">Nothing has changed since the last commit.</Empty>
       ) : (
@@ -383,6 +418,142 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
         </>
       )}
     </div>
+  )
+}
+
+// ---------- pull requests ----------
+
+const CHECK_ICON = {
+  failing: <CircleX className="size-3.5 shrink-0 text-danger" aria-hidden />,
+  running: <CircleDashed className="size-3.5 shrink-0 text-fg-3" aria-hidden />,
+  passing: <CircleCheck className="size-3.5 shrink-0 text-ok" aria-hidden />,
+  none: <CircleDashed className="size-3.5 shrink-0 text-fg-3" aria-hidden />,
+}
+
+/** The branch's pull request: number, title, state and a link, then its checks. */
+export function PrRow({ p, pr, base }: { p: PaneKey; pr: PullRequest; base?: string }) {
+  const sum = checksSummary(pr)
+  const failed = pr.checks.failed
+  const send = () => {
+    if (!compose({ ...p, text: failingPrompt(pr) })) toast({ title: 'Open the chat to add it', tone: 'info' })
+  }
+  return (
+    <section aria-label="Pull request" className="shrink-0 space-y-1 border-b border-line px-3 py-2 text-[12.5px]">
+      <div className="flex items-center gap-2">
+        <GitPullRequest className="size-3.5 shrink-0 text-fg-3" aria-hidden />
+        <a href={pr.url} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-baseline gap-1.5 hover:underline" title={`Open #${pr.number} on GitHub`}>
+          <span className="tabular shrink-0 font-mono text-[12px] text-fg-3">#{pr.number}</span>
+          <span className="min-w-0 truncate font-medium">{pr.title}</span>
+          <span aria-hidden className="shrink-0 text-fg-3">↗</span>
+        </a>
+        <span className="shrink-0 rounded-full border border-line px-2 font-mono text-[12px] leading-5 text-fg-2">{prStateLabel(pr)}</span>
+      </div>
+      {pr.state === 'open' && (
+        <>
+          <div className="flex min-h-7 items-center gap-2 text-[12px] text-fg-2">
+            {CHECK_ICON[sum.tone]}
+            <span className="min-w-0 flex-1 truncate" aria-label={`Checks: ${sum.text}`}>{sum.text}</span>
+            {failed.length > 0 && (
+              <Button size="xs" variant="ghost" onClick={send} title="Put the failing checks and the link in your message, to send when you're ready">
+                <Send className="size-3.5" />
+                Send to agent
+              </Button>
+            )}
+          </div>
+          {failed.length > 0 && (
+            <ul aria-label="Failing checks" className="space-y-0.5 pl-5.5 text-[12px]">
+              {failed.slice(0, 5).map((c) => (
+                <li key={c.name} className="truncate">
+                  {c.url ? (
+                    <a href={c.url} target="_blank" rel="noreferrer" className="text-fg-2 hover:text-fg hover:underline">{c.name} ↗</a>
+                  ) : (
+                    <span className="text-fg-2">{c.name}</span>
+                  )}
+                </li>
+              ))}
+              {failed.length > 5 && <li className="text-fg-3">and {failed.length - 5} more</li>}
+            </ul>
+          )}
+          {pr.conflicts && <div className="pl-5.5 text-[12px] text-danger">Conflicts with {base || 'its base branch'}; it can't be merged as it is.</div>}
+        </>
+      )}
+    </section>
+  )
+}
+
+/** What gh needs before a pull request can be opened from here, with the command to run. */
+function PrNotice({ text, command }: { text: string; command?: string }) {
+  return (
+    <div role="note" className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-3 py-2 text-[12px] text-fg-2">
+      <GitPullRequest className="size-3.5 shrink-0 text-fg-3" aria-hidden />
+      <span className="min-w-0">{text}</span>
+      {command && (
+        <button
+          type="button"
+          onClick={async () => toast((await copyText(command)) ? { title: 'Command copied', tone: 'info' } : { title: 'Could not copy', tone: 'error' })}
+          className="inline-flex items-center gap-1.5 rounded-full border border-line bg-code px-2 font-mono text-[12px] leading-6 hover:border-line-strong"
+          title="Copy the command"
+        >
+          {command}
+          <Copy className="size-3 text-fg-3" aria-hidden />
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Opens a pull request from the pushed branch, its title and description drafted from the commits. */
+function OpenPrSheet({ p, open, onClose, branch, base, draft, onOpened }: { p: PaneKey; open: boolean; onClose: () => void; branch?: string; base?: string; draft?: { title: string; body: string }; onOpened: () => void }) {
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+  useOpened(open, branch, () => {
+    setTitle(draft?.title ?? '')
+    setBody(draft?.body ?? '')
+  })
+  const submit = async () => {
+    if (!title.trim() || busy) return
+    setBusy(true)
+    try {
+      const r = await api.gitPrCreate(p.host, p.pane, title, body)
+      toast({ title: r.number ? `Opened pull request #${r.number}` : 'Opened the pull request', tone: 'success', action: r.url ? { label: 'Open', onSelect: () => openLink(r.url) } : undefined })
+      onOpened()
+    } catch (e) {
+      toast({ title: 'Could not open the pull request', body: (e as Error).message, tone: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Open a pull request"
+      icon={<GitPullRequest className="size-4 text-fg-3" />}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={busy} disabled={!title.trim()} onClick={submit}>Open pull request</Button>
+        </div>
+      }
+    >
+      <form className="space-y-2" onSubmit={(e) => (e.preventDefault(), submit())}>
+        <p className="truncate font-mono text-[12px] text-fg-3" title={`${branch} into ${base ?? 'the default branch'}`}>
+          {branch} → {base ?? 'default branch'}
+        </p>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" aria-label="Title" className={inputClass} maxLength={256} />
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && (e.preventDefault(), submit())}
+          rows={8}
+          placeholder="Description"
+          aria-label="Description"
+          className={clsx(inputClass, 'h-auto py-2 leading-relaxed')}
+        />
+        <p className="text-[12px] text-fg-3">gh opens it on the session's machine, as the GitHub account signed in there.</p>
+      </form>
+    </Sheet>
   )
 }
 

@@ -9,7 +9,7 @@ use inyon_core::claude::integration::{install_integration, uninstall_integration
 use inyon_core::claude::send_receipts::send_once;
 use inyon_core::config::{load_settings, save_settings, HubSettings};
 use inyon_core::features::uploads::{self as chunked, ChunkResult, StartUpload};
-use inyon_core::features::{companion, conversation_search, conversations, features as feat, models, providers, setup, signin, temp, workspace, worktrees};
+use inyon_core::features::{companion, conversation_search, conversations, features as feat, models, providers, pull_request, setup, signin, temp, workspace, worktrees};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::hosts::node_link;
 use inyon_core::hosts::node_update::node_updates;
@@ -752,6 +752,22 @@ pub fn add(routes: &mut Routes) {
     }
     guarded(routes, "/api/hosts/:id/panes/:pane/git/draft", vec![(M::GET, h(|r| async move { Ok(json_of(&workspace::git_draft(&id(&r), &pane(&r)).await?)) }))]);
     guarded(routes, "/api/hosts/:id/panes/:pane/git/push", vec![(M::POST, h(|r| async move { Ok(json_of(&workspace::git_push(&id(&r), &pane(&r)).await?)) }))]);
+    // the branch's pull request and its checks (GET), or a new one into the default branch (POST), through gh on the machine
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/git/pr",
+        vec![
+            (M::GET, h(|r| async move { Ok(json_of(&pull_request::pr_status(&id(&r), &pane(&r)).await?)) })),
+            (
+                M::POST,
+                h(|mut r| async move {
+                    let b = r.body().await?;
+                    let (title, body) = (field(&b, "title")?.cloned(), field(&b, "body")?.cloned());
+                    Ok(json_of(&pull_request::pr_create(&id(&r), &pane(&r), title.as_ref(), body.as_ref()).await?))
+                }),
+            ),
+        ],
+    );
     guarded(
         routes,
         "/api/hosts/:id/panes/:pane/fork",

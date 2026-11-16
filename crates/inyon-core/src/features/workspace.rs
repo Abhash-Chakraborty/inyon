@@ -15,7 +15,7 @@ use crate::js::to_number;
 use crate::re;
 
 /// The agent's folder (where it was started), or the pane's shell folder when there's no agent.
-fn folder(host_id: &str, pane_id: &str) -> HubResult<(Host, String)> {
+pub(crate) fn folder(host_id: &str, pane_id: &str) -> HubResult<(Host, String)> {
     let reg = registry();
     let rt = reg.get(host_id).ok_or_else(|| http(404, "Unknown machine"))?;
     let f = reg.find_pane(host_id, pane_id).ok_or_else(|| http(404, "Pane not found"))?;
@@ -214,7 +214,7 @@ pub struct GitState {
     pub status: ParsedStatus,
 }
 
-const GIT: &str = "GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 git -c core.quotepath=off -c color.ui=false";
+pub(crate) const GIT: &str = "GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 git -c core.quotepath=off -c color.ui=false";
 /// git for commands that name files: a path is a file name, never a pattern (`*.md`, `:(top)x`).
 const GITP: &str = "GIT_TERMINAL_PROMPT=0 GIT_LITERAL_PATHSPECS=1 git -c core.quotepath=off -c color.ui=false";
 
@@ -453,7 +453,7 @@ pub struct GitCommitted {
 }
 
 /// The last few lines of what git said, or `fallback` when it said nothing.
-fn last_lines(text: &str, fallback: &str) -> String {
+pub(crate) fn last_lines(text: &str, fallback: &str) -> String {
     let lines: Vec<&str> = text.jtrim().split('\n').collect();
     let tail = lines[lines.len().saturating_sub(6)..].join("\n");
     if tail.is_empty() {
@@ -544,7 +544,7 @@ pub async fn git_push(host_id: &str, pane_id: &str) -> HubResult<GitPushed> {
 // ---------- one file at a time: stage, unstage, discard ----------
 
 /// `cd` to the top of the repository the folder is in, or exit 3 when there's none.
-fn to_top(cwd: &str) -> String {
+pub(crate) fn to_top(cwd: &str) -> String {
     format!("top=$({GIT} -C {} rev-parse --show-toplevel 2>/dev/null) && [ -n \"$top\" ] && cd \"$top\" || exit 3", shq(cwd))
 }
 

@@ -1423,6 +1423,96 @@ pub async fn git_push(host: &str, pane: &str) -> Result<(), ApiError> {
     request("POST", &format!("{}/git/push", pane_path(host, pane)), None).await.map(drop)
 }
 
+/// One check on a pull request; `url` is its log, when GitHub has one.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+pub struct PrCheck {
+    pub name: String,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+pub struct PrChecks {
+    #[serde(default)]
+    pub passed: u64,
+    #[serde(default)]
+    pub skipped: u64,
+    #[serde(default)]
+    pub failed: Vec<PrCheck>,
+    #[serde(default)]
+    pub running: Vec<PrCheck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+pub struct PullRequest {
+    pub number: u64,
+    #[serde(default)]
+    pub title: String,
+    /// open, closed or merged
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub url: String,
+    /// GitHub found conflicts with the base branch
+    #[serde(default)]
+    pub conflicts: bool,
+    #[serde(default)]
+    pub checks: PrChecks,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+pub struct PrDraft {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+}
+
+/// The branch's pull request, as gh on the session's machine sees it (hubs from 0.28).
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+pub struct PrState {
+    /// ready, missing (gh isn't installed), signed-out, not-github or error
+    pub gh: String,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// the default branch, where a new pull request goes
+    #[serde(default)]
+    pub base: Option<String>,
+    #[serde(default)]
+    pub pr: Option<PullRequest>,
+    #[serde(default)]
+    pub draft: Option<PrDraft>,
+}
+
+/// The branch's pull request and its checks, through gh on the machine.
+pub async fn git_pr(host: &str, pane: &str) -> Result<PrState, ApiError> {
+    parse(&request("GET", &format!("{}/git/pr", pane_path(host, pane)), None).await?)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct PrOpened {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub number: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct PrBody<'a> {
+    title: &'a str,
+    body: &'a str,
+}
+
+/// Opens a pull request from the pushed branch into the default branch.
+pub async fn git_pr_create(host: &str, pane: &str, title: &str, body: &str) -> Result<PrOpened, ApiError> {
+    let body = serde_json::to_string(&PrBody { title, body }).unwrap_or_default();
+    parse(&request("POST", &format!("{}/git/pr", pane_path(host, pane)), Some(body)).await?)
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct Stopped {
     pub stopped: bool,

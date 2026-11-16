@@ -98,6 +98,16 @@ From 0.27 you choose what goes into a commit:
 
 File names reach git as names, never as patterns, so a file called `*.md` or `-x` is only that file.
 
+### Pull requests
+
+From 0.28 the working tree can finish the job on GitHub, with the [GitHub CLI](https://cli.github.com) (`gh`) on the session's machine, signed in there as you.
+
+- **Open pull request.** Once a branch other than the repository's default branch is pushed, **Open pull request** takes the place of **Push**. The sheet starts with the last commit's subject as the title and the commits' bodies as the description; edit either, then **Open pull request** runs `gh pr create` into the default branch.
+- **The branch's pull request.** When the branch has one, a row under the branch shows its number and title (a link to it on GitHub), whether it's **Open**, **Draft**, **Merged** or **Closed**, and its checks in one line, such as *1 failing · 2 running · 3 passing*. Each failing check is listed with a link to its log, and a pull request GitHub can't merge because of conflicts says so.
+- **Send to agent** puts the failing checks' names and the pull request's link in your message box, with a line asking the agent to fix them. It isn't sent until you send it.
+
+The pull request and its checks are read when you open the working tree and when you press refresh, not each time the agent does something, since that asks GitHub. If `gh` isn't installed, or isn't signed in, the working tree says so where **Open pull request** would be, with `gh auth login` to run on that machine (tap it to copy it). A repository whose remote isn't on GitHub shows none of this. It works the same on a Windows machine with `gh` installed.
+
 To comment on a line, tap its number in any diff, in either view. Comments collect under the diff; **Add to message** puts them all in your message box as one review, each under the file, line and code it's about, so you can add to it before sending. **Clear** drops them. Comments stay in the app until you add or clear them, and aren't saved anywhere.
 
 ## Usage and limits
