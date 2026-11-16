@@ -114,7 +114,7 @@ The version and build, the Android app's version, how the terminal is drawn, and
 
 | Keys | Does |
 |---|---|
-| `Ctrl K` / `⌘ K` | Search and jump to a session |
+| `Ctrl K` / `⌘ K` | Search and jump to a session, or [search past conversations](sessions.md#searching-past-conversations) (from 0.28) |
 | `Alt N` / `⌥ N` | New session, even while typing a message (from 0.16; not in the terminal) |
 | `N` | New session, when you aren't typing |
 | `Ctrl P` / `⌘ P` | [Quick access](overview.md#quick-access) on **Sessions** (from 1.1, new app) |

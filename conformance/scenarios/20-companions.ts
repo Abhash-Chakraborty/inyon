@@ -85,6 +85,7 @@ export default {
       ['GET', `${P}/models`],
       ['GET', `${P}/commands`],
       ['GET', `${P}/conversations`],
+      ['GET', '/api/conversations/search?q=auth'],
       ['POST', `${P}/switch`, { agent: 'claude', id: 'x' }],
       ['POST', `${P}/restart`],
       ['POST', `${P}/exit`],

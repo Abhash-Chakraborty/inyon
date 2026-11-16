@@ -22,6 +22,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | Rewind | Yes | Per message | No | Undo, redo | No | Yes |
 | Share | No | No | No | Link, stop sharing | No | No |
 | [Past conversations](sessions.md#past-conversations) | Yes | Yes | No | Yes | Yes | Yes |
+| [Search past conversations](sessions.md#searching-past-conversations) | From 0.28 | From 0.28 | No | From 0.28 | From 0.28 | No |
 | `!` shell commands | Yes | Yes | No | Yes | Yes | No |
 | Remote Control | Yes | No | No | No | No | Yes |
 | [Ultracode](controls.md#ultracode) | Yes | No | No | No | No | No |

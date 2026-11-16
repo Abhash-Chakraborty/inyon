@@ -7,6 +7,8 @@ pub mod agent_latest;
 // the companion agent: a session you talk to that reads and steers the others
 pub mod companion;
 pub mod conversations;
+// searching every saved transcript on a machine for some words (from 0.28)
+pub mod conversation_search;
 // features/features.ts, named as the TS file is
 #[allow(clippy::module_inception)]
 pub mod features;

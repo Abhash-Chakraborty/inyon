@@ -1,20 +1,18 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Suspense, useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { LayoutGrid, Monitor, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Plus, Search, Settings, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
-import type { HostState } from '@inyon/protocol'
-import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/overview.ts'
+import { agentPanes } from '../lib/overview.ts'
 import { SessionTree } from './SessionTree.tsx'
 import { CompanionNavItem } from './CompanionAgent.tsx'
-import { AgentLogo } from '../lib/skin.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { keyLabel, shortcut } from '../lib/keys.ts'
 import { usePageMenu } from './ui/ContextMenu.tsx'
 import { ActionSheets } from './menus.tsx'
 import { Waiting } from './ui/primitives.tsx'
-import { LEAVE_MS } from './ui/AnimatedList.tsx'
+import { QuickSwitch } from './QuickSwitch.tsx'
 import { isChanged, loadPages, usePages } from '../lib/pages.ts'
 import { onHubs } from '../lib/hubs.ts'
 import { PageSheets } from './pages/shared.tsx'
@@ -41,83 +39,6 @@ export function Logo({ className, target }: { className?: string; target?: boole
   )
 }
 const SQUIRCLE = 'M25 0H39C60 0 64 4 64 25V39C64 60 60 64 39 64H25C4 64 0 60 0 39V25C0 4 4 0 25 0Z'
-
-/** Quick switcher: type to jump to any session, terminal or machine. */
-const NO_HOSTS: HostState[] = []
-function QuickSwitch({ open, onClose }: { open: boolean; onClose: () => void }) {
-  // it stays a moment after closing, fading out, as a sheet does
-  const [shown, setShown] = useState(open)
-  useEffect(() => {
-    if (open) return setShown(true)
-    const t = setTimeout(() => setShown(false), LEAVE_MS)
-    return () => clearTimeout(t)
-  }, [open])
-  // closed, it has nothing to do with an overview update
-  const hosts = useStore((s) => (shown ? s.hosts : NO_HOSTS))
-  const nav = useNavigate()
-  const [q, setQ] = useState('')
-  const [i, setI] = useState(0)
-  const input = useRef<HTMLInputElement>(null)
-  const items = useMemo(() => {
-    const panes = allPanes(hosts).map((r) => ({
-      key: r.host.config.id + r.pane.id,
-      label: r.pane.agent ? paneTitle(r) : `${terminalName(r) ?? `${r.session.name}:${r.window.index}`} ${r.pane.command}`,
-      sub: `${r.host.config.name} · ${r.pane.cwd.replace(/^\/home\/[^/]+/, '~')}`,
-      agent: r.pane.agent?.kind,
-      terminal: !r.pane.agent,
-      href: paneHref(r.host.config.id, r.pane.id),
-    }))
-    const t = q.toLowerCase()
-    return panes.filter((p) => !t || `${p.label} ${p.sub}`.toLowerCase().includes(t)).slice(0, 12)
-  }, [hosts, q])
-  useEffect(() => {
-    if (open) {
-      setQ('')
-      setI(0)
-      setTimeout(() => input.current?.focus(), 10)
-    }
-  }, [open])
-  if (!shown) return null
-  const go = (href: string) => {
-    nav(href)
-    onClose()
-  }
-  return (
-    <div className={clsx('fixed inset-0 z-[80] flex items-start justify-center bg-black/45 px-4 pt-[12vh]', open ? 'animate-fade-in' : 'animate-fade-out')} onClick={onClose}>
-      <div className={clsx('w-full max-w-lg overflow-hidden rounded-3xl border border-line bg-elev shadow-float', open ? 'animate-pop' : 'animate-fade-out')} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2.5 border-b border-line px-4">
-          <Search className="size-4 text-fg-3" />
-          <input
-            ref={input}
-            value={q}
-            onChange={(e) => (setQ(e.target.value), setI(0))}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') onClose()
-              if (e.key === 'ArrowDown') (e.preventDefault(), setI((n) => Math.min(items.length - 1, n + 1)))
-              if (e.key === 'ArrowUp') (e.preventDefault(), setI((n) => Math.max(0, n - 1)))
-              if (e.key === 'Enter' && items[i]) go(items[i].href)
-            }}
-            placeholder="Jump to a session or terminal…"
-            className="h-12 flex-1 bg-transparent text-[15px] placeholder:text-fg-3"
-          />
-          <kbd className="rounded-full border border-line px-1.5 font-mono text-[12px] text-fg-3 pointer-coarse:hidden">esc</kbd>
-        </div>
-        <div className="max-h-[50vh] overflow-y-auto p-1.5">
-          {items.map((it, n) => (
-            <button key={it.key} type="button" onMouseEnter={() => setI(n)} onClick={() => go(it.href)} className={clsx('flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left', n === i && 'bg-hover')}>
-              {it.terminal ? <AgentLogo size={22} /> : <AgentLogo kind={it.agent} size={22} />}
-              <div className="min-w-0">
-                <div className="truncate text-[13.5px] font-medium">{it.label}</div>
-                <div className="truncate text-[12px] text-fg-3">{it.sub}</div>
-              </div>
-            </button>
-          ))}
-          {!items.length && <div className="px-3 py-6 text-center text-[13px] text-fg-3">Nothing matches</div>}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void }) {
   const hosts = useStore((s) => s.hosts)

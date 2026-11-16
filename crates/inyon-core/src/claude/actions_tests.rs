@@ -427,6 +427,35 @@ fn a_custom_agent_starts_with_its_own_command_and_the_flags_of_the_agent_it_work
 }
 
 #[test]
+fn a_new_session_can_resume_a_saved_conversation_and_a_bad_request_creates_nothing() {
+    run(|| async {
+        let fake = Fake::install(|_, cmd, _| if cmd.contains("command -v") { ok("codex\n") } else { ok("%5\n") });
+        pane("local", json!([]));
+        let id = "00000000-0000-4000-8000-000000000010";
+        let opts = LaunchOpts { agent: Some("codex".into()), cwd: Some("/work/app".into()), resume: Some(id.into()), ..Default::default() };
+        assert_eq!(launch("local", &opts).await.unwrap(), "%5");
+        let cmds = fake.cmds();
+        assert!(cmds.iter().any(|c| c.contains("-c '/work/app'")), "{cmds:?}");
+        assert!(cmds.iter().any(|c| c.contains(&format!("codex resume {id}"))), "{cmds:?}");
+        let before = fake.cmds().len();
+        let bad = [
+            (LaunchOpts { agent: Some("claude".into()), resume: Some(format!("{id}; rm -rf ~")), ..Default::default() }, "Bad conversation id"),
+            (LaunchOpts { agent: Some("shell".into()), resume: Some(id.into()), ..Default::default() }, "Say which agent's conversation to resume"),
+            (
+                LaunchOpts { agent: Some("claude".into()), resume: Some(id.into()), prompt: Some("hi".into()), ..Default::default() },
+                "A resumed conversation starts without a first message",
+            ),
+        ];
+        for (opts, why) in bad {
+            assert_eq!(launch("local", &opts).await.unwrap_err().message, why);
+        }
+        assert_eq!(fake.cmds().len(), before);
+        assert_eq!(resume_line(AgentKind::Claude, id), format!("claude --resume {id}"));
+        assert!(resume_line(AgentKind::Opencode, "ses_1").ends_with(" --session ses_1"));
+    });
+}
+
+#[test]
 fn a_folder_or_name_holding_a_tmux_format_reaches_tmux_as_plain_text() {
     run(|| async {
         let fake = Fake::install(|_, _, _| ok("%5\n"));

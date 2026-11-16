@@ -78,7 +78,7 @@ With text selected, **Copy** comes first. From 0.17 the browser's own menu, with
 
 ## Finding a session
 
-- **Search:** press `Ctrl K` (`⌘ K` on a Mac) or tap the search button on a phone. Touch screens don't show the keyboard hints. Type any part of a session's title, the agent, the machine, the tmux session or window, or the folder. Every word you type has to match. `↑` `↓` and `Enter` open the result.
+- **Search:** press `Ctrl K` (`⌘ K` on a Mac) or tap the search button on a phone. Touch screens don't show the keyboard hints. Type any part of a session's title, the agent, the machine, the tmux session or window, or the folder. Every word you type has to match. `↑` `↓` and `Enter` open the result. From 0.28 its **Conversations** tab searches what was said in past conversations on every machine; see [Searching past conversations](sessions.md#searching-past-conversations).
 - **The search box** above the cards, with more than six sessions, matches the same things, and from 0.24 a session's tags and note too.
 - **The sidebar** (tablet and desktop) shows every session in a tree: machine, then tmux session, then pane. Folding a branch is remembered, and a folded branch shows a dot when something inside it needs you. With more than eight panes, a filter box appears above the tree. From 0.22 the companion agent isn't in the tree: it has its own **Companion** item under **Overview**. From 0.25.6 the sidebar folds to a narrow rail of icons, to give a session or a blueprint the room: press the button beside the name at its top, `Ctrl B` (`⌘ B` on a Mac), or right-click an empty spot and choose **Hide sidebar**. The rail keeps search, **New session**, **Overview**, the machines, **Blueprints** and **Settings**; the tree comes back when you open the sidebar again. In the terminal `Ctrl B` stays tmux's own key.
 - **Two machines with the same name**, such as two servers both called `ubuntu`, would look alike. From 0.15 the one you've had longer keeps its name, and the other, if it comes through a paired hub, shows that hub's address after it.
@@ -97,6 +97,8 @@ From 1.1 the new app has **Quick access**, one box for sessions, commands, saved
 - **Commands** runs what a menu would. The open session's own actions come first (**Pin**, **Snooze…**, **Rename…** and the rest), then the selected sessions', then **New session…**, the screens, **New session on** each machine, **Select every session** and **New saved prompt…**. Type `>` to get here from another list.
 - **Saved prompts** are the ones the hub keeps. With a session open, `Enter` sends the prompt to it as a message and `Ctrl Enter` copies it; elsewhere `Enter` copies it. The last row saves what you typed as a new prompt. A prompt's menu has **Star**, which lists it first, and **Remove**, with **Undo**.
 - **Files** lists the files in each session's folder, asked of the machines as the list opens; type `@` to get here. `Enter` copies the file's full path and `Ctrl Enter` opens its session.
+
+Searching what was said in past conversations is in the web app's search for now; see [Searching past conversations](sessions.md#searching-past-conversations).
 
 `Tab` and `Shift Tab` move between the lists, and `Ctrl 1` to `Ctrl 4` pick one. `Ctrl K` opens the highlighted row's menu, and so do a right click and the row's **⋯**. `Esc` closes the box. On a phone it takes the whole screen. In the terminal the `Ctrl` keys stay with the shell; `⌘` keys on a Mac still work there.
 

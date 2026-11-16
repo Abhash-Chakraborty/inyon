@@ -1491,6 +1491,17 @@ pub async fn start_agent(host_id: &str, pane_id: &str, agent: Option<&Value>, re
     type_start(host_id, pane_id, kind, resume.and_then(Value::as_str)).await
 }
 
+/// The command that starts `agent` on its saved conversation `id` (checked by the caller).
+pub fn resume_line(agent: AgentKind, id: &str) -> String {
+    let launch = &agent.def().launch;
+    match agent {
+        AgentKind::Codex => format!("codex resume {id}"),
+        AgentKind::Antigravity => format!("agy --conversation {id}"),
+        AgentKind::Opencode => format!("{launch} --session {id}"),
+        _ => format!("{launch} --resume {id}"),
+    }
+}
+
 /// Types the command that starts the agent (resuming `resume`, if given) at the pane's shell
 /// prompt. The caller has checked the agent and the id, and that the pane is at its shell.
 pub async fn type_start(host_id: &str, pane_id: &str, agent: AgentKind, resume: Option<&str>) -> HubResult<()> {
@@ -1498,12 +1509,7 @@ pub async fn type_start(host_id: &str, pane_id: &str, agent: AgentKind, resume: 
     let def = agent.def();
     let cmd = match resume.filter(|r| !r.is_empty()) {
         None => def.launch.clone(),
-        Some(r) => match agent {
-            AgentKind::Codex => format!("codex resume {r}"),
-            AgentKind::Antigravity => format!("agy --conversation {r}"),
-            AgentKind::Opencode => format!("{} --session {r}", def.launch),
-            _ => format!("{} --resume {r}", def.launch),
-        },
+        Some(r) => resume_line(agent, r),
     };
     let line = with_bin(&cmd, &launch_bin(&host, &def.launch).await?);
     type_into(&host, pane_id, &line, true).await?;
@@ -2044,6 +2050,8 @@ pub struct LaunchOpts {
     pub prompt: Option<String>,
     /// a custom agent's id (Settings › Agents), started in place of `agent`
     pub custom: Option<String>,
+    /// a saved conversation of `agent` to resume rather than start a new one (from 0.28)
+    pub resume: Option<String>,
     /// a terminal-first agent's sign-in (its `login` command) rather than the agent itself
     #[serde(default)]
     pub sign_in: bool,
@@ -2113,6 +2121,17 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         (None, Some(a)) => Some(agent_kind(a).ok_or_else(|| http(400, "Unknown agent"))?),
         (None, None) => None,
     };
+    // a saved conversation: only the agent's own, with an id nothing could read as more
+    let resume = opts.resume.as_deref().filter(|r| !r.is_empty());
+    if let Some(r) = resume {
+        let Some(a) = agent.filter(|_| custom.is_none() && !opts.sign_in) else { return Err(http(400, "Say which agent's conversation to resume")) };
+        if !is_session_id_str(Some(r), Some(a)) {
+            return Err(http(400, "Bad conversation id"));
+        }
+        if opts.prompt.as_deref().is_some_and(|p| !p.is_blank()) {
+            return Err(http(400, "A resumed conversation starts without a first message"));
+        }
+    }
     // a terminal-first agent has no way Inyon knows to hand it a first message
     if let Some(a) = agent.filter(|a| !a.chat() && opts.prompt.as_deref().is_some_and(|p| !p.is_blank())) {
         return Err(http(400, format!("{} starts without a first message. Type it in its terminal once it's open.", a.def().name)));
@@ -2153,7 +2172,12 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
     }
     if let Some(agent) = agent {
         let sign_in = opts.sign_in && custom.is_none() && !agent.chat();
-        let mut parts = vec![if sign_in { agent.def().login.clone() } else { custom.as_ref().map_or_else(|| agent.def().launch.clone(), |c| c.command.clone()) }];
+        let first = match (sign_in, resume) {
+            (true, _) => agent.def().login.clone(),
+            (false, Some(r)) => resume_line(agent, r),
+            (false, None) => custom.as_ref().map_or_else(|| agent.def().launch.clone(), |c| c.command.clone()),
+        };
+        let mut parts = vec![first];
         // OpenCode names models "provider/model"
         if let Some(model) = opts.model.as_deref().filter(|m| if agent == AgentKind::Opencode { re!(r"^[\w.:-]+/[\w.:/-]+$").is_match(m) } else { re!(r"^[\w.:-]+$").is_match(m) })
         {
